@@ -1,0 +1,73 @@
+-- ( LOCAL SCRIPT: Universal Sprint - TOGGLE FIX )
+-- Features: Toggle Button (Mobile) + Toggle Shift (PC)
+
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+local button = script.Parent -- The ImageButton
+
+-- === CONFIGURATION ===
+local WALK_SPEED = 16
+local SPRINT_SPEED = 26
+
+-- === STATE ===
+local isSprinting = false
+
+-- 1. VISIBILITY SETUP
+-- We never disable the ScreenGui (or the script dies). 
+-- We only hide the mobile button if the player is on PC.
+if UserInputService.TouchEnabled then
+	button.Visible = true
+else
+	button.Visible = false 
+end
+
+-- 🛠️ HELPER: Change Speed
+local function updateSpeed()
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChild("Humanoid")
+		if humanoid then
+			-- If isSprinting is true, set to 26, else set to 16
+			humanoid.WalkSpeed = isSprinting and SPRINT_SPEED or WALK_SPEED
+		end
+	end
+
+	-- Update Mobile Button Visuals (Even on PC, just in case)
+	if isSprinting then
+		button.ImageTransparency = 0.5 -- Dim (Active)
+	else
+		button.ImageTransparency = 0 -- Bright (Inactive)
+	end
+end
+
+-- ============================================================================
+-- 💻 PC LOGIC (Tap Shift to Toggle)
+-- ============================================================================
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end -- Don't run if typing in chat
+
+	if input.KeyCode == Enum.KeyCode.LeftShift then
+		-- FLIP THE SWITCH
+		isSprinting = not isSprinting
+		updateSpeed()
+	end
+end)
+
+-- Note: We removed "InputEnded" so you don't stop running when you let go of Shift.
+
+-- ============================================================================
+-- 📱 MOBILE LOGIC (Tap Button to Toggle)
+-- ============================================================================
+button.MouseButton1Click:Connect(function()
+	-- FLIP THE SWITCH
+	isSprinting = not isSprinting
+	updateSpeed()
+end)
+
+-- 🛡️ SAFETY: Reset on Respawn
+player.CharacterAdded:Connect(function()
+	isSprinting = false
+	updateSpeed()
+end)
