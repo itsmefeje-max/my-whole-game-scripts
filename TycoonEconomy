@@ -1,0 +1,110 @@
+-- ( This script handles the core economy: detecting placed cars and generating cash into the plot's storage )
+local ServerStorage = game:GetService("ServerStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local CarStats = require(ServerStorage:WaitForChild("CarStats"))
+local TycoonFolder = Workspace:WaitForChild("Tycoons")
+
+-- ⚙️ SETTINGS
+local PAY_INTERVAL = 1 -- How often to generate cash (seconds)
+
+-- 🛠️ FUNCTION: Create the 3D GUI above the car (Visuals only)
+local function addCashUI(carModel, cpsAmount)
+	-- Remove existing UI if any to prevent duplicates
+	local existing = carModel:FindFirstChild("CashBillboard")
+	if existing then existing:Destroy() end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "CashBillboard"
+	bb.Adornee = carModel.PrimaryPart or carModel:FindFirstChildWhichIsA("BasePart")
+	bb.Size = UDim2.new(0, 100, 0, 50)
+	bb.StudsOffset = Vector3.new(0, 6, 0)
+	bb.AlwaysOnTop = true
+	bb.Parent = carModel
+
+	local txt = Instance.new("TextLabel")
+	txt.Parent = bb
+	txt.Size = UDim2.new(1, 0, 1, 0)
+	txt.BackgroundTransparency = 1
+	txt.Text = "+$" .. cpsAmount .. "/s"
+	txt.TextColor3 = Color3.fromRGB(85, 255, 127) -- Money Green
+	txt.TextStrokeTransparency = 0
+	txt.Font = Enum.Font.FredokaOne
+	txt.TextSize = 20
+end
+
+-- 🛠️ FUNCTION: Setup Pad Listener
+-- Connects to a specific pad to watch for car placement/removal
+local function setupPadListener(pad)
+	local linkedCarVal = pad:WaitForChild("LinkedCar", 5)
+	if not linkedCarVal then return end
+
+	-- Listen for changes
+	linkedCarVal.Changed:Connect(function(newCar)
+		if newCar and newCar:IsA("Model") then
+			-- A car was placed. Check config.
+			local carName = newCar.Name
+			local stats = CarStats.Cars[carName]
+
+			if stats then
+				addCashUI(newCar, stats.CPS)
+			end
+		end
+	end)
+end
+
+-- 🔄 INITIALIZATION: Setup existing plots
+for _, plot in pairs(TycoonFolder:GetChildren()) do
+	-- 1. Create the "Mailbox" for cash on this plot (PendingEarnings)
+	if not plot:FindFirstChild("PendingEarnings") then
+		local pendingInt = Instance.new("IntValue")
+		pendingInt.Name = "PendingEarnings"
+		pendingInt.Value = 0
+		pendingInt.Parent = plot
+	end
+
+	-- 2. Setup listeners for all pads
+	local padsFolder = plot:FindFirstChild("Pads")
+	if padsFolder then
+		for _, pad in pairs(padsFolder:GetChildren()) do
+			setupPadListener(pad)
+		end
+	end
+end
+
+-- 💰 MAIN CASH ACCUMULATION LOOP
+task.spawn(function()
+	while true do
+		task.wait(PAY_INTERVAL)
+
+		-- Iterate through every plot to calculate earnings
+		for _, plot in pairs(TycoonFolder:GetChildren()) do
+			local pendingValue = plot:FindFirstChild("PendingEarnings")
+			local padsFolder = plot:FindFirstChild("Pads")
+
+			if pendingValue and padsFolder then
+				local plotTotalIncome = 0
+
+				-- Check every pad in this plot
+				for _, pad in pairs(padsFolder:GetChildren()) do
+					-- We check the ObjectValue "LinkedCar"
+					local linkedCar = pad:FindFirstChild("LinkedCar") and pad.LinkedCar.Value
+
+					-- Verify the car model actually exists in workspace
+					if linkedCar and linkedCar.Parent then
+						local stats = CarStats.Cars[linkedCar.Name]
+						if stats then
+							plotTotalIncome = plotTotalIncome + stats.CPS
+						end
+					end
+				end
+
+				-- Deposit cash into the plot's pending storage
+				if plotTotalIncome > 0 then
+					pendingValue.Value = pendingValue.Value + plotTotalIncome
+				end
+			end
+		end
+	end
+end)
