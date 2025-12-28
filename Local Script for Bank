@@ -1,0 +1,181 @@
+--StarterGui
+-- ( BANK UI SCRIPT: FORCE HIDE VERSION )
+-- This script manages the Bank UI, Camera, and Avatar.
+print("---------------------------------------------------------")
+print("🛠️ STARTING BANK UI SCRIPT...")
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 🛠️ HELPER: Debug Finder
+local function debugFind(parent, name)
+	local obj = parent:WaitForChild(name, 5) 
+	if obj then
+		return obj
+	else
+		warn("❌ CRITICAL ERROR: Could not find '" .. name .. "' inside " .. parent.Name)
+		return nil
+	end
+end
+
+-- 1. FIND GUI
+local myScreenGui = debugFind(playerGui, "BankGui") 
+if not myScreenGui then return end
+
+local mainWindow = debugFind(myScreenGui, "BankFrame")
+local openButton = debugFind(myScreenGui, "OpenButton")
+
+if not mainWindow or not openButton then return end 
+
+-- 🛑 FORCE HIDE IMMEDIATELY (The Safety Lock)
+-- We do this NOW so it doesn't matter if the rest of the script takes time.
+mainWindow.Visible = false
+openButton.Visible = true
+print("🔒 Bank Frame Forced Hidden.")
+
+-- 2. FIND INTERNAL PARTS
+local closeButton = debugFind(mainWindow, "CloseButton")
+local balanceLabel = debugFind(mainWindow, "BalanceLabel")
+local headerContainer = debugFind(mainWindow, "HeaderContainer")
+
+if not headerContainer then return end
+
+local greetingLabel = debugFind(headerContainer, "GreetingLabel")
+local avatarImage = debugFind(headerContainer, "AvatarImage")
+
+if not greetingLabel or not avatarImage then return end
+
+greetingLabel.RichText = true 
+
+-- ⚙️ CONFIG
+local OPEN_FOV = 50       
+local NORMAL_FOV = 70       
+local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+local HOVER_TWEEN = TweenInfo.new(0.2)
+local SOUND_ID = "rbxassetid://9083627113" 
+
+local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
+local DIM_COLOR = Color3.fromRGB(200, 200, 200)   
+
+-- 3. SETUP CLICK DETECTOR (To close when clicking outside)
+local detector = Instance.new("TextButton")
+detector.Name = "OutsideDetector"
+detector.Parent = myScreenGui
+detector.Size = UDim2.new(1, 0, 1, 0)
+detector.BackgroundTransparency = 1 
+detector.Text = ""
+detector.ZIndex = mainWindow.ZIndex - 1 
+detector.Visible = false
+detector.Active = true 
+
+-- 4. MONEY VARIABLES (Wait for Leaderstats)
+print("💰 Looking for Leaderstats...")
+local leaderstats = player:WaitForChild("leaderstats", 10)
+local cash = nil
+
+if leaderstats then
+	cash = leaderstats:WaitForChild("Cash", 10) -- Change "Cash" if yours is named "Bank"
+end
+
+if not cash then 
+	warn("⚠️ WARNING: Cash/Leaderstats not found. UI will work but balance won't update.")
+end
+
+-- ============================================================================
+-- 🛠️ FUNCTIONS
+-- ============================================================================
+local function formatNumber(n)
+	return tostring(n):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
+end
+
+local function updateDisplay()
+	if cash then
+		balanceLabel.Text = "$ " .. formatNumber(cash.Value)
+	else
+		balanceLabel.Text = "$ 0"
+	end
+end
+
+local function loadAvatar()
+	local content, isReady = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+	if isReady then
+		avatarImage.Image = content
+	else
+		avatarImage.Image = "rbxassetid://0"
+	end
+end
+
+local function getRandomHex()
+	local randomColor = Color3.fromHSV(math.random(), 0.7, 1)
+	return randomColor:ToHex() 
+end
+
+local function setFocusMode(isFocused)
+	detector.Visible = isFocused
+	mainWindow.Visible = isFocused
+	openButton.Visible = not isFocused 
+
+	for _, gui in pairs(playerGui:GetChildren()) do
+		if gui:IsA("ScreenGui") and gui ~= myScreenGui then
+			gui.Enabled = not isFocused
+		end
+	end
+
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChild("Humanoid")
+		if humanoid then
+			humanoid.WalkSpeed = isFocused and 0 or 16
+			humanoid.JumpPower = isFocused and 0 or 50
+		end
+	end
+end
+
+-- ============================================================================
+-- 🟢 CONNECTIONS
+-- ============================================================================
+
+openButton.MouseButton1Click:Connect(function()
+	local s = Instance.new("Sound", SoundService); s.SoundId = SOUND_ID; s.Volume=0.5; s:Play(); game.Debris:AddItem(s, 2)
+
+	local colorHex = getRandomHex()
+	greetingLabel.Text = "<font color='#" .. colorHex .. "'>" .. player.Name .. "</font>"
+	updateDisplay()
+
+	setFocusMode(true)
+	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = OPEN_FOV}):Play()
+end)
+
+local function performClose()
+	setFocusMode(false)
+	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
+end
+
+closeButton.MouseButton1Click:Connect(function() 
+	local s = Instance.new("Sound", SoundService); s.SoundId = SOUND_ID; s.Volume=0.5; s:Play(); game.Debris:AddItem(s, 2)
+	performClose()
+end) 
+
+detector.MouseButton1Click:Connect(performClose)
+
+-- HOVER EFFECTS
+local function addHover(btn)
+	btn.MouseEnter:Connect(function() TweenService:Create(btn, HOVER_TWEEN, {ImageColor3 = DIM_COLOR}):Play() end)
+	btn.MouseLeave:Connect(function() TweenService:Create(btn, HOVER_TWEEN, {ImageColor3 = NORMAL_COLOR}):Play() end)
+end
+
+addHover(openButton)
+if closeButton:IsA("ImageButton") then addHover(closeButton) end
+
+-- STARTUP
+if cash then cash.Changed:Connect(updateDisplay) end
+task.spawn(loadAvatar)
+
+print("✅ SCRIPT LOADED.")
+print("---------------------------------------------------------")
