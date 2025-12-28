@@ -1,0 +1,42 @@
+-- ( SERVER SIDE: Moves Money from Bank -> Wallet )
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local withdrawEvent = ReplicatedStorage:WaitForChild("WithdrawEvent")
+
+-- ⏳ COOLDOWN CONFIG
+local COOLDOWN_TIME = 10800 -- 3 Hours in seconds
+local cooldowns = {} -- Stores player timers
+
+withdrawEvent.OnServerEvent:Connect(function(player, amount)
+	-- 1. Check if Amount is valid (Must be a positive number)
+	if not amount or amount <= 0 then return end
+
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if not leaderstats then return end
+
+	local bank = leaderstats:FindFirstChild("Cash")   -- Bank Balance
+	local wallet = leaderstats:FindFirstChild("Wallet") -- Wallet Balance
+
+	if bank and wallet then
+		-- 2. Check Logic: Do they have enough money?
+		if bank.Value >= amount then
+
+			-- 3. Check Cooldown (Optional: Remove if you want instant transfers for testing)
+			local lastTime = cooldowns[player.UserId]
+			if lastTime and (os.time() - lastTime) < COOLDOWN_TIME then
+				print("⏳ Cooldown active for " .. player.Name)
+				return -- Stop here, they have to wait
+			end
+
+			-- 4. DO THE TRANSFER
+			bank.Value = bank.Value - amount
+			wallet.Value = wallet.Value + amount
+
+			-- Save the time they withdrew
+			cooldowns[player.UserId] = os.time()
+
+			print("✅ Success! Transferred $" .. amount .. " to Wallet.")
+		else
+			print("❌ Insufficient Funds.")
+		end
+	end
+end)
