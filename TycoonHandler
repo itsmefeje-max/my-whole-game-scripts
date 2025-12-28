@@ -1,5 +1,5 @@
 -- When a player joins
-
+--ServerScriptService
 --Finds a free plos
 --Marks it as theirs
 --Teleports them to that plot’s spawn point
