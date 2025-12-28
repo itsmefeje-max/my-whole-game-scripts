@@ -1,0 +1,69 @@
+-- ServerStorage ( inside CarTools ) 
+-- this 
+
+local Tool = script.Parent
+local Handle = Tool:WaitForChild("Handle")
+
+-- === SETTINGS ===
+local HEIGHT_OFFSET = 2
+-- =================
+
+local function weldModel(model, primaryPart)
+	for _, part in pairs(model:GetDescendants()) do
+		if part:IsA("BasePart") and part ~= primaryPart then
+			if not part:FindFirstChildWhichIsA("WeldConstraint") then
+				local weld = Instance.new("WeldConstraint")
+				weld.Part0 = primaryPart
+				weld.Part1 = part
+				weld.Parent = primaryPart
+			end
+		end
+	end
+end
+
+local function makeGhost(model)
+	for _, part in pairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Massless = true
+			part.CanCollide = false
+			part.CanTouch = false
+			part.Anchored = false
+			part.CanQuery = false -- 🛑 Critical for Placement
+		end
+	end
+end
+
+Tool.Equipped:Connect(function()
+	-- 🛑 1. Fix the Handle Immediately
+	if Handle then
+		Handle.CanCollide = false
+		Handle.CanTouch = false
+		Handle.CanQuery = false 
+		Handle.Transparency = 1 -- Hide handle just in case
+	end
+
+	-- 🔄 2. Find the Car
+	local CarModel = Tool:FindFirstChildWhichIsA("Model")
+
+	if CarModel then
+		if CarModel.PrimaryPart then
+			-- A. GLUE
+			weldModel(CarModel, CarModel.PrimaryPart)
+
+			-- B. GHOST
+			makeGhost(CarModel)
+
+			-- C. MOVE
+			local targetCFrame = Handle.CFrame * CFrame.new(0, HEIGHT_OFFSET, 0)
+			CarModel:PivotTo(targetCFrame)
+
+			-- D. LOCK
+			local Weld = Instance.new("WeldConstraint")
+			Weld.Part0 = Handle
+			Weld.Part1 = CarModel.PrimaryPart
+			Weld.Parent = Handle
+		else
+			warn("⚠️ Model '" .. CarModel.Name .. "' has no PrimaryPart! Did you add the Root box?")
+		end
+	end
+end)
