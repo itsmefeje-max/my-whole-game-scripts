@@ -1,4 +1,5 @@
 -- ( CLIENT SIDE: Handles Success, Error, NoEarnings, and ADDS PULSING VFX )
+--StarterGui
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
