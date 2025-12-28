@@ -1,4 +1,5 @@
 -- ( HUNTER VERSION: Finds deep buttons to hide, but NEVER touches Frames/Windows )
+--StarterGui
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
