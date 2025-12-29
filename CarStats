@@ -1,37 +1,49 @@
--- ( This ModuleScript holds the stats for your cars. Adjusted for long-term economy stability. )
-local CarStats = {}
---ServerStorage
+-- ( MODULE SCRIPT: CarStats )
+-- Adjusted for "Hook & Wall" Gameplay Loop + Riva is now Common.
 
--- ⚙️ ECONOMY GUIDE:
--- To prevent inflation, we start LOW.
--- If Delta = 1, then a Supercar can be 500.
--- If Delta = 5, a Supercar has to be 2,500 (Numbers get messy fast).
+local CarStats = {}
 
 CarStats.Cars = {
+	-- 1. DELTA (The Starter)
+	-- Instant earning, gets them moving.
 	["Delta"] = { 
-		CPS = 1,          -- CHANGED: Starts at 1. Slow & steady.
+		CPS = 1,
 		Rarity = "Common",
-		Price = 0         -- (Reference for when we add a shop)
+		Price = 0 
 	},
+
+	-- 2. ATOM (The Hook)
+	-- Cheap ($150) with a nice boost (3x). Players feel "rich" quickly.
 	["Atom"] = { 
-		CPS = 4,          -- A nice 4x upgrade from Delta.
+		CPS = 3, 
 		Rarity = "Common",
-		Price = 250
+		Price = 150 
 	},
+
+	-- 3. WINDSOR (The Grind Starts)
+	-- Price jumps to $1,200. This is the first "work for it" car.
 	["Windsor"] = { 
-		CPS = 10,         -- Good mid-tier income.
-		Rarity = "Common", 
-		Price = 1200
-	},
-	["Senator"] = { 
-		CPS = 25,         -- Now we're making real money.
+		CPS = 8, 
 		Rarity = "Common",
-		Price = 4500
+		Price = 1200 
 	},
+
+	-- 4. SENATOR (The Mid-Tier)
+	-- Good steady income.
+	["Senator"] = { 
+		CPS = 22, 
+		Rarity = "Common",
+		Price = 5500 
+	},
+
+	-- 5. RIVA (The King of Commons)
+	-- ✅ CHANGED TO COMMON.
+	-- This is the ultimate goal before moving to Rare cars.
+	-- High price ($18k) but massive payout (55 CPS).
 	["Riva"] = { 
-		CPS = 60,         -- The "King" of Common cars.
-		Rarity = "Rare",
-		Price = 15000
+		CPS = 55, 
+		Rarity = "Common", 
+		Price = 18000 
 	}
 }
 
