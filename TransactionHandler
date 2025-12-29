@@ -1,43 +1,53 @@
--- ( SERVER SIDE: Moves Money from Bank -> Wallet )
---ServerScriptService
+-- ( SERVER SIDE: Withdraw Money from Bank -> Wallet )
+-- FIXED: Matches TycoonDataHandler names ("Cash" = Bank, "Wallet" = Pocket)
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local withdrawEvent = ReplicatedStorage:WaitForChild("WithdrawEvent")
 
--- ⏳ COOLDOWN CONFIG
-local COOLDOWN_TIME = 10800 -- 3 Hours in seconds
-local cooldowns = {} -- Stores player timers
+-- ⏳ COOLDOWN CONFIG (Set to 0.5s to prevent spam, NOT 3 hours)
+local COOLDOWN_TIME = 0.5 
+local cooldowns = {} 
 
 withdrawEvent.OnServerEvent:Connect(function(player, amount)
-	-- 1. Check if Amount is valid (Must be a positive number)
+	-- 1. Validate Amount
 	if not amount or amount <= 0 then return end
+
+	-- Prevent decimals/glitches
+	amount = math.floor(amount) 
 
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then return end
 
-	local bank = leaderstats:FindFirstChild("Cash")   -- Bank Balance
-	local wallet = leaderstats:FindFirstChild("Wallet") -- Wallet Balance
+	-- 2. DEFINE VARIABLES (SYNCED WITH TYCOONDATAHANDLER)
+	-- "Cash" is your BANK (Where tycoon money goes)
+	-- "Wallet" is your POCKET (Where you withdraw to)
+	local bank = leaderstats:FindFirstChild("Cash")   
+	local wallet = leaderstats:FindFirstChild("Wallet") 
 
 	if bank and wallet then
-		-- 2. Check Logic: Do they have enough money?
+
+		-- 3. CHECK COOLDOWN
+		local lastTime = cooldowns[player.UserId]
+		if lastTime and (os.time() - lastTime) < COOLDOWN_TIME then
+			warn("⏳ Transaction too fast for " .. player.Name)
+			return 
+		end
+
+		-- 4. CHECK BALANCE (Do they have enough in the BANK?)
 		if bank.Value >= amount then
 
-			-- 3. Check Cooldown (Optional: Remove if you want instant transfers for testing)
-			local lastTime = cooldowns[player.UserId]
-			if lastTime and (os.time() - lastTime) < COOLDOWN_TIME then
-				print("⏳ Cooldown active for " .. player.Name)
-				return -- Stop here, they have to wait
-			end
+			-- 5. DO THE TRANSFER
+			bank.Value = bank.Value - amount   -- Take from Bank (Cash)
+			wallet.Value = wallet.Value + amount -- Give to Wallet
 
-			-- 4. DO THE TRANSFER
-			bank.Value = bank.Value - amount
-			wallet.Value = wallet.Value + amount
-
-			-- Save the time they withdrew
+			-- Update Cooldown
 			cooldowns[player.UserId] = os.time()
 
-			print("✅ Success! Transferred $" .. amount .. " to Wallet.")
+			print("✅ Success! Withdrew $" .. amount .. " from Bank to Wallet.")
 		else
-			print("❌ Insufficient Funds.")
+			warn("❌ Insufficient Funds. Bank: " .. bank.Value .. " | Needed: " .. amount)
 		end
+	else
+		warn("❌ CRITICAL: Missing 'Cash' or 'Wallet' in leaderstats for " .. player.Name)
 	end
 end)
