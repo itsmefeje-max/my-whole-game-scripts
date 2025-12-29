@@ -1,5 +1,6 @@
--- ( BANK UI SCRIPT: FORCE HIDE & TRANSFER FIX )
--- Fixed: Clicking outside now properly closes the TransferFrame too.
+-- ( BANK UI SCRIPT: SUFFIX UPDATE )
+-- Now displays 1.5M, 2.4B, etc.
+
 print("---------------------------------------------------------")
 print("🛠️ STARTING BANK UI SCRIPT...")
 
@@ -15,12 +16,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 -- 🛠️ HELPER: Debug Finder
 local function debugFind(parent, name)
 	local obj = parent:WaitForChild(name, 5) 
-	if obj then
-		return obj
-	else
-		warn("❌ CRITICAL ERROR: Could not find '" .. name .. "' inside " .. parent.Name)
-		return nil
-	end
+	if obj then return obj else warn("❌ CRITICAL: Missing " .. name) return nil end
 end
 
 -- 1. FIND GUI
@@ -28,16 +24,15 @@ local myScreenGui = debugFind(playerGui, "BankGui")
 if not myScreenGui then return end
 
 local mainWindow = debugFind(myScreenGui, "BankFrame")
-local transferFrame = myScreenGui:FindFirstChild("TransferFrame") -- ✅ NEW: Detect the Transfer Frame
+local transferFrame = myScreenGui:FindFirstChild("TransferFrame") 
 local openButton = debugFind(myScreenGui, "OpenButton")
 
 if not mainWindow or not openButton then return end 
 
 -- 🛑 FORCE HIDE IMMEDIATELY
 mainWindow.Visible = false
-if transferFrame then transferFrame.Visible = false end -- ✅ Hide Transfer too
+if transferFrame then transferFrame.Visible = false end
 openButton.Visible = true
-print("🔒 Bank Frames Forced Hidden.")
 
 -- 2. FIND INTERNAL PARTS
 local closeButton = debugFind(mainWindow, "CloseButton")
@@ -50,7 +45,6 @@ local greetingLabel = debugFind(headerContainer, "GreetingLabel")
 local avatarImage = debugFind(headerContainer, "AvatarImage")
 
 if not greetingLabel or not avatarImage then return end
-
 greetingLabel.RichText = true 
 
 -- ⚙️ CONFIG
@@ -59,11 +53,10 @@ local NORMAL_FOV = 70
 local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
 local HOVER_TWEEN = TweenInfo.new(0.2)
 local SOUND_ID = "rbxassetid://9083627113" 
-
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
 local DIM_COLOR = Color3.fromRGB(200, 200, 200)   
 
--- 3. SETUP CLICK DETECTOR (To close when clicking outside)
+-- 3. SETUP CLICK DETECTOR
 local detector = Instance.new("TextButton")
 detector.Name = "OutsideDetector"
 detector.Parent = myScreenGui
@@ -82,10 +75,31 @@ if leaderstats then
 end
 
 -- ============================================================================
--- 🛠️ FUNCTIONS
+-- 📊 ABBREVIATION SYSTEM (The Fix)
 -- ============================================================================
+local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
+
 local function formatNumber(n)
-	return tostring(n):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
+	-- Convert to number just in case
+	n = tonumber(n)
+	if not n then return "0" end
+
+	-- If less than 1000, just show it (e.g. 950)
+	if n < 1000 then 
+		return tostring(math.floor(n)) 
+	end
+
+	-- Calculate index (log1000)
+	local i = math.floor(math.log(n, 1000))
+	
+	-- Calculate the divisor (1000^i)
+	local v = math.pow(1000, i)
+	
+	-- Get the suffix
+	local suffix = SUFFIXES[i] or "?" -- Fallback if way too huge
+	
+	-- Return formatted string (e.g. 1.52M)
+	return string.format("%.2f%s", n / v, suffix)
 end
 
 local function updateDisplay()
@@ -96,35 +110,29 @@ local function updateDisplay()
 	end
 end
 
+-- ... (Rest of the script is standard logic) ...
+
 local function loadAvatar()
 	local content, isReady = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
-	if isReady then
-		avatarImage.Image = content
-	else
-		avatarImage.Image = "rbxassetid://0"
-	end
+	if isReady then avatarImage.Image = content else avatarImage.Image = "rbxassetid://0" end
 end
 
 local function getRandomHex()
-	local randomColor = Color3.fromHSV(math.random(), 0.7, 1)
-	return randomColor:ToHex() 
+	return Color3.fromHSV(math.random(), 0.7, 1):ToHex() 
 end
 
 local function setFocusMode(isFocused)
 	detector.Visible = isFocused
 	openButton.Visible = not isFocused 
-
-	-- ✅ UPDATED LOGIC: Handle BOTH Frames
 	if isFocused then
-		-- Opening: Show Main, Ensure Transfer is HIDDEN
 		mainWindow.Visible = true
 		if transferFrame then transferFrame.Visible = false end
 	else
-		-- Closing: HIDE EVERYTHING
 		mainWindow.Visible = false
 		if transferFrame then transferFrame.Visible = false end
 	end
-
+	
+	-- Hide other GUIs
 	for _, gui in pairs(playerGui:GetChildren()) do
 		if gui:IsA("ScreenGui") and gui ~= myScreenGui then
 			gui.Enabled = not isFocused
@@ -141,17 +149,12 @@ local function setFocusMode(isFocused)
 	end
 end
 
--- ============================================================================
--- 🟢 CONNECTIONS
--- ============================================================================
-
+-- CONNECTIONS
 openButton.MouseButton1Click:Connect(function()
 	local s = Instance.new("Sound", SoundService); s.SoundId = SOUND_ID; s.Volume=0.5; s:Play(); game.Debris:AddItem(s, 2)
-
 	local colorHex = getRandomHex()
 	greetingLabel.Text = "<font color='#" .. colorHex .. "'>" .. player.Name .. "</font>"
 	updateDisplay()
-
 	setFocusMode(true)
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = OPEN_FOV}):Play()
 end)
@@ -166,10 +169,8 @@ closeButton.MouseButton1Click:Connect(function()
 	performClose()
 end) 
 
--- ✅ Clicking outside closes everything (NO SFX, just like you asked)
 detector.MouseButton1Click:Connect(performClose)
 
--- HOVER EFFECTS
 local function addHover(btn)
 	btn.MouseEnter:Connect(function() TweenService:Create(btn, HOVER_TWEEN, {ImageColor3 = DIM_COLOR}):Play() end)
 	btn.MouseLeave:Connect(function() TweenService:Create(btn, HOVER_TWEEN, {ImageColor3 = NORMAL_COLOR}):Play() end)
@@ -178,7 +179,5 @@ end
 addHover(openButton)
 if closeButton:IsA("ImageButton") then addHover(closeButton) end
 
--- STARTUP
 if cash then cash.Changed:Connect(updateDisplay) end
 task.spawn(loadAvatar)
-
