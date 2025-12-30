@@ -1,5 +1,5 @@
--- ( LOCAL SCRIPT: Inventory - GHOST BUTTON FIX )
--- ( This version REMOVES the StarterGear scan so used items actually disappear from the UI )
+-- ( LOCAL SCRIPT: Inventory - FIXED SOUND BUGS & GUI HIDING )
+-- ( Fixes: Music cutting out, Tweens fighting each other, and reliable SFX parenting )
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -24,12 +24,19 @@ local CLICK_SOUND_ID = "rbxassetid://9083627113"
 local EQUIP_SOUND_ID = "rbxassetid://4676738150"
 local HOVER_SOUND_ID = "rbxassetid://6895079853" 
 
+-- 🎵 MUSIC & SPECIAL SFX
+local SHOP_MUSIC_ID = "rbxassetid://83777726264435" 
+local MYTHIC_SFX_ID = "rbxassetid://9120048710"   
+
+-- ⚠️ IMPORTANT: Exact name of your game music in SoundService
+local GAME_THEME_NAME = "GameTheme" 
+
 -- 🎨 COLORS
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
 local DIM_COLOR = Color3.fromRGB(170, 170, 170)     
 
 -- ============================================================================
--- 📂 HIERARCHY SETUP
+-- 📂 HIERARCHY & MUSIC SETUP
 -- ============================================================================
 local myScreenGui = openButton:FindFirstAncestorWhichIsA("ScreenGui")
 
@@ -41,6 +48,24 @@ local closeButton = mainWindow:WaitForChild("CloseButton", 10)
 -- Tier Components
 local tierFrame = myScreenGui:WaitForChild("TierFrame", 10)
 local tierContainer = tierFrame:WaitForChild("TierContainer", 10)
+
+-- Setup Music References
+local gameThemeSound = SoundService:FindFirstChild(GAME_THEME_NAME)
+if not gameThemeSound then
+	warn("⚠️ Inventory Script: Could not find sound named '"..GAME_THEME_NAME.."' in SoundService.")
+end
+
+-- Create the Shop Music Object locally
+local shopMusic = Instance.new("Sound")
+shopMusic.Name = "ShopMusic_Internal"
+shopMusic.SoundId = SHOP_MUSIC_ID
+shopMusic.Volume = 0.5 
+shopMusic.Looped = true
+shopMusic.Parent = SoundService -- Keeping persistent music in SoundService is fine
+
+-- 🛡️ TRACKING VARIABLES
+local currentFadeTween = nil      -- Tracks the active music fade
+local hiddenGuis = {}             -- Stores GUIs we hid
 
 -- 🖼️ BACKGROUND SETUP
 local tierBackgrounds = {}
@@ -72,6 +97,43 @@ pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false) 
 local currentTab = "Common" 
 
 -- ============================================================================
+-- 🛠️ HELPER: PLAY SFX SAFELY
+-- ============================================================================
+local function playSfx(soundId, volume)
+	local s = Instance.new("Sound")
+	s.SoundId = soundId
+	s.Volume = volume or 0.5
+	-- Parent to the PlayerGui or the Script's Parent to ensure it plays reliably for the client
+	s.Parent = openButton 
+	s:Play()
+	game.Debris:AddItem(s, 3)
+end
+
+-- ============================================================================
+-- 👁️ FUNCTION: HIDE OTHER GUIS
+-- ============================================================================
+local function toggleOtherGuis(shouldHide)
+	local playerGui = player:WaitForChild("PlayerGui")
+
+	if shouldHide then
+		hiddenGuis = {} 
+		for _, gui in pairs(playerGui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui ~= myScreenGui and gui.Enabled == true then
+				gui.Enabled = false
+				table.insert(hiddenGuis, gui)
+			end
+		end
+	else
+		for _, gui in pairs(hiddenGuis) do
+			if gui and gui.Parent then 
+				gui.Enabled = true
+			end
+		end
+		hiddenGuis = {} 
+	end
+end
+
+-- ============================================================================
 -- 1️⃣ UI EFFECTS
 -- ============================================================================
 local function addDimEffect(btn)
@@ -100,7 +162,7 @@ local function addScaleEffect(btn)
 	local scale = btn:FindFirstChild("UIScale") or Instance.new("UIScale", btn)
 
 	btn.MouseEnter:Connect(function()
-		local s = Instance.new("Sound"); s.SoundId = HOVER_SOUND_ID; s.Volume = 0.3; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s, 1)
+		playSfx(HOVER_SOUND_ID, 0.3) -- Uses new Safe SFX function
 		btn.ZIndex = 10 
 		TweenService:Create(scale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 1.2}):Play()
 	end)
@@ -138,12 +200,10 @@ local function getRarityColor(rarity)
 end
 
 local function updateInventory()
-	-- 1. Clear old items
 	for _, child in pairs(itemsContainer:GetChildren()) do
 		if child:IsA("GuiButton") then child:Destroy() end
 	end
 
-	-- 2. Scan REAL Inventory (Backpack + Character only)
 	local items = {}
 	local function scan(loc)
 		if not loc then return end
@@ -155,14 +215,9 @@ local function updateInventory()
 		end
 	end
 
-	-- ✅ ONLY scan where the items actually exist
 	scan(player:FindFirstChild("Backpack")) 
-	scan(player.Character) -- Checks your hands
+	scan(player.Character)
 
-	-- ❌ REMOVED: scan(player:FindFirstChild("StarterGear")) 
-	-- This was causing the "Ghost Button" glitch!
-
-	-- 3. Populate List
 	for carName, tool in pairs(items) do
 		local stats = CarStats and CarStats.Cars and CarStats.Cars[carName]
 
@@ -176,11 +231,9 @@ local function updateInventory()
 			btn.TextColor3 = Color3.new(1,1,1)
 			btn.Font = Enum.Font.FredokaOne
 			btn.TextWrapped = true
-
 			btn.AnchorPoint = Vector2.new(0.5, 0.5) 
 			local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = btn
 
-			-- Check if it's currently equipped
 			if tool.Parent == player.Character then
 				local stroke = Instance.new("UIStroke")
 				stroke.Color = Color3.new(1,1,1); stroke.Thickness = 3; stroke.Parent = btn
@@ -190,17 +243,13 @@ local function updateInventory()
 			addScaleEffect(btn)
 
 			btn.MouseButton1Click:Connect(function()
-				local s = Instance.new("Sound"); s.SoundId = EQUIP_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 1)
-
+				playSfx(EQUIP_SOUND_ID, 0.5)
 				local char = player.Character
 				local existingTool = char and char:FindFirstChild(tool.Name)
 
 				if existingTool then
-					-- Unequip: Move from Character to Backpack
 					existingTool.Parent = player.Backpack 
 				else
-					-- Equip: Move from Backpack to Character
-					-- Note: Since we scan Backpack & Character, 'tool' is the correct reference
 					if tool.Parent == player.Backpack then
 						tool.Parent = char
 					end
@@ -212,12 +261,30 @@ local function updateInventory()
 end
 
 -- ============================================================================
--- 🟢 OPEN / CLOSE LOGIC
+-- 🟢 OPEN / CLOSE LOGIC (WITH FIXED MUSIC TWEENS)
 -- ============================================================================
 
 openButton.MouseButton1Click:Connect(function()
-	local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
+	playSfx(CLICK_SOUND_ID, 0.5)
 
+	-- 1. STOP FADE OUT (Fixes the "Instance" bug)
+	if currentFadeTween then
+		currentFadeTween:Cancel()
+		currentFadeTween = nil
+	end
+
+	-- 2. HANDLE MUSIC
+	if gameThemeSound and gameThemeSound.IsPlaying then
+		gameThemeSound:Pause()
+	end
+
+	shopMusic.Volume = 0.5
+	if not shopMusic.IsPlaying then
+		shopMusic:Play()
+	end
+
+	-- 3. UI LOGIC
+	toggleOtherGuis(true)
 	updateInventory()
 	updateBackground()
 
@@ -225,7 +292,6 @@ openButton.MouseButton1Click:Connect(function()
 	tierFrame.Visible = true
 	openButton.Visible = false
 
-	-- Hide other GUI elements
 	for _, obj in pairs(myScreenGui:GetDescendants()) do
 		if obj:IsA("GuiButton") and not obj:IsDescendantOf(mainWindow) and not obj:IsDescendantOf(tierFrame) and obj ~= openButton then
 			obj.Visible = false
@@ -244,16 +310,34 @@ local function performClose()
 		if obj:IsA("GuiButton") then obj.Visible = true end
 	end
 
+	toggleOtherGuis(false)
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
+
+	-- 4. FADE OUT MUSIC SAFELY
+	if shopMusic.IsPlaying then
+		currentFadeTween = TweenService:Create(shopMusic, TweenInfo.new(1, Enum.EasingStyle.Linear), {Volume = 0})
+		currentFadeTween:Play()
+
+		currentFadeTween.Completed:Connect(function(playbackState)
+			-- Only stop if the tween actually finished (wasn't cancelled)
+			if playbackState == Enum.PlaybackState.Completed then
+				shopMusic:Stop()
+				if gameThemeSound then
+					gameThemeSound:Resume() 
+				end
+			end
+			currentFadeTween = nil -- Reset tracker
+		end)
+	end
 end
 
 closeButton.MouseButton1Click:Connect(function() 
-	local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
+	playSfx(CLICK_SOUND_ID, 0.5)
 	performClose() 
 end)
 
 -- ============================================================================
--- 🔘 TIER TABS
+-- 🔘 TIER TABS (WITH MYTHIC SFX)
 -- ============================================================================
 if tierContainer then
 	for _, btn in pairs(tierContainer:GetChildren()) do
@@ -262,7 +346,14 @@ if tierContainer then
 			addDimEffect(btn)
 
 			btn.MouseButton1Click:Connect(function()
-				local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
+
+				-- 🔊 MYTHIC SFX CHECK
+				if btn.Name == "Mythic" then
+					playSfx(MYTHIC_SFX_ID, 1) -- Louder for Mythic
+				else
+					playSfx(CLICK_SOUND_ID, 0.5)
+				end
+
 				currentTab = btn.Name 
 
 				updateBackground() 
