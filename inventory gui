@@ -1,6 +1,5 @@
--- ( LOCAL SCRIPT: Inventory - NO JUMPING FIX )
--- Features: Silent Dim for Open/Close, Center Pop-Up + SFX for Items/Tabs.
--- ✅ FIXED: Buttons stay in place when AnchorPoint changes.
+-- ( LOCAL SCRIPT: Inventory - NORMAL MODE )
+-- ( Handles inventory logic, UI animations, and toggles separate Background ImageLabels per Tier )
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -13,20 +12,9 @@ local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 local openButton = script.Parent 
 
--- 📂 HIERARCHY FINDER
-local myScreenGui = openButton:FindFirstAncestorWhichIsA("ScreenGui")
-local mainWindow = myScreenGui:WaitForChild("InventoryWindow")
-local itemsContainer = mainWindow:WaitForChild("ItemContainer") 
-local closeButton = mainWindow:WaitForChild("CloseButton") 
-
--- 📂 TIER FINDER
-local tierFrame = myScreenGui:WaitForChild("TierFrame")
-local tierContainer = tierFrame:WaitForChild("TierContainer")
-
--- 📂 MODULES
-local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
-
--- ⚙️ CONFIG
+-- ============================================================================
+-- ⚙️ CONFIGURATION
+-- ============================================================================
 local OPEN_FOV = 50 
 local NORMAL_FOV = 70 
 local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
@@ -40,71 +28,76 @@ local HOVER_SOUND_ID = "rbxassetid://6895079853"
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
 local DIM_COLOR = Color3.fromRGB(170, 170, 170)    
 
+-- ============================================================================
+-- 📂 HIERARCHY SETUP
+-- ============================================================================
+local myScreenGui = openButton:FindFirstAncestorWhichIsA("ScreenGui")
+
+-- Main Window Components
+local mainWindow = myScreenGui:WaitForChild("InventoryWindow", 10)
+local itemsContainer = mainWindow:WaitForChild("ItemContainer", 10)
+local closeButton = mainWindow:WaitForChild("CloseButton", 10)
+
+-- Tier Components
+local tierFrame = myScreenGui:WaitForChild("TierFrame", 10)
+local tierContainer = tierFrame:WaitForChild("TierContainer", 10)
+
+-- 🖼️ BACKGROUND SETUP (Finds CommonBG, RareBG, etc.)
+local tierBackgrounds = {}
+local tierNames = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"}
+
+-- Find and store all background images
+for _, rarity in ipairs(tierNames) do
+	local bgName = rarity .. "BG"
+	local bgObj = mainWindow:FindFirstChild(bgName) -- Look inside InventoryWindow
+
+	if bgObj then
+		tierBackgrounds[rarity] = bgObj
+		bgObj.Visible = false -- Hide all initially
+	end
+end
+
+-- Module Loading
+local CarStats = nil
+pcall(function()
+	CarStats = require(ReplicatedStorage:WaitForChild("CarStats", 5))
+end)
+
 pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false) end)
 
-local currentTab = "Common" -- Default Tab
+local currentTab = "Common" 
 
 -- ============================================================================
--- 1️⃣ DIM EFFECT (Silent, No Scale)
+-- 1️⃣ UI EFFECTS (Dim & Scale)
 -- ============================================================================
 local function addDimEffect(btn)
 	btn.MouseEnter:Connect(function()
 		TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = DIM_COLOR}):Play()
 	end)
-
 	btn.MouseLeave:Connect(function()
 		TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = NORMAL_COLOR}):Play()
 	end)
 end
 
--- ============================================================================
--- 2️⃣ CENTER POP-UP EFFECT (With Position Fix)
--- ============================================================================
 local function forceSafeCenter(btn)
-	-- Only fix if not already centered
 	if btn.AnchorPoint ~= Vector2.new(0.5, 0.5) then
-		-- 1. Calculate the offset needed to keep it in place
-		local sizeX = btn.Size.X.Scale * btn.Parent.AbsoluteSize.X + btn.Size.X.Offset
-		local sizeY = btn.Size.Y.Scale * btn.Parent.AbsoluteSize.Y + btn.Size.Y.Offset
-
-		-- 2. Update Position to compensate for the pivot change
-		-- (Using Scale/Offset addition for robust support)
 		btn.Position = btn.Position + UDim2.new(
 			btn.Size.X.Scale * 0.5, 
 			btn.Size.X.Offset * 0.5, 
 			btn.Size.Y.Scale * 0.5, 
 			btn.Size.Y.Offset * 0.5
 		)
-
-		-- 3. Now we can safely set AnchorPoint
 		btn.AnchorPoint = Vector2.new(0.5, 0.5)
 	end
 end
 
 local function addScaleEffect(btn)
-	-- ✅ Fix the AnchorPoint so it zooms from center without moving
 	forceSafeCenter(btn)
-
-	-- Add UIScale
-	local scale = btn:FindFirstChild("UIScale")
-	if not scale then
-		scale = Instance.new("UIScale")
-		scale.Parent = btn
-	end
+	local scale = btn:FindFirstChild("UIScale") or Instance.new("UIScale", btn)
 
 	btn.MouseEnter:Connect(function()
-		-- Sound
-		local s = Instance.new("Sound")
-		s.SoundId = HOVER_SOUND_ID
-		s.Volume = 0.3
-		s.Parent = SoundService
-		s:Play()
-		game.Debris:AddItem(s, 1)
-
-		-- Pop to Front
+		local s = Instance.new("Sound"); s.SoundId = HOVER_SOUND_ID; s.Volume = 0.3; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s, 1)
 		btn.ZIndex = 10 
-
-		-- Enlarge (Scale 1.2)
 		TweenService:Create(scale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 1.2}):Play()
 	end)
 
@@ -115,59 +108,21 @@ local function addScaleEffect(btn)
 end
 
 -- ============================================================================
--- 🛡️ SETUP DETECTOR
+-- 🖼️ BACKGROUND UPDATE LOGIC
 -- ============================================================================
-local detector = Instance.new("TextButton")
-detector.Name = "OutsideDetector"
-detector.Parent = myScreenGui
-detector.Size = UDim2.new(1, 0, 1, 0)
-detector.BackgroundTransparency = 1 
-detector.Text = ""
-detector.ZIndex = mainWindow.ZIndex - 1 
-detector.Visible = false
-detector.Active = true 
-
--- ============================================================================
--- 👁️ FOCUS MODE (HUNTER LOGIC)
--- ============================================================================
-local function setFocusMode(isFocused)
-	detector.Visible = isFocused
-	mainWindow.Visible = isFocused
-	tierFrame.Visible = isFocused 
-	openButton.Visible = not isFocused 
-
-	local playerGui = player:WaitForChild("PlayerGui")
-	for _, gui in pairs(playerGui:GetChildren()) do
-		if gui:IsA("ScreenGui") and gui ~= myScreenGui then
-			gui.Enabled = not isFocused
-		end
-	end
-
-	for _, obj in pairs(myScreenGui:GetDescendants()) do
-		if obj:IsA("GuiButton") then
-			local isInventoryPart = obj:IsDescendantOf(mainWindow)
-			local isTierPart = obj:IsDescendantOf(tierFrame) 
-			local isOpenButton = (obj == openButton)
-			local isDetector = (obj == detector)
-
-			if not isInventoryPart and not isTierPart and not isOpenButton and not isDetector then
-				obj.Visible = not isFocused 
-			end
-		end
-	end
-
-	local character = player.Character
-	if character then
-		local humanoid = character:FindFirstChild("Humanoid")
-		if humanoid then
-			humanoid.WalkSpeed = isFocused and 0 or 16
-			humanoid.JumpPower = isFocused and 0 or 50
+local function updateBackground()
+	-- Loop through all known backgrounds and show only the current one
+	for rarity, bgObject in pairs(tierBackgrounds) do
+		if rarity == currentTab then
+			bgObject.Visible = true
+		else
+			bgObject.Visible = false
 		end
 	end
 end
 
 -- ============================================================================
--- 🎒 INVENTORY POPULATION (TIERED)
+-- 🎒 INVENTORY LOGIC
 -- ============================================================================
 local function getRarityColor(rarity)
 	if rarity == "Common" then return Color3.fromRGB(150, 150, 150) end
@@ -180,12 +135,12 @@ local function getRarityColor(rarity)
 end
 
 local function updateInventory()
-	-- Clear old
+	-- Clear old items
 	for _, child in pairs(itemsContainer:GetChildren()) do
 		if child:IsA("GuiButton") then child:Destroy() end
 	end
 
-	-- Get all tools
+	-- Scan Player Inventory
 	local items = {}
 	local function scan(loc)
 		for _, tool in pairs(loc:GetChildren()) do
@@ -198,37 +153,30 @@ local function updateInventory()
 	scan(player.Backpack)
 	scan(player.StarterGear)
 
-	-- Populate based on Tab
+	-- Populate List
 	for carName, tool in pairs(items) do
 		local stats = CarStats.Cars[carName]
 
-		-- 🛡️ FILTER: Match Tab
 		if stats and stats.Rarity == currentTab then
 			local btn = Instance.new("TextButton")
 			btn.Name = carName
 			btn.Text = carName
 			btn.Parent = itemsContainer
-			btn.Size = UDim2.new(0, 100, 0, 100) -- Box Shape
+			btn.Size = UDim2.new(0, 100, 0, 100)
 			btn.BackgroundColor3 = getRarityColor(stats.Rarity)
 			btn.TextColor3 = Color3.new(1,1,1)
 			btn.Font = Enum.Font.FredokaOne
 			btn.TextWrapped = true
 
-			-- For generated buttons, we can set it safely immediately
-			btn.AnchorPoint = Vector2.new(0.5, 0.5)
-
+			btn.AnchorPoint = Vector2.new(0.5, 0.5) 
 			local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = btn
 
-			-- Equipped Visual
 			if player.Character and player.Character:FindFirstChild(tool.Name) then
 				local stroke = Instance.new("UIStroke")
-				stroke.Color = Color3.new(1,1,1)
-				stroke.Thickness = 3
-				stroke.Parent = btn
+				stroke.Color = Color3.new(1,1,1); stroke.Thickness = 3; stroke.Parent = btn
 				btn.Text = carName .. "\n(Equipped)"
 			end
 
-			-- ✨ APPLY SCALE EFFECT
 			addScaleEffect(btn)
 
 			btn.MouseButton1Click:Connect(function()
@@ -238,10 +186,10 @@ local function updateInventory()
 				local existingTool = char and char:FindFirstChild(tool.Name)
 
 				if existingTool then
-					existingTool.Parent = player.Backpack -- Unequip
+					existingTool.Parent = player.Backpack 
 				else
 					local bagTool = player.Backpack:FindFirstChild(tool.Name)
-					if bagTool then bagTool.Parent = char end -- Equip
+					if bagTool then bagTool.Parent = char end 
 				end
 				updateInventory()
 			end)
@@ -252,46 +200,77 @@ end
 -- ============================================================================
 -- 🟢 OPEN / CLOSE LOGIC
 -- ============================================================================
-local function playSound()
-	local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
-end
+local detector = Instance.new("TextButton")
+detector.Name = "OutsideDetector"
+detector.Parent = myScreenGui
+detector.Size = UDim2.new(1, 0, 1, 0)
+detector.BackgroundTransparency = 1 
+detector.Text = ""
+detector.ZIndex = mainWindow.ZIndex - 1 
+detector.Visible = false
 
 openButton.MouseButton1Click:Connect(function()
-	playSound()
+	local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
+
 	updateInventory()
-	setFocusMode(true) 
+	updateBackground() -- ✅ Ensure correct background is shown on open
+
+	detector.Visible = true
+	mainWindow.Visible = true
+	tierFrame.Visible = true
+	openButton.Visible = false
+
+	-- Hide other GUI elements
+	for _, obj in pairs(myScreenGui:GetDescendants()) do
+		if obj:IsA("GuiButton") and not obj:IsDescendantOf(mainWindow) and not obj:IsDescendantOf(tierFrame) and obj ~= openButton then
+			obj.Visible = false
+		end
+	end
+
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = OPEN_FOV}):Play()
 end)
 
 local function performClose()
-	setFocusMode(false) 
+	detector.Visible = false
+	mainWindow.Visible = false
+	tierFrame.Visible = false
+	openButton.Visible = true
+
+	for _, obj in pairs(myScreenGui:GetDescendants()) do
+		if obj:IsA("GuiButton") then obj.Visible = true end
+	end
+
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
 end
 
-closeButton.MouseButton1Click:Connect(function() playSound(); performClose() end)
+closeButton.MouseButton1Click:Connect(function() 
+	local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
+	performClose() 
+end)
 detector.MouseButton1Click:Connect(function() performClose() end)
 
 -- ============================================================================
--- 🔘 TIER TABS LOGIC
+-- 🔘 TIER TABS
 -- ============================================================================
-for _, btn in pairs(tierContainer:GetChildren()) do
-	if btn:IsA("GuiButton") then
+if tierContainer then
+	for _, btn in pairs(tierContainer:GetChildren()) do
+		if btn:IsA("GuiButton") then
+			addScaleEffect(btn)
+			addDimEffect(btn)
 
-		-- ✨ APPLY CENTER POP-UP TO TABS (Safely)
-		addScaleEffect(btn)
+			btn.MouseButton1Click:Connect(function()
+				local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
+				currentTab = btn.Name
 
-		btn.MouseButton1Click:Connect(function()
-			playSound()
-			currentTab = btn.Name -- "Common", "Rare", etc.
-			updateInventory()
-		end)
+				updateBackground() -- ✅ Switch background immediately
+				updateInventory()
+			end)
+		end
 	end
 end
 
--- ✨ SILENT DIM FOR OPEN/CLOSE
 addDimEffect(openButton)
 addDimEffect(closeButton)
 
--- Startup
 tierFrame.Visible = false
 mainWindow.Visible = false
