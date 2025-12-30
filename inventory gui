@@ -1,5 +1,5 @@
--- ( LOCAL SCRIPT: Inventory - MOVEMENT FIX )
--- ( Removed "OutsideDetector" so you can walk and move camera while inventory is open )
+-- ( LOCAL SCRIPT: Inventory & Background System )
+-- ( This script manages the Inventory UI, handles item equipping, and includes a robust visibility system that links Tier Buttons to their respective Background Images, ensuring correct Z-Index layering. )
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -26,7 +26,7 @@ local HOVER_SOUND_ID = "rbxassetid://6895079853"
 
 -- 🎨 COLORS
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
-local DIM_COLOR = Color3.fromRGB(170, 170, 170)    
+local DIM_COLOR = Color3.fromRGB(170, 170, 170)     
 
 -- ============================================================================
 -- 📂 HIERARCHY SETUP
@@ -42,17 +42,30 @@ local closeButton = mainWindow:WaitForChild("CloseButton", 10)
 local tierFrame = myScreenGui:WaitForChild("TierFrame", 10)
 local tierContainer = tierFrame:WaitForChild("TierContainer", 10)
 
--- 🖼️ BACKGROUND SETUP
+-- 🖼️ BACKGROUND SETUP (ROBUST FIX)
 local tierBackgrounds = {}
+-- ✅ FIX 1: Use base names only. "Common", not "CommonBG". 
+-- This ensures the button name "Common" matches the key in our table later.
 local tierNames = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"}
 
 for _, rarity in ipairs(tierNames) do
-	local bgName = rarity .. "BG"
-	local bgObj = mainWindow:FindFirstChild(bgName) 
-	
+	local bgName = rarity .. "BG" -- Constructs "CommonBG"
+	local bgObj = mainWindow:FindFirstChild(bgName) -- Checks direct child
+
 	if bgObj then
+		-- Map the RARITY name (e.g., "Common") to the IMAGE OBJECT
 		tierBackgrounds[rarity] = bgObj
-		bgObj.Visible = false 
+
+		-- ✅ FIX 2: ZIndex Auto-Correction
+		-- Forces the image to be exactly 1 layer above the Window Frame
+		-- This fixes the issue where the image is "Visible" but hidden behind the grey box.
+		if bgObj.ZIndex <= mainWindow.ZIndex then
+			bgObj.ZIndex = mainWindow.ZIndex + 1
+		end
+
+		bgObj.Visible = false -- Start hidden
+	else
+		warn("⚠️ Inventory Script Warning: Could not find image '" .. bgName .. "' inside InventoryWindow.")
 	end
 end
 
@@ -93,7 +106,7 @@ end
 local function addScaleEffect(btn)
 	forceSafeCenter(btn)
 	local scale = btn:FindFirstChild("UIScale") or Instance.new("UIScale", btn)
-	
+
 	btn.MouseEnter:Connect(function()
 		local s = Instance.new("Sound"); s.SoundId = HOVER_SOUND_ID; s.Volume = 0.3; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s, 1)
 		btn.ZIndex = 10 
@@ -110,8 +123,9 @@ end
 -- 🖼️ BACKGROUND UPDATE LOGIC
 -- ============================================================================
 local function updateBackground()
-	for rarity, bgObject in pairs(tierBackgrounds) do
-		if rarity == currentTab then
+	-- Loop through our table. Key is "Common", Value is the Image Object.
+	for rarityKey, bgObject in pairs(tierBackgrounds) do
+		if rarityKey == currentTab then
 			bgObject.Visible = true
 		else
 			bgObject.Visible = false
@@ -141,6 +155,7 @@ local function updateInventory()
 	-- Scan Player Inventory
 	local items = {}
 	local function scan(loc)
+		if not loc then return end
 		for _, tool in pairs(loc:GetChildren()) do
 			if tool:IsA("Tool") and tool.Name:match(" Item") then
 				local cleanName = tool.Name:gsub(" Item", "")
@@ -148,13 +163,14 @@ local function updateInventory()
 			end
 		end
 	end
-	scan(player.Backpack)
-	scan(player.StarterGear)
+	scan(player:FindFirstChild("Backpack"))
+	scan(player:FindFirstChild("StarterGear"))
 
 	-- Populate List
 	for carName, tool in pairs(items) do
-		local stats = CarStats.Cars[carName]
-		
+		-- Safety check if CarStats exists
+		local stats = CarStats and CarStats.Cars and CarStats.Cars[carName]
+
 		if stats and stats.Rarity == currentTab then
 			local btn = Instance.new("TextButton")
 			btn.Name = carName
@@ -165,7 +181,7 @@ local function updateInventory()
 			btn.TextColor3 = Color3.new(1,1,1)
 			btn.Font = Enum.Font.FredokaOne
 			btn.TextWrapped = true
-			
+
 			btn.AnchorPoint = Vector2.new(0.5, 0.5) 
 			local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = btn
 
@@ -174,15 +190,15 @@ local function updateInventory()
 				stroke.Color = Color3.new(1,1,1); stroke.Thickness = 3; stroke.Parent = btn
 				btn.Text = carName .. "\n(Equipped)"
 			end
-			
+
 			addScaleEffect(btn)
 
 			btn.MouseButton1Click:Connect(function()
 				local s = Instance.new("Sound"); s.SoundId = EQUIP_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 1)
-				
+
 				local char = player.Character
 				local existingTool = char and char:FindFirstChild(tool.Name)
-				
+
 				if existingTool then
 					existingTool.Parent = player.Backpack 
 				else
@@ -190,8 +206,6 @@ local function updateInventory()
 					if bagTool then bagTool.Parent = char end 
 				end
 				updateInventory()
-				
-				-- Note: We DO NOT close the menu here anymore, so you can keep equipping things.
 			end)
 		end
 	end
@@ -201,26 +215,23 @@ end
 -- 🟢 OPEN / CLOSE LOGIC
 -- ============================================================================
 
--- [DELETED] OutsideDetector: This was the invisible button blocking your camera.
--- It has been removed so you can touch the screen to move/look around.
-
 openButton.MouseButton1Click:Connect(function()
 	local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
-	
+
 	updateInventory()
 	updateBackground()
-	
+
 	mainWindow.Visible = true
 	tierFrame.Visible = true
 	openButton.Visible = false
-	
+
 	-- Hide other GUI elements
 	for _, obj in pairs(myScreenGui:GetDescendants()) do
 		if obj:IsA("GuiButton") and not obj:IsDescendantOf(mainWindow) and not obj:IsDescendantOf(tierFrame) and obj ~= openButton then
 			obj.Visible = false
 		end
 	end
-	
+
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = OPEN_FOV}):Play()
 end)
 
@@ -228,11 +239,11 @@ local function performClose()
 	mainWindow.Visible = false
 	tierFrame.Visible = false
 	openButton.Visible = true
-	
+
 	for _, obj in pairs(myScreenGui:GetDescendants()) do
 		if obj:IsA("GuiButton") then obj.Visible = true end
 	end
-	
+
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
 end
 
@@ -249,12 +260,12 @@ if tierContainer then
 		if btn:IsA("GuiButton") then
 			addScaleEffect(btn)
 			addDimEffect(btn)
-			
+
 			btn.MouseButton1Click:Connect(function()
 				local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Volume=0.5; s.Parent=SoundService; s:Play(); game.Debris:AddItem(s, 2)
-				currentTab = btn.Name
-				
-				updateBackground() 
+				currentTab = btn.Name -- e.g., "Uncommon"
+
+				updateBackground() -- Matches "Uncommon" to "UncommonBG" image
 				updateInventory()
 			end)
 		end
