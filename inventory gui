@@ -1,6 +1,6 @@
--- ( LOCAL SCRIPT: Inventory - FIXED VISIBILITY & ROBUST CHECK )
--- Fixes: "Invisible Item" glitch. Now detects cars even if named "Delta" instead of "Delta Item".
--- Includes: CommonBG logic, Sound bugs, and Studio Auto-Hide.
+-- ( LOCAL SCRIPT: Inventory - SINGLE EQUIP FIX )
+-- Fixes: "Holding 2 items at once."
+-- Logic: Auto-unequips any currently held tool before equipping the new one.
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -93,7 +93,7 @@ for _, rarity in ipairs(tierNames) do
 	end
 end
 
--- Module Loading (CRITICAL FOR FIX)
+-- Module Loading
 local CarStats = nil
 local success, err = pcall(function()
 	CarStats = require(ReplicatedStorage:WaitForChild("CarStats", 5))
@@ -188,7 +188,7 @@ local function updateBackground()
 end
 
 -- ============================================================================
--- 🎒 INVENTORY LOGIC (THE FIX)
+-- 🎒 INVENTORY LOGIC (WITH SINGLE EQUIP FIX)
 -- ============================================================================
 local function getRarityColor(rarity)
 	if rarity == "Common" then return Color3.fromRGB(150, 150, 150) end
@@ -208,32 +208,22 @@ local function updateInventory()
 
 	local items = {}
 
-	-- 🔍 ROBUST SCAN FUNCTION
-	-- This checks if the tool matches ANY valid car in CarStats
+	-- 🔍 ROBUST SCAN
 	local function scan(loc)
 		if not loc then return end
 		for _, tool in pairs(loc:GetChildren()) do
 			if tool:IsA("Tool") and CarStats and CarStats.Cars then
 				local cleanName = nil
-				
-				-- 1. Try Exact Name (e.g. "Delta")
 				if CarStats.Cars[tool.Name] then
 					cleanName = tool.Name
-				
-				-- 2. Try Removing " Item" (e.g. "Delta Item")
 				elseif tool.Name:match(" Item$") then
 					local temp = tool.Name:gsub(" Item", "")
 					if CarStats.Cars[temp] then cleanName = temp end
-				
-				-- 3. Try Removing "Item" (e.g. "DeltaItem")
 				elseif tool.Name:match("Item$") then
 					local temp = tool.Name:gsub("Item", "")
 					if CarStats.Cars[temp] then cleanName = temp end
 				end
-				
-				if cleanName then
-					items[cleanName] = tool
-				end
+				if cleanName then items[cleanName] = tool end
 			end
 		end
 	end
@@ -266,15 +256,29 @@ local function updateInventory()
 
 			addScaleEffect(btn)
 
+			-- 🛑 CLICK HANDLER (UPDATED FOR SINGLE EQUIP)
 			btn.MouseButton1Click:Connect(function()
 				playSfx(EQUIP_SOUND_ID, 0.5)
 				local char = player.Character
-				local existingTool = char and char:FindFirstChild(tool.Name)
+				if not char then return end
+
+				local existingTool = char:FindFirstChild(tool.Name)
 
 				if existingTool then
+					-- Case A: You are holding THIS car. Unequip it.
 					existingTool.Parent = player.Backpack 
 				else
+					-- Case B: You want to equip a NEW car.
 					if tool.Parent == player.Backpack then
+						
+						-- 1. UNEQUIP EVERYTHING ELSE FIRST
+						for _, object in pairs(char:GetChildren()) do
+							if object:IsA("Tool") then
+								object.Parent = player.Backpack
+							end
+						end
+						
+						-- 2. NOW EQUIP THE TARGET CAR
 						tool.Parent = char
 					end
 				end
@@ -291,13 +295,11 @@ end
 openButton.MouseButton1Click:Connect(function()
 	playSfx(CLICK_SOUND_ID, 0.5)
 
-	-- 1. STOP FADE OUT
 	if currentFadeTween then
 		currentFadeTween:Cancel()
 		currentFadeTween = nil
 	end
 
-	-- 2. HANDLE MUSIC
 	if gameThemeSound and gameThemeSound.IsPlaying then
 		gameThemeSound:Pause()
 	end
@@ -307,7 +309,6 @@ openButton.MouseButton1Click:Connect(function()
 		shopMusic:Play()
 	end
 
-	-- 3. UI LOGIC
 	toggleOtherGuis(true)
 
 	currentTab = "Common" 
@@ -339,7 +340,6 @@ local function performClose()
 	toggleOtherGuis(false)
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
 
-	-- 4. FADE OUT MUSIC SAFELY
 	if shopMusic.IsPlaying then
 		currentFadeTween = TweenService:Create(shopMusic, TweenInfo.new(1, Enum.EasingStyle.Linear), {Volume = 0})
 		currentFadeTween:Play()
@@ -371,7 +371,6 @@ if tierContainer then
 			addDimEffect(btn)
 
 			btn.MouseButton1Click:Connect(function()
-				-- 🔊 MYTHIC SFX CHECK
 				if btn.Name == "Mythic" then
 					playSfx(MYTHIC_SFX_ID, 1) 
 				else
