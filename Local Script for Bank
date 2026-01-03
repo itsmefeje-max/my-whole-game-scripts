@@ -57,7 +57,7 @@ local DIM_COLOR = Color3.fromRGB(200, 200, 200)
 
 -- 🔊 SOUND IDS
 local SOUND_ID = "rbxassetid://9083627113" 
-local BANK_MUSIC_ID = "rbxassetid://0" -- < 🎵 PASTE YOUR BANK MUSIC ID HERE
+local BANK_MUSIC_ID = "rbxassetid://15689439732" -- < 🎵 PASTE YOUR BANK MUSIC ID HERE
 
 -- ⚠️ IMPORTANT: Exact name of your game music in SoundService
 local GAME_THEME_NAME = "GameTheme" 
@@ -171,17 +171,17 @@ end
 local function setFocusMode(isFocused)
 	detector.Visible = isFocused
 	openButton.Visible = not isFocused 
-	
+
 	if isFocused then
 		mainWindow.Visible = true
 		if transferFrame then transferFrame.Visible = false end
-		
+
 		-- 👁️ Hide others
 		toggleOtherGuis(true)
 	else
 		mainWindow.Visible = false
 		if transferFrame then transferFrame.Visible = false end
-		
+
 		-- 👁️ Show others
 		toggleOtherGuis(false)
 	end
@@ -213,7 +213,7 @@ openButton.MouseButton1Click:Connect(function()
 	if gameThemeSound and gameThemeSound.IsPlaying then
 		gameThemeSound:Pause()
 	end
-	
+
 	bankMusic.Volume = 0.5 
 	if not bankMusic.IsPlaying then
 		bankMusic:Play()
@@ -233,12 +233,12 @@ end)
 local function performClose()
 	setFocusMode(false)
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
-	
+
 	-- 4. FADE OUT MUSIC SAFELY
 	if bankMusic.IsPlaying then
 		currentFadeTween = TweenService:Create(bankMusic, TweenInfo.new(1, Enum.EasingStyle.Linear), {Volume = 0})
 		currentFadeTween:Play()
-		
+
 		currentFadeTween.Completed:Connect(function(playbackState)
 			if playbackState == Enum.PlaybackState.Completed then
 				bankMusic:Stop()
