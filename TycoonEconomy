@@ -1,5 +1,6 @@
--- ( SERVER SCRIPT: TycoonEconomy - SUFFIX UPDATE )
--- Handles: Car Earnings Generation & Floating Text (With K/M/B Suffixes)
+-- ( SERVER SCRIPT: TycoonEconomy - NO VISUALS )
+-- Handles: Car Earnings Generation ONLY.
+-- Update: Removed "addCashUI" because the user has custom billboards.
 
 local ServerStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -11,90 +12,23 @@ local TycoonFolder = Workspace:WaitForChild("Tycoons")
 -- ⚙️ SETTINGS
 local PAY_INTERVAL = 1 -- Seconds
 
--- 📊 ABBREVIATION HELPER
-local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
-
-local function formatNumber(n)
-	n = tonumber(n)
-	if not n then return "0" end
-	if n < 1000 then return tostring(math.floor(n)) end
-	local i = math.floor(math.log(n, 1000))
-	local v = math.pow(1000, i)
-	local suffix = SUFFIXES[i] or "?"
-	return string.format("%.2f%s", n / v, suffix)
-end
-
--- 🛠️ FUNCTION: Create Floating UI
-local function addCashUI(carModel, cpsAmount)
-	-- Clean up old UI
-	local existing = carModel:FindFirstChild("CashBillboard")
-	if existing then existing:Destroy() end
-
-	local bb = Instance.new("BillboardGui")
-	bb.Name = "CashBillboard"
-	bb.Adornee = carModel.PrimaryPart or carModel:FindFirstChildWhichIsA("BasePart")
-	bb.Size = UDim2.new(0, 100, 0, 50)
-	bb.StudsOffset = Vector3.new(0, 6, 0)
-	bb.AlwaysOnTop = true
-	bb.Parent = carModel
-
-	local txt = Instance.new("TextLabel")
-	txt.Parent = bb
-	txt.Size = UDim2.new(1, 0, 1, 0)
-	txt.BackgroundTransparency = 1
-	-- ✅ UPDATE: Now uses formatNumber!
-	txt.Text = "+$" .. formatNumber(cpsAmount) .. "/s"
-	txt.TextColor3 = Color3.fromRGB(85, 255, 127) 
-	txt.TextStrokeTransparency = 0
-	txt.Font = Enum.Font.FredokaOne
-	txt.TextSize = 20
-end
-
--- 🛠️ FUNCTION: Setup Pad Listener
-local function setupPadListener(pad)
-	local linkedCarVal = pad:WaitForChild("LinkedCar", 5)
-	if not linkedCarVal then return end
-
-	linkedCarVal.Changed:Connect(function(newCar)
-		if newCar and newCar:IsA("Model") then
-			local carName = newCar.Name
-			local stats = CarStats.Cars[carName]
-			if stats then
-				addCashUI(newCar, stats.CPS)
-			end
-		end
-	end)
-end
-
--- 🔄 INITIALIZATION
-for _, plot in pairs(TycoonFolder:GetChildren()) do
-	if not plot:FindFirstChild("PendingEarnings") then
-		local pendingInt = Instance.new("IntValue")
-		pendingInt.Name = "PendingEarnings"
-		pendingInt.Value = 0
-		pendingInt.Parent = plot
-	end
-
-	local padsFolder = plot:FindFirstChild("Pads")
-	if padsFolder then
-		for _, pad in pairs(padsFolder:GetChildren()) do
-			setupPadListener(pad)
-		end
-	end
-end
-
--- 💰 MAIN LOOP
+-- 💰 MAIN ECONOMY LOOP
+-- This loop calculates money silently without creating any GUIs.
 task.spawn(function()
 	while true do
 		task.wait(PAY_INTERVAL)
+		
 		for _, plot in pairs(TycoonFolder:GetChildren()) do
 			local pendingValue = plot:FindFirstChild("PendingEarnings")
 			local padsFolder = plot:FindFirstChild("Pads")
 
 			if pendingValue and padsFolder then
 				local plotTotalIncome = 0
+				
+				-- Scan all pads to calculate total earnings
 				for _, pad in pairs(padsFolder:GetChildren()) do
 					local linkedCar = pad:FindFirstChild("LinkedCar") and pad.LinkedCar.Value
+					
 					if linkedCar and linkedCar.Parent then
 						local stats = CarStats.Cars[linkedCar.Name]
 						if stats then
@@ -102,6 +36,8 @@ task.spawn(function()
 						end
 					end
 				end
+				
+				-- Deposit earnings to the "Pending" pile
 				if plotTotalIncome > 0 then
 					pendingValue.Value = pendingValue.Value + plotTotalIncome
 				end
@@ -109,3 +45,6 @@ task.spawn(function()
 		end
 	end
 end)
+
+-- NOTE: The "setupPadListener" and "addCashUI" functions were deleted 
+-- so the script no longer creates floating text on your cars.
