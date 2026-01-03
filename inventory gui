@@ -270,14 +270,14 @@ local function updateInventory()
 				else
 					-- Case B: You want to equip a NEW car.
 					if tool.Parent == player.Backpack then
-						
+
 						-- 1. UNEQUIP EVERYTHING ELSE FIRST
 						for _, object in pairs(char:GetChildren()) do
 							if object:IsA("Tool") then
 								object.Parent = player.Backpack
 							end
 						end
-						
+
 						-- 2. NOW EQUIP THE TARGET CAR
 						tool.Parent = char
 					end
