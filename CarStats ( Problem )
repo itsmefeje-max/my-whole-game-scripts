@@ -1,5 +1,6 @@
 -- MODULE SCRIPT: CarStats
 -- LOCATION: ReplicatedStorage > CarStats
+-- not generating money
 
 local CarStats = {}
 
