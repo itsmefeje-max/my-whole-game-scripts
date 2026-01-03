@@ -1,93 +1,84 @@
--- ( SERVER SCRIPT: AdminCommands )
--- Mimics Minecraft Bedrock's /give command syntax.
+-- ( SERVER SCRIPT: AdminCommands - CASE INSENSITIVE FIX )
 -- Usage: /give <target> <item_name> [amount]
--- Example: /give @s Centurion
+-- Example: /give @s delta (Finds "Delta Item")
+
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
 
 -- ⚙️ CONFIGURATION
-local CarTools = ServerStorage:WaitForChild("CarTools") -- Where your tools live
+local CarTools = ServerStorage:WaitForChild("CarTools") 
 local ADMIN_USER_IDS = {
-	[5512860740] = true, -- REPLACE with your actual UserId
-	-- [--] = true, -- Add friends here
+	[5512860740] = true, -- Your ID
 }
-local ALLOW_STUDIO_ADMIN = true -- Automatically admin if testing in Studio
+local ALLOW_STUDIO_ADMIN = true 
 
 -- ============================================================================
--- 🎯 TARGET SELECTOR LOGIC (@s, @p, @a, @r, Name)
+-- 🎯 TARGET SELECTOR LOGIC
 -- ============================================================================
 local function getTargets(speaker, selector)
 	local targets = {}
 	local allPlayers = Players:GetPlayers()
 
 	if selector == "@s" then
-		-- Self
 		table.insert(targets, speaker)
-
 	elseif selector == "@a" then
-		-- All Players
 		targets = allPlayers
-
 	elseif selector == "@r" then
-		-- Random Player
-		if #allPlayers > 0 then
-			table.insert(targets, allPlayers[math.random(1, #allPlayers)])
-		end
-
+		if #allPlayers > 0 then table.insert(targets, allPlayers[math.random(1, #allPlayers)]) end
 	elseif selector == "@p" then
-		-- Nearest Player
 		if not speaker.Character or not speaker.Character.PrimaryPart then return {} end
 		local myPos = speaker.Character.PrimaryPart.Position
-		local closestDist = math.huge
-		local closestPlayer = nil
-
+		local closestDist, closestPlayer = math.huge, nil
 		for _, p in pairs(allPlayers) do
 			if p ~= speaker and p.Character and p.Character.PrimaryPart then
 				local dist = (p.Character.PrimaryPart.Position - myPos).Magnitude
-				if dist < closestDist then
-					closestDist = dist
-					closestPlayer = p
-				end
+				if dist < closestDist then closestDist = dist; closestPlayer = p end
 			end
 		end
-		-- If nobody else is near, @p usually defaults to self in MC, but strict nearest logic:
-		if closestPlayer then 
-			table.insert(targets, closestPlayer) 
-		else
-			table.insert(targets, speaker) -- Fallback to self if solo
-		end
-
+		table.insert(targets, closestPlayer or speaker)
 	else
-		-- Specific Player Name (Partial Match Support)
+		-- Name Match (Case Insensitive)
 		for _, p in pairs(allPlayers) do
 			if p.Name:lower():sub(1, #selector) == selector:lower() then
 				table.insert(targets, p)
-				break -- Stop after finding first match
+				break 
 			end
 		end
 	end
-
 	return targets
 end
 
 -- ============================================================================
--- 🎒 ITEM GIVING LOGIC
+-- 🎒 ITEM GIVING LOGIC (CASE INSENSITIVE FIX)
 -- ============================================================================
+local function findToolCaseInsensitive(itemName)
+	local targetName = itemName:lower()
+
+	for _, tool in pairs(CarTools:GetChildren()) do
+		if tool:IsA("Tool") then
+			local toolName = tool.Name:lower()
+
+			-- Check 1: Exact Match (e.g. "vapid" == "vapid")
+			if toolName == targetName then return tool end
+
+			-- Check 2: With " item" suffix (e.g. "vapid" matches "vapid item")
+			if toolName == targetName .. " item" then return tool end
+
+			-- Check 3: With "item" suffix (e.g. "vapid" matches "vapiditem")
+			if toolName == targetName .. "item" then return tool end
+		end
+	end
+	return nil
+end
+
 local function giveItem(player, itemName, quantity)
-	-- 1. Try to find the tool. Supports "CarName" and "CarName Item"
-	local tool = CarTools:FindFirstChild(itemName) 
-		or CarTools:FindFirstChild(itemName .. " Item")
-		or CarTools:FindFirstChild(itemName .. "Item")
+	-- Use the new case-insensitive search
+	local tool = findToolCaseInsensitive(itemName)
 
 	if tool then
 		for i = 1, quantity do
-			-- Clone to Backpack (Inventory)
-			local clone = tool:Clone()
-			clone.Parent = player.Backpack
-
-			-- Clone to StarterGear (Persists after death)
-			local gearClone = tool:Clone()
-			gearClone.Parent = player.StarterGear
+			tool:Clone().Parent = player.Backpack
+			tool:Clone().Parent = player.StarterGear
 		end
 		return true, tool.Name
 	else
@@ -100,40 +91,33 @@ end
 -- ============================================================================
 Players.PlayerAdded:Connect(function(player)
 	player.Chatted:Connect(function(message)
-
-		-- 🛡️ 1. CHECK PERMISSIONS
-		local isAdmin = ADMIN_USER_IDS[player.UserId] or (ALLOW_STUDIO_ADMIN and game.PlaceId == 0) -- 0 = Studio
+		local isAdmin = ADMIN_USER_IDS[player.UserId] or (ALLOW_STUDIO_ADMIN and game.PlaceId == 0)
 		if not isAdmin then return end
 
-		-- ✂️ 2. SPLIT MESSAGE
-		-- Pattern: /give <target> <item> [amount]
 		local args = message:split(" ")
 		if args[1]:lower() ~= "/give" then return end
 
-		-- 🛑 3. VALIDATE ARGUMENTS
 		local selector = args[2]
 		local itemName = args[3]
-		local amount = tonumber(args[4]) or 1 -- Default to 1 if missing
+		local amount = tonumber(args[4]) or 1 
 
 		if not selector or not itemName then
 			warn("❌ Usage: /give <target> <item> [amount]")
 			return
 		end
 
-		-- 🎯 4. GET TARGETS
 		local targetPlayers = getTargets(player, selector)
 		if #targetPlayers == 0 then
-			warn("❌ No targets found for selector: " .. selector)
+			warn("❌ No targets found for: " .. selector)
 			return
 		end
 
-		-- 🎁 5. GIVE ITEMS
 		for _, target in pairs(targetPlayers) do
 			local success, realName = giveItem(target, itemName, amount)
 			if success then
 				print("✅ Gave " .. amount .. "x [" .. realName .. "] to " .. target.Name)
 			else
-				warn("❌ Could not find item in CarTools: " .. itemName)
+				warn("❌ Could not find item: " .. itemName)
 			end
 		end
 	end)
