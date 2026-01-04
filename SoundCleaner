@@ -1,40 +1,48 @@
--- sound cleaner for console 
--- [[ SERVER SCRIPT: SoundCleaner ]]
--- Indicating what the script is for: Scans game for broken/placeholder sounds and deletes them.
+-- [[ SERVER SCRIPT: SoundCleaner V2 (Active Protection) ]]
+-- -- Indicating what the script is for: Actively monitors and deletes broken sounds.
+-- This runs FOREVER to catch sounds that spawn when you equip cars.
 
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 
-print("🧹 SoundCleaner: Starting scan...")
+print("🛡️ SoundCleaner V2: Active Protection Enabled.")
 
 -- 🚫 List of Bad IDs to remove
 local BAD_IDS = {
-	["rbxassetid://0"] = true,        -- The main cause of your red spam
+	["rbxassetid://0"] = true,        
 	["http://www.roblox.com/asset/?id=0"] = true,
-	["rbxassetid://188608071"] = true, -- Old/Broken Climb sound
-	["rbxassetid://201887209"] = true, -- Old/Broken Jump sound
+	["rbxassetid://188608071"] = true, 
+	["rbxassetid://201887209"] = true, 
 }
 
-local function cleanContainer(container)
-	-- Look at everything inside the folder
-	for _, desc in pairs(container:GetDescendants()) do
-		if desc:IsA("Sound") then
-			-- Check if ID is in our bad list OR is just "0"
-			if BAD_IDS[desc.SoundId] or desc.SoundId == "0" or desc.SoundId == "" then
-				-- Warn console so you know what was deleted (optional)
-				-- print("🗑️ Removing broken sound: " .. desc.Name .. " in " .. desc.Parent.Name)
-				desc:Destroy()
-			end
+-- Function to check and destroy a single object
+local function checkObject(obj)
+	if obj:IsA("Sound") then
+		-- Check if ID is bad, empty, or 0
+		if BAD_IDS[obj.SoundId] or obj.SoundId == "0" or obj.SoundId == "" then
+			-- Destroy silently to clear console
+			obj:Destroy()
 		end
 	end
 end
 
--- 1. Clean your Car Models (The main source)
-if ServerStorage:FindFirstChild("CarModels") then cleanContainer(ServerStorage.CarModels) end
-if ServerStorage:FindFirstChild("CarTools") then cleanContainer(ServerStorage.CarTools) end
+-- 1. Clean existing containers
+local function cleanContainer(container)
+	for _, desc in pairs(container:GetDescendants()) do
+		checkObject(desc)
+	end
+end
 
--- 2. Clean Workspace (Cars already placed)
 cleanContainer(Workspace)
+cleanContainer(ServerStorage)
+cleanContainer(ReplicatedStorage)
 
-print("✨ SoundCleaner: Done! Console should be cleaner.")
+-- 2. ACTIVE MONITORING (The New Feature)
+-- This catches sounds the moment they are added to the game (e.g. equipping a car)
+game.DescendantAdded:Connect(function(descendant)
+	checkObject(descendant)
+end)
+
+print("✨ SoundCleaner V2: Watching for new spam...")
