@@ -1,6 +1,6 @@
--- [[ SERVER SIDE: TycoonDataHandler (Final + Data Integrity Fix) ]]
+-- [[ SERVER SIDE: TycoonDataHandler (Final Protected Version) ]]
 -- -- Indicating what the script is for: Handles saving/loading player data.
--- FIX: Prevents overwriting save files if the initial load failed.
+-- PROTECTION: Adds a "Safety Lock" so empty/glitched data is NEVER saved over real data.
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
@@ -14,12 +14,13 @@ local PlayerDataStore = DataStoreService:GetDataStore(DATA_KEY)
 local CarTools = ServerStorage:WaitForChild("CarTools") 
 local STARTER_CAR_NAME = "Delta Item"
 
--- 🛠️ HELPER
+-- 🛠️ HELPER: Give items safely
 local function giveTool(player, toolName)
-	-- Safety check: Ensure player is still there
 	if not player or not player.Parent then return end
 	
+	-- Check both Backpack and StarterGear so we don't give duplicates
 	if player.Backpack:FindFirstChild(toolName) or player.StarterGear:FindFirstChild(toolName) then return end
+	
 	local tool = CarTools:FindFirstChild(toolName)
 	if tool then
 		tool:Clone().Parent = player.Backpack
@@ -27,8 +28,9 @@ local function giveTool(player, toolName)
 	end
 end
 
--- 📥 JOIN
+-- 📥 JOIN LOGIC
 Players.PlayerAdded:Connect(function(player)
+	-- 1. Create Leaderstats
 	local leaderstats = Instance.new("Folder"); leaderstats.Name = "leaderstats"; leaderstats.Parent = player
 	local bank = Instance.new("IntValue"); bank.Name = "Cash"; bank.Parent = leaderstats
 	local wallet = Instance.new("IntValue"); wallet.Name = "Wallet"; wallet.Value = 0; wallet.Parent = leaderstats
@@ -36,21 +38,26 @@ Players.PlayerAdded:Connect(function(player)
 	local playerKey = "User_" .. player.UserId
 	local savedData = nil
 	
-	-- Try to load data
+	-- 2. Try to Load Data (Protected Call)
 	local success, errorMessage = pcall(function() 
 		savedData = PlayerDataStore:GetAsync(playerKey) 
 	end)
 
 	if success then
-		-- ✅ MARK AS SAFE TO SAVE later
+		-- ✅ SAFETY LOCK ENGAGED: We successfully talked to Roblox.
+		-- It is now safe to save this player when they leave.
 		player:SetAttribute("DataLoaded", true)
 
 		if savedData then
 			print("✅ Loaded Data for " .. player.Name)
 			bank.Value = savedData.Bank or 0
 			wallet.Value = savedData.Wallet or 0
+			
+			-- Load Inventory
 			if savedData.Inventory then
-				for _, tName in pairs(savedData.Inventory) do giveTool(player, tName) end
+				for _, tName in pairs(savedData.Inventory) do 
+					giveTool(player, tName) 
+				end
 			end
 		else
 			print("🆕 New Player: " .. player.Name)
@@ -59,27 +66,26 @@ Players.PlayerAdded:Connect(function(player)
 			giveTool(player, STARTER_CAR_NAME) 
 		end
 	else
-		-- 🛑 LOAD FAILED: Do NOT mark 'DataLoaded'.
-		-- This prevents the save function from wiping their data later.
+		-- 🛑 LOAD FAILED! 
+		-- We do NOT set "DataLoaded".
+		-- This guarantees that 'savePlayerData' will REFUSE to run later.
 		warn("⚠️ DATA LOAD ERROR for " .. player.Name .. ": " .. tostring(errorMessage))
-		warn("🛑 SAFETY ENGAGED: Saving disabled for this session to prevent data loss.")
-		
-		-- Optional: Kick them to prevent confusion
-		-- player:Kick("Data failed to load. Please rejoin to protect your save file.") 
+		warn("🛑 SAFETY ENGAGED: Saving disabled for this session to protect your specific save file.")
 	end
 end)
 
--- 💾 LEAVE
+-- 💾 LEAVE LOGIC
 local function savePlayerData(player)
-	-- 🛑 SAFETY CHECK: Did data load correctly?
+	-- 🛑 CRITICAL CHECK: Did data load correctly?
 	if not player:GetAttribute("DataLoaded") then
 		warn("🛑 ABORTING SAVE for " .. player.Name .. " (Data did not load correctly on join).")
-		return
+		return -- STOP HERE. Do not touch the database.
 	end
 
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then return end
 
+	-- 1. Scan Inventory (StarterGear is the persistent storage)
 	local inventoryTable = {}
 	if player:FindFirstChild("StarterGear") then
 		for _, tool in pairs(player.StarterGear:GetChildren()) do
@@ -89,6 +95,7 @@ local function savePlayerData(player)
 		end
 	end
 
+	-- 2. Prepare Data Table
 	local dataToSave = {
 		Bank = leaderstats.Cash.Value,
 		Wallet = leaderstats.Wallet.Value,
@@ -97,7 +104,7 @@ local function savePlayerData(player)
 
 	local playerKey = "User_" .. player.UserId
 	
-	-- Retry Logic
+	-- 3. Retry Logic (Tries 3 times if Roblox is laggy)
 	local attempts = 0
 	local success = false
 	repeat
@@ -115,6 +122,7 @@ local function savePlayerData(player)
 	end
 end
 
+-- Connect Events
 Players.PlayerRemoving:Connect(savePlayerData)
 
 game:BindToClose(function() 
