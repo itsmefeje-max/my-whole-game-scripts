@@ -1,5 +1,5 @@
--- ServerStorage ( inside CarTools ) 
--- this 
+-- [[ SERVER SCRIPT: Universal Car Tool ]]
+-- Fix: Prevents "Infinite Weld" stacking lag.
 
 local Tool = script.Parent
 local Handle = Tool:WaitForChild("Handle")
@@ -7,6 +7,8 @@ local Handle = Tool:WaitForChild("Handle")
 -- === SETTINGS ===
 local HEIGHT_OFFSET = 2
 -- =================
+
+local isSetup = false -- 🛑 DEBOUNCE: Ensures we only weld once
 
 local function weldModel(model, primaryPart)
 	for _, part in pairs(model:GetDescendants()) do
@@ -28,25 +30,28 @@ local function makeGhost(model)
 			part.CanCollide = false
 			part.CanTouch = false
 			part.Anchored = false
-			part.CanQuery = false -- 🛑 Critical for Placement
+			part.CanQuery = false 
 		end
 	end
 end
 
 Tool.Equipped:Connect(function()
-	-- 🛑 1. Fix the Handle Immediately
+	-- 🛑 STOP IF ALREADY DONE (The Fix)
+	if isSetup then return end 
+
 	if Handle then
 		Handle.CanCollide = false
 		Handle.CanTouch = false
 		Handle.CanQuery = false 
-		Handle.Transparency = 1 -- Hide handle just in case
+		Handle.Transparency = 1 
 	end
 
-	-- 🔄 2. Find the Car
 	local CarModel = Tool:FindFirstChildWhichIsA("Model")
 
 	if CarModel then
 		if CarModel.PrimaryPart then
+			isSetup = true -- ✅ Mark as done immediately
+
 			-- A. GLUE
 			weldModel(CarModel, CarModel.PrimaryPart)
 
@@ -63,7 +68,12 @@ Tool.Equipped:Connect(function()
 			Weld.Part1 = CarModel.PrimaryPart
 			Weld.Parent = Handle
 		else
-			warn("⚠️ Model '" .. CarModel.Name .. "' has no PrimaryPart! Did you add the Root box?")
+			warn("⚠️ Model '" .. CarModel.Name .. "' has no PrimaryPart!")
 		end
 	end
+end)
+
+-- Reset setup if tool is dropped/respawned (Optional but safe)
+Tool.Unequipped:Connect(function()
+	-- We keep isSetup = true because the welds persist in the tool until destroyed.
 end)
