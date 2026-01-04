@@ -1,5 +1,6 @@
 -- ( LOCAL SCRIPT: Bank UI - WITH MUSIC, FADE & SMART HIDE )
 -- ( Updated to match Inventory GUI's sound & logic )
+-- -- Indicating what the script is for, its function and use.
 
 print("---------------------------------------------------------")
 print("🛠️ STARTING BANK UI SCRIPT...")
@@ -78,7 +79,7 @@ bankMusic.Parent = SoundService
 
 -- 🛡️ TRACKING VARIABLES
 local currentFadeTween = nil      
-local hiddenGuis = {}             
+local hiddenGuis = {}      
 
 -- 4. SETUP CLICK DETECTOR
 local detector = Instance.new("TextButton")
@@ -161,7 +162,12 @@ end
 
 local function loadAvatar()
 	local content, isReady = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
-	if isReady then avatarImage.Image = content else avatarImage.Image = "rbxassetid://0" end
+	-- ✅ FIXED: Set to empty string "" instead of "rbxassetid://0"
+	if isReady then 
+		avatarImage.Image = content 
+	else 
+		avatarImage.Image = "" 
+	end
 end
 
 local function getRandomHex()
