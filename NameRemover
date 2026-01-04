@@ -1,0 +1,29 @@
+-- [[ SERVER SCRIPT: NPCNameRemover ]]
+-- -- Indicating what the script is for: Purely hides the default Roblox names over NPCs.
+-- Does NOT create any UI. You are handling the BillboardGUIs yourself.
+
+local Workspace = game:GetService("Workspace")
+local npcFolder = Workspace:WaitForChild("NPCS") -- 📁 Your NPC Folder
+
+-- 🛠️ FUNCTION: Hide Default Name
+local function hideName(npc)
+	if not npc:IsA("Model") then return end
+	
+	-- Wait for Humanoid
+	local humanoid = npc:WaitForChild("Humanoid", 5)
+
+	if humanoid then
+		-- 1. HIDE DEFAULT NAME (The only thing this script does)
+		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+		humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	end
+end
+
+-- 🔄 INITIALIZE
+-- 1. Clean existing NPCs
+for _, npc in pairs(npcFolder:GetChildren()) do
+	hideName(npc)
+end
+
+-- 2. Clean new NPCs automatically
+npcFolder.ChildAdded:Connect(hideName)
