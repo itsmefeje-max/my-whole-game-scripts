@@ -1,6 +1,6 @@
--- [[ SERVER SCRIPT: PadController (Final Verified Fix) ]]
+-- [[ SERVER SCRIPT: PadController (Teleport Fix) ]]
 -- -- Indicating what the script is for: Handles placing and picking up cars.
--- FIX: Added StarterGear saving to prevent car loss.
+-- FIX: Teleports player UP when placing so they land ON TOP of the car instead of inside it.
 
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
@@ -9,13 +9,14 @@ local Debris = game:GetService("Debris")
 
 -- === ⚙️ TUNING ===
 local VERTICAL_OFFSET = -1
-local PROMPT_RANGE = 14  
+local PROMPT_RANGE = 14
+local SAFETY_JUMP_HEIGHT = 8 -- Studs to move player up
 -- =================
 
 -- 📂 FOLDER REFERENCES
 local CarModels = ServerStorage:WaitForChild("CarModels")
 local CarTools = ServerStorage:WaitForChild("CarTools")
-local TycoonFolder = Workspace:WaitForChild("Tycoons") 
+local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
 local function getPlotFolder(obj)
 	local current = obj
@@ -67,8 +68,8 @@ local function setupPad(padObject)
 		placePrompt.ActionText = "Place Car"
 		placePrompt.ObjectText = "Car Pad"
 		placePrompt.HoldDuration = 0.5
-		placePrompt.MaxActivationDistance = PROMPT_RANGE 
-		placePrompt.RequiresLineOfSight = false 
+		placePrompt.MaxActivationDistance = PROMPT_RANGE
+		placePrompt.RequiresLineOfSight = false
 		placePrompt.Parent = padPart
 	end
 
@@ -79,9 +80,9 @@ local function setupPad(padObject)
 		pickupPrompt.ActionText = "Pick Up"
 		pickupPrompt.ObjectText = "Occupied Pad"
 		pickupPrompt.HoldDuration = 0.5
-		pickupPrompt.MaxActivationDistance = PROMPT_RANGE 
-		pickupPrompt.RequiresLineOfSight = false 
-		pickupPrompt.Enabled = false 
+		pickupPrompt.MaxActivationDistance = PROMPT_RANGE
+		pickupPrompt.RequiresLineOfSight = false
+		pickupPrompt.Enabled = false
 		pickupPrompt.Parent = padPart
 	end
 
@@ -96,13 +97,13 @@ local function setupPad(padObject)
 	local isProcessing = false
 
 	-- =========================================================================
-	-- 🟢 PLACE LOGIC (UNCHANGED)
+	-- 🟢 PLACE LOGIC (EJECT METHOD)
 	-- =========================================================================
 	placePrompt.Triggered:Connect(function(player)
 		if isProcessing then return end
 		if occupiedVal.Value == true then return end
 
-		isProcessing = true 
+		isProcessing = true
 
 		local thisPlot = getPlotFolder(padObject)
 		if not thisPlot then isProcessing = false; return end
@@ -110,7 +111,7 @@ local function setupPad(padObject)
 		local myAssignedPlot = player:GetAttribute("OccupiedPlot")
 		if myAssignedPlot ~= thisPlot.Name then
 			warn("⛔ ACCESS DENIED.")
-			isProcessing = false; return 
+			isProcessing = false; return
 		end
 
 		local tool = player.Character:FindFirstChildWhichIsA("Tool")
@@ -140,10 +141,18 @@ local function setupPad(padObject)
 					Debris:AddItem(sClone, 2)
 				end
 
+				-- 🧱 SOLIDIFY IMMEDIATELY
 				for _, part in pairs(placedCar:GetDescendants()) do
 					if part:IsA("BasePart") then
-						part.Anchored = true; part.CanCollide = false
+						part.Anchored = true
+						part.CanCollide = true -- Car is solid instantly
 					end
+				end
+
+				-- 🚀 EJECT PLAYER (Safety Jump)
+				if player.Character then
+					-- Teleport them slightly UP so they land on the roof instead of inside
+					player.Character:PivotTo(player.Character:GetPivot() + Vector3.new(0, SAFETY_JUMP_HEIGHT, 0))
 				end
 
 				linkedCarVal.Value = placedCar
@@ -160,7 +169,7 @@ local function setupPad(padObject)
 	end)
 
 	-- =========================================================================
-	-- 🔴 PICKUP LOGIC (SECURED)
+	-- 🔴 PICKUP LOGIC (UNCHANGED)
 	-- =========================================================================
 	pickupPrompt.Triggered:Connect(function(player)
 		if isProcessing then return end
@@ -169,8 +178,8 @@ local function setupPad(padObject)
 		local thisPlot = getPlotFolder(padObject)
 		local myAssignedPlot = player:GetAttribute("OccupiedPlot")
 
-		if not thisPlot or myAssignedPlot ~= thisPlot.Name then 
-			isProcessing = false; return 
+		if not thisPlot or myAssignedPlot ~= thisPlot.Name then
+			isProcessing = false; return
 		end
 
 		local carToRemove = linkedCarVal.Value
@@ -178,7 +187,7 @@ local function setupPad(padObject)
 		if carToRemove then
 			local carName = carToRemove.Name
 			local foundTool = nil
-			
+
 			local possibleNames = {carName .. " Item", carName .. "Item", carName}
 
 			for _, name in ipairs(possibleNames) do
@@ -199,12 +208,8 @@ local function setupPad(padObject)
 				end
 			end
 
-			-- ✅ GIVE TOOL (FIXED HERE)
 			if foundTool then
-				-- 1. Give to Backpack (Hand)
 				foundTool.Parent = player.Backpack
-				
-				-- 2. Give to StarterGear (Save System) -- THIS WAS MISSING
 				local gearClone = foundTool:Clone()
 				gearClone.Parent = player.StarterGear
 
