@@ -1,108 +1,89 @@
--- this script contains the Garage that controls the sign and to whoever the specific Garage belongs to
---ServerScriptService
+-- [[ SERVER SCRIPT: PlotHandler (Final Auto-Scale Edition) ]]
+-- -- Indicating what the script is for: Updates Garage Owner text safely.
+-- FEATURES: Auto-scales text for long names, infinite loading safety, preserves design.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
--- CONFIGURATION
-local tycoonsFolder = Workspace:WaitForChild("Tycoons")
+-- ⚙️ CONFIGURATION
+local TYCOONS_FOLDER = Workspace:WaitForChild("Tycoons")
+
+-- Path Constants
+local GARAGE_NAME = "NormalGarage"
+local INFO_PART_NAME = "GarageInformation"
+local GUI_NAME = "OwnerLabel"
+local TEXT_LABEL_NAME = "Owner"
 
 -- ---------------------------------------------------------
--- HELPER: TOGGLE VISIBILITY
+-- 📝 TEXT UPDATE LOGIC
 -- ---------------------------------------------------------
-local function setSignVisibility(signPart, isVisible)
-	-- 1. Control the Parts (The wood, the board, the stand)
-	for _, child in ipairs(signPart:GetDescendants()) do
-		if child:IsA("BasePart") then
-			-- If Visible = 0 transparency (Solid). If Hidden = 1 transparency (Invisible)
-			child.Transparency = isVisible and 0 or 1
-			child.CanCollide = isVisible -- Turn off collision so you don't walk into invisible walls
-		end
+local function applyText(textLabel, playerName)
+	-- 1. LOCK DEFAULT TEXT (Safety)
+	-- We save YOUR original text (e.g. "For Sale") purely for memory.
+	if not textLabel:GetAttribute("DefaultText") then
+		textLabel:SetAttribute("DefaultText", textLabel.Text)
+	end
 
-		-- 2. Control the UI (The Text and Image)
-		if child:IsA("SurfaceGui") or child:IsA("BillboardGui") then
-			child.Enabled = isVisible
-		end
+	-- 2. UPDATE CONTENT & FIX SCALING
+	if playerName and playerName ~= "" then
+		-- ✅ PLOT IS CLAIMED
+		textLabel.Text = playerName .. "'s Garage"
+		textLabel.TextScaled = true -- [FIX] Ensures long names shrink to fit instead of cutting off
+	else
+		-- ♻️ PLOT IS EMPTY (Restore Your Original Text)
+		local savedText = textLabel:GetAttribute("DefaultText")
+		textLabel.Text = savedText or "For Sale"
+		textLabel.TextScaled = true -- [FIX] Ensures default text fits too
 	end
 end
 
 -- ---------------------------------------------------------
--- UPDATE FUNCTION
--- ---------------------------------------------------------
-local function updateSignVisuals(plot, playerName)
-	local signPart = plot:WaitForChild("SignPart", 10)
-	if not signPart then return end 
-
-	-- A. CHECK IF EMPTY (Player left or nobody claimed yet)
-	if playerName == nil or playerName == "" then
-		-- HIDE THE SIGN
-		setSignVisibility(signPart, false)
-		print("👻 Plot Empty: Hid sign for " .. plot.Name)
-		return
-	end
-
-	-- B. SHOW THE SIGN (Because we have a player!)
-	setSignVisibility(signPart, true)
-
-	print("🎨 Loading Sign for: " .. playerName)
-	local player = Players:FindFirstChild(playerName)
-	local userId = player and player.UserId or 1 
-
-	-- === 1. UPDATE FACE ===
-	local facePart = signPart:FindFirstChild("OwnerFace")
-	if facePart then
-		local sGui = facePart:WaitForChild("SurfaceGui", 5)
-		if sGui then
-			local img = sGui:FindFirstChild("OwnerFace") or sGui:FindFirstChildWhichIsA("ImageLabel")
-			if img then
-				img.BackgroundTransparency = 1
-				img.Size = UDim2.new(1, 0, 1, 0)
-
-				task.spawn(function()
-					local content = "rbxthumb://type=AvatarBust&id=" .. userId .. "&w=420&h=420"
-					img.Image = content
-				end)
-			end
-		end
-	end
-
-	-- === 2. UPDATE NAME ===
-	local namePart = signPart:FindFirstChild("OwnerName")
-	if namePart then
-		local sGui = namePart:WaitForChild("SurfaceGui", 5)
-		if sGui then
-			local txt = sGui:FindFirstChild("TextLabel") or sGui:FindFirstChildWhichIsA("TextLabel")
-			if txt then
-				txt.Text = playerName .. "'s Plot"
-				txt.TextScaled = true
-			end
-		end
-	end
-end
-
--- ---------------------------------------------------------
--- SETUP LOOP
+-- 🛡️ SETUP LOGIC (Threaded & Protected)
 -- ---------------------------------------------------------
 local function setupPlot(plot)
-	local ownerValue = plot:WaitForChild("Owner", 10)
+	-- Wrapped in spawn to prevent one plot lagging others
+	task.spawn(function()
+		
+		-- 1. CRITICAL: Wait for the Owner Value (Up to 5 mins)
+		local ownerValue = plot:WaitForChild("Owner", 300)
+		if not ownerValue then return end
 
-	if ownerValue then
-		-- 1. Initial Check (Run immediately when game starts)
-		updateSignVisuals(plot, ownerValue.Value)
+		-- 2. CRITICAL: Wait for the Visuals (Hierarchy)
+		-- Uses timeouts to handle lag/streaming without breaking
+		local garage = plot:WaitForChild(GARAGE_NAME, 60)
+		if not garage then return end 
 
-		-- 2. Listen for changes (Claiming OR Leaving)
+		local infoPart = garage:WaitForChild(INFO_PART_NAME, 20)
+		if not infoPart then return end
+
+		local gui = infoPart:WaitForChild(GUI_NAME, 20)
+		if not gui then return end
+
+		local textLabel = gui:WaitForChild(TEXT_LABEL_NAME, 20)
+		if not textLabel then return end
+
+		-- 3. CONNECT LOGIC
+		applyText(textLabel, ownerValue.Value)
+
 		ownerValue.Changed:Connect(function(newOwnerName)
-			updateSignVisuals(plot, newOwnerName)
+			applyText(textLabel, newOwnerName)
 		end)
-	end
+		
+		print("✅ Garage Monitor Active for: " .. plot.Name)
+	end)
 end
 
--- Apply to all existing plots
-for _, plot in ipairs(tycoonsFolder:GetChildren()) do
-	task.spawn(function() setupPlot(plot) end)
+-- ---------------------------------------------------------
+-- 🚀 INITIALIZATION
+-- ---------------------------------------------------------
+print("🛡️ PlotHandler V4: Auto-Scale Protection Enabled.")
+
+-- 1. Apply to existing plots
+for _, plot in ipairs(TYCOONS_FOLDER:GetChildren()) do
+	setupPlot(plot)
 end
 
--- Apply to any new plots
-tycoonsFolder.ChildAdded:Connect(function(child)
-	task.spawn(function() setupPlot(child) end)
+-- 2. Apply to new plots dynamically
+TYCOONS_FOLDER.ChildAdded:Connect(function(child)
+	setupPlot(child)
 end)
