@@ -1,18 +1,25 @@
--- [[ SERVER SCRIPT: AdminCommands (Everything Update) ]]
--- -- Indicating what the script is for: Admin commands to give items or "everything".
--- Usage: /give <target> <item_name> [amount]
--- Example: /give @s delta
--- Special: /give @s everything (Gives one of EVERY tool)
+-- [[ SERVER SCRIPT: AdminCommands (Advanced V2) ]]
+-- USAGE: 
+-- /give <target> <item>
+-- /fly <target>
+-- /unfly <target>
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
 
 -- ⚙️ CONFIGURATION
 local CarTools = ServerStorage:WaitForChild("CarTools") 
+-- ⚠️ Ensure "FlyClient" is inside ServerStorage!
+local FlyScriptTemplate = ServerStorage:WaitForChild("FlyClient", 5) 
+
 local ADMIN_USER_IDS = {
 	[5512860740] = true, -- Your ID
 }
 local ALLOW_STUDIO_ADMIN = true 
+
+if not FlyScriptTemplate then
+	warn("❌ CRITICAL: 'FlyClient' script is missing from ServerStorage! Flight commands will fail.")
+end
 
 -- ============================================================================
 -- 🎯 TARGET SELECTOR LOGIC
@@ -21,25 +28,14 @@ local function getTargets(speaker, selector)
 	local targets = {}
 	local allPlayers = Players:GetPlayers()
 
-	if selector == "@s" then
+	if not selector or selector == "@s" or selector == "me" then
 		table.insert(targets, speaker)
-	elseif selector == "@a" then
+	elseif selector == "@a" or selector == "all" then
 		targets = allPlayers
-	elseif selector == "@r" then
+	elseif selector == "@r" or selector == "random" then
 		if #allPlayers > 0 then table.insert(targets, allPlayers[math.random(1, #allPlayers)]) end
-	elseif selector == "@p" then
-		if not speaker.Character or not speaker.Character.PrimaryPart then return {} end
-		local myPos = speaker.Character.PrimaryPart.Position
-		local closestDist, closestPlayer = math.huge, nil
-		for _, p in pairs(allPlayers) do
-			if p ~= speaker and p.Character and p.Character.PrimaryPart then
-				local dist = (p.Character.PrimaryPart.Position - myPos).Magnitude
-				if dist < closestDist then closestDist = dist; closestPlayer = p end
-			end
-		end
-		table.insert(targets, closestPlayer or speaker)
 	else
-		-- Name Match (Case Insensitive)
+		-- Name Match
 		for _, p in pairs(allPlayers) do
 			if p.Name:lower():sub(1, #selector) == selector:lower() then
 				table.insert(targets, p)
@@ -51,20 +47,40 @@ local function getTargets(speaker, selector)
 end
 
 -- ============================================================================
--- 🎒 ITEM GIVING LOGIC
+-- ✈️ FLIGHT LOGIC
+-- ============================================================================
+local function setFlight(player, shouldFly)
+	if not player.Character then return end
+	
+	-- 1. Clean up old flight script
+	local oldScript = player.Character:FindFirstChild("FlyClient")
+	if oldScript then 
+		-- We set a flag so the local script can clean up its own physics before dying
+		player.Character:SetAttribute("ForceStopFly", true)
+		task.wait(0.1)
+		oldScript:Destroy() 
+		player.Character:SetAttribute("ForceStopFly", nil)
+	end
+
+	-- 2. Add new flight script
+	if shouldFly and FlyScriptTemplate then
+		local newScript = FlyScriptTemplate:Clone()
+		newScript.Parent = player.Character
+		newScript.Disabled = false
+	end
+end
+
+-- ============================================================================
+-- 🎒 ITEM LOGIC
 -- ============================================================================
 local function findToolCaseInsensitive(itemName)
 	local targetName = itemName:lower()
-
 	for _, tool in pairs(CarTools:GetChildren()) do
 		if tool:IsA("Tool") then
-			local toolName = tool.Name:lower()
-			-- Check 1: Exact Match
-			if toolName == targetName then return tool end
-			-- Check 2: With " item" suffix
-			if toolName == targetName .. " item" then return tool end
-			-- Check 3: With "item" suffix
-			if toolName == targetName .. "item" then return tool end
+			local tName = tool.Name:lower()
+			if tName == targetName or tName == targetName.." item" or tName == targetName.."item" then
+				return tool
+			end
 		end
 	end
 	return nil
@@ -86,49 +102,54 @@ Players.PlayerAdded:Connect(function(player)
 		if not isAdmin then return end
 
 		local args = message:split(" ")
-		if args[1]:lower() ~= "/give" then return end
+		local command = args[1]:lower()
 
-		local selector = args[2]
-		local itemName = args[3]
-		local amount = tonumber(args[4]) or 1 
+		-- [[ 🎒 GIVE COMMAND ]]
+		if command == "/give" then
+			local selector = args[2]
+			local itemName = args[3]
+			local amount = tonumber(args[4]) or 1 
 
-		if not selector or not itemName then
-			warn("❌ Usage: /give <target> <item> [amount]")
-			return
-		end
+			if not selector or not itemName then return end
+			local targets = getTargets(player, selector)
 
-		local targetPlayers = getTargets(player, selector)
-		if #targetPlayers == 0 then
-			warn("❌ No targets found for: " .. selector)
-			return
-		end
-
-		-- 🌟 SPECIAL "EVERYTHING" COMMAND 🌟
-		if itemName:lower() == "everything" or itemName:lower() == "all" then
-			print("🎁 GIVING EVERYTHING to targets...")
-			
-			for _, target in pairs(targetPlayers) do
-				local count = 0
-				for _, tool in pairs(CarTools:GetChildren()) do
-					if tool:IsA("Tool") then
-						giveItem(target, tool, 1)
-						count = count + 1
+			if itemName:lower() == "everything" or itemName:lower() == "all" then
+				for _, t in pairs(targets) do
+					for _, tool in pairs(CarTools:GetChildren()) do
+						if tool:IsA("Tool") then giveItem(t, tool, 1) end
 					end
+					print("🎁 Gave EVERYTHING to " .. t.Name)
 				end
-				print("✅ Gave " .. count .. " items to " .. target.Name)
+				return
 			end
-			return
-		end
 
-		-- 📦 NORMAL ITEM COMMAND
-		local tool = findToolCaseInsensitive(itemName)
-		if tool then
-			for _, target in pairs(targetPlayers) do
-				giveItem(target, tool, amount)
-				print("✅ Gave " .. amount .. "x [" .. tool.Name .. "] to " .. target.Name)
+			local tool = findToolCaseInsensitive(itemName)
+			if tool then
+				for _, t in pairs(targets) do 
+					giveItem(t, tool, amount) 
+					print("✅ Gave " .. tool.Name .. " to " .. t.Name)
+				end
 			end
-		else
-			warn("❌ Could not find item: " .. itemName)
+
+		-- [[ ✈️ FLY COMMAND ]]
+		elseif command == "/fly" then
+			local selector = args[2] -- can be empty to fly self
+			local targets = getTargets(player, selector)
+			
+			for _, t in pairs(targets) do
+				setFlight(t, true)
+				print("✈️ Flight Enabled: " .. t.Name)
+			end
+
+		-- [[ ⬇️ UNFLY COMMAND ]]
+		elseif command == "/unfly" then
+			local selector = args[2]
+			local targets = getTargets(player, selector)
+			
+			for _, t in pairs(targets) do
+				setFlight(t, false)
+				print("🛑 Flight Disabled: " .. t.Name)
+			end
 		end
 	end)
 end)
