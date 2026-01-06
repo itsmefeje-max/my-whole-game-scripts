@@ -1,0 +1,109 @@
+-- [[ LOCAL SCRIPT: PlotMarkerHandler (Universal V3) ]]
+-- -- Indicating what the script is for: Attaches "YOUR PLOT" marker to a universal part.
+-- TARGET: NormalGarage > Garage Parts > OwnerIndicator
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local TycoonFolder = Workspace:WaitForChild("Tycoons")
+
+-- ============================================================================
+-- ⚙️ CONFIGURATION
+-- ============================================================================
+local INDICATOR_TEMPLATE_NAME = "YourPlotIndicator" -- Name of GUI in ReplicatedStorage
+local HEIGHT_OFFSET = 1      -- Studs above the part (Adjust this if too low/high)
+local ANIMATE_BOUNCE = true    -- Bobbing animation
+local BOUNCE_SPEED = 2
+local BOUNCE_HEIGHT = 1.5
+
+-- 🎯 TARGET PATHS (Priority List)
+-- The script will try to find #1. If missing, it tries #2, etc.
+local TARGET_PATHS = {
+	{ "NormalGarage", "Garage Parts", "OwnerIndicator" }, -- 🥇 Your requested universal part
+	{ "NormalGarage", "GarageInformation", "OwnerLabel" }, -- 🥈 Old fallback
+	{ "SpawnPoint" } -- 🥉 Last resort
+}
+
+-- ============================================================================
+-- 🛠️ LOGIC
+-- ============================================================================
+local currentIndicator = nil
+local bounceConnection = nil
+
+-- Helper to safely find a nested part
+local function findPartByPath(root, pathArray)
+	local current = root
+	for _, name in ipairs(pathArray) do
+		current = current:FindFirstChild(name)
+		if not current then return nil end
+	end
+	return current
+end
+
+local function cleanup()
+	if currentIndicator then currentIndicator:Destroy() currentIndicator = nil end
+	if bounceConnection then bounceConnection:Disconnect() bounceConnection = nil end
+end
+
+local function updateMarker()
+	cleanup() -- Reset first
+
+	-- 1. Get Assigned Plot
+	local myPlotName = player:GetAttribute("OccupiedPlot")
+	if not myPlotName then return end
+
+	local plot = TycoonFolder:FindFirstChild(myPlotName)
+	if not plot then return end
+
+	-- 2. Find Best Target Part
+	local attachPart = nil
+
+	for _, path in ipairs(TARGET_PATHS) do
+		attachPart = findPartByPath(plot, path)
+		if attachPart then 
+			print("📍 Marker attaching to: " .. table.concat(path, " > "))
+			break 
+		end
+	end
+
+	-- 3. Create Marker
+	if attachPart then
+		local template = ReplicatedStorage:FindFirstChild(INDICATOR_TEMPLATE_NAME)
+		if not template then 
+			warn("⚠️ PlotMarker: Missing '"..INDICATOR_TEMPLATE_NAME.."' in ReplicatedStorage!") 
+			return 
+		end
+
+		currentIndicator = template:Clone()
+		currentIndicator.Parent = player.PlayerGui
+		currentIndicator.Adornee = attachPart
+
+		-- Set Initial Height
+		local currentOffset = currentIndicator.StudsOffset
+		currentIndicator.StudsOffset = Vector3.new(currentOffset.X, HEIGHT_OFFSET, currentOffset.Z)
+
+		currentIndicator.Enabled = true
+
+		-- 4. Bounce Animation
+		if ANIMATE_BOUNCE then
+			local t = 0
+			bounceConnection = RunService.RenderStepped:Connect(function(dt)
+				if not currentIndicator or not currentIndicator.Adornee then cleanup() return end
+				t = t + dt * BOUNCE_SPEED
+				local bounce = math.sin(t) * BOUNCE_HEIGHT
+				currentIndicator.StudsOffset = Vector3.new(currentOffset.X, HEIGHT_OFFSET + bounce, currentOffset.Z)
+			end)
+		end
+	else
+		-- Retry if plot is loading (StreamingEnabled support)
+		task.delay(1, updateMarker)
+	end
+end
+
+-- 🔄 AUTO-UPDATE
+player:GetAttributeChangedSignal("OccupiedPlot"):Connect(updateMarker)
+task.wait(2) -- Startup delay
+updateMarker()
