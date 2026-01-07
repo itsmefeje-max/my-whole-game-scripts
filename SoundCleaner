@@ -1,15 +1,9 @@
--- [[ SERVER SCRIPT: SoundCleaner V2 (Active Protection) ]]
--- -- Indicating what the script is for: Actively monitors and deletes broken sounds.
--- This runs FOREVER to catch sounds that spawn when you equip cars.
-
+-- [[ SERVER SCRIPT: SoundCleaner V3 (Optimized) ]]
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+local SoundService = game:GetService("SoundService")
 
-print("🛡️ SoundCleaner V2: Active Protection Enabled.")
-
--- 🚫 List of Bad IDs to remove
 local BAD_IDS = {
 	["rbxassetid://0"] = true,        
 	["http://www.roblox.com/asset/?id=0"] = true,
@@ -17,32 +11,26 @@ local BAD_IDS = {
 	["rbxassetid://201887209"] = true, 
 }
 
--- Function to check and destroy a single object
 local function checkObject(obj)
 	if obj:IsA("Sound") then
-		-- Check if ID is bad, empty, or 0
 		if BAD_IDS[obj.SoundId] or obj.SoundId == "0" or obj.SoundId == "" then
-			-- Destroy silently to clear console
 			obj:Destroy()
 		end
 	end
 end
 
--- 1. Clean existing containers
 local function cleanContainer(container)
-	for _, desc in pairs(container:GetDescendants()) do
-		checkObject(desc)
-	end
+	for _, desc in pairs(container:GetDescendants()) do checkObject(desc) end
 end
 
 cleanContainer(Workspace)
 cleanContainer(ServerStorage)
 cleanContainer(ReplicatedStorage)
+cleanContainer(SoundService)
 
--- 2. ACTIVE MONITORING (The New Feature)
--- This catches sounds the moment they are added to the game (e.g. equipping a car)
-game.DescendantAdded:Connect(function(descendant)
-	checkObject(descendant)
-end)
+-- Optimized Monitoring
+Workspace.DescendantAdded:Connect(checkObject)
+SoundService.DescendantAdded:Connect(checkObject)
+ReplicatedStorage.DescendantAdded:Connect(checkObject) 
 
-print("✨ SoundCleaner V2: Watching for new spam...")
+print("✨ SoundCleaner V3: Active & Optimized.")
