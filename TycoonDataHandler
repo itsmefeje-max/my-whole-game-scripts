@@ -1,85 +1,182 @@
--- [[ SERVER SCRIPT: TycoonHandler (Persistence Update) ]]
--- Updated to allow DataHandler to save 'PendingEarnings' before wiping.
+-- [[ SERVER SIDE: TycoonDataHandler (Pending Cash Saver + Safety Cache) ]]
+-- -- Indicating what the script is for: Handles saving/loading player data + Pending Tycoon Cash.
+-- PROTECTION: Adds a "Safety Lock" and a "Pending Cache" to prevent data loss if plot assignment fails.
 
 local Players = game:GetService("Players")
+local ServerStorage = game:GetService("ServerStorage")
+local DataStoreService = game:GetService("DataStoreService")
 local Workspace = game:GetService("Workspace")
 
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
--- 🧹 CLEANUP (Runs when player leaves)
-local function wipePlot(plot)
-	if plot:FindFirstChild("Owner") then plot.Owner.Value = "" end
+-- 🔒 DATABASE CONFIG
+local DATA_KEY = "TycoonData_Economy_V4_WithPending" 
+local PlayerDataStore = DataStoreService:GetDataStore(DATA_KEY)
+
+-- 📂 STORAGE
+local CarTools = ServerStorage:WaitForChild("CarTools") 
+local STARTER_CAR_NAME = "Delta Item"
+
+-- 🛠️ HELPER: Give items safely
+local function giveTool(player, toolName)
+	if not player or not player.Parent then return end
+	if player.Backpack:FindFirstChild(toolName) or player.StarterGear:FindFirstChild(toolName) then return end
 	
-	-- 1. RESET PENDING EARNINGS
-	-- We reset it here so the NEXT player starts at 0.
-	local pending = plot:FindFirstChild("PendingEarnings")
-	if pending then pending.Value = 0 end
-
-	if plot:FindFirstChild("PlacedCars") then plot.PlacedCars:ClearAllChildren() end
-	if plot:FindFirstChild("Pads") then
-		for _, padObj in pairs(plot.Pads:GetChildren()) do
-			local padPart = padObj:IsA("Model") and (padObj.PrimaryPart or padObj:FindFirstChildWhichIsA("BasePart")) or padObj
-			if padPart then
-				local occupied = padPart:FindFirstChild("IsOccupied")
-				if occupied then occupied.Value = false end
-				local placePrompt = padPart:FindFirstChild("PlacePrompt")
-				local pickupPrompt = padPart:FindFirstChild("PickupPrompt")
-				if placePrompt then placePrompt.Enabled = true end
-				if pickupPrompt then pickupPrompt.Enabled = false end
-			end
-		end
+	local tool = CarTools:FindFirstChild(toolName)
+	if tool then
+		tool:Clone().Parent = player.Backpack
+		tool:Clone().Parent = player.StarterGear
 	end
 end
 
--- 🤝 THE FIXED ASSIGN FUNCTION
-local function assignPlot(player)
-	for _, plot in pairs(TycoonFolder:GetChildren()) do
-		local ownerVal = plot:FindFirstChild("Owner")
-
-		if ownerVal and ownerVal.Value == "" then
-			-- WIPE FIRST to ensure it's clean for the new user
-			wipePlot(plot)
+-- 💰 HELPER: Restore Pending Cash (With Cache Logic)
+local function restorePendingCash(player, amount)
+	if amount <= 0 then return end
+	
+	-- 1. Set SAFETY CACHE (Hold money on player until we find a plot)
+	player:SetAttribute("CachedPending", amount)
+	
+	local function tryDeposit()
+		local plotName = player:GetAttribute("OccupiedPlot")
+		if plotName then
+			local plot = TycoonFolder:FindFirstChild(plotName)
+			local pendingVal = plot and plot:FindFirstChild("PendingEarnings")
 			
-			ownerVal.Value = player.Name
-			player:SetAttribute("OccupiedPlot", plot.Name)
-
-			-- Teleport Safety
-			local function onCharacterAdded(character)
-				local spawnPart = plot:WaitForChild("SpawnPoint", 10)
-				local hrp = character:WaitForChild("HumanoidRootPart", 10)
-
-				if spawnPart and hrp then
-					hrp.Anchored = true 
-					character:PivotTo(spawnPart.CFrame + Vector3.new(0, 10, 0))
-					task.wait(1.5) 
-					hrp.Anchored = false
-				end
+			if pendingVal then
+				pendingVal.Value = amount
+				-- 2. CLEAR CACHE (Money is safe in the plot now)
+				player:SetAttribute("CachedPending", 0) 
+				print("💰 RESTORED: $" .. amount .. " to " .. player.Name .. "'s Pending Earnings.")
+				return true
 			end
-
-			player.CharacterAdded:Connect(onCharacterAdded)
-			if player.Character then task.spawn(onCharacterAdded, player.Character) end
-
-			return
 		end
+		return false
 	end
+
+	-- Try immediately
+	if tryDeposit() then return end
+
+	-- If not assigned yet, wait for assignment
+	local conn
+	conn = player:GetAttributeChangedSignal("OccupiedPlot"):Connect(function()
+		if tryDeposit() then
+			conn:Disconnect()
+		end
+	end)
 end
 
-Players.PlayerAdded:Connect(assignPlot)
+-- 📥 JOIN LOGIC
+Players.PlayerAdded:Connect(function(player)
+	-- 1. Create Leaderstats
+	local leaderstats = Instance.new("Folder"); leaderstats.Name = "leaderstats"; leaderstats.Parent = player
+	local bank = Instance.new("IntValue"); bank.Name = "Cash"; bank.Parent = leaderstats
+	local wallet = Instance.new("IntValue"); wallet.Name = "Wallet"; wallet.Value = 0; wallet.Parent = leaderstats
 
-Players.PlayerRemoving:Connect(function(player)
-	local plotName = player:GetAttribute("OccupiedPlot")
-	if plotName then
-		local plot = TycoonFolder:FindFirstChild(plotName)
-		if plot then 
-			-- ⚠️ CRITICAL WAIT: Give TycoonDataHandler 0.5s to grab the money
-			-- before we wipe it to 0.
-			task.wait(0.5)
-			wipePlot(plot) 
+	local playerKey = "User_" .. player.UserId
+	local savedData = nil
+	
+	-- 2. Try to Load Data
+	local success, errorMessage = pcall(function() 
+		savedData = PlayerDataStore:GetAsync(playerKey) 
+	end)
+
+	if success then
+		player:SetAttribute("DataLoaded", true)
+
+		if savedData then
+			print("✅ Loaded Data for " .. player.Name)
+			bank.Value = savedData.Bank or 0
+			wallet.Value = savedData.Wallet or 0
+			
+			-- Load Inventory
+			if savedData.Inventory then
+				for _, tName in pairs(savedData.Inventory) do giveTool(player, tName) end
+			end
+
+			-- Load Pending Cash
+			if savedData.PendingEarnings and savedData.PendingEarnings > 0 then
+				restorePendingCash(player, savedData.PendingEarnings)
+			end
+		else
+			print("🆕 New Player: " .. player.Name)
+			bank.Value = 0
+			wallet.Value = 0
+			giveTool(player, STARTER_CAR_NAME) 
 		end
+	else
+		warn("⚠️ DATA LOAD ERROR for " .. player.Name .. ": " .. tostring(errorMessage))
+		warn("🛑 SAFETY ENGAGED: Saving disabled.")
 	end
 end)
 
--- Studio testing
-for _, player in pairs(Players:GetPlayers()) do
-	assignPlot(player)
+-- 💾 LEAVE LOGIC
+local function savePlayerData(player)
+	-- 🛑 CRITICAL CHECK
+	if not player:GetAttribute("DataLoaded") then return end
+
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if not leaderstats then return end
+
+	-- 1. Scan Inventory
+	local inventoryTable = {}
+	if player:FindFirstChild("StarterGear") then
+		for _, tool in pairs(player.StarterGear:GetChildren()) do
+			if CarTools:FindFirstChild(tool.Name) then 
+				table.insert(inventoryTable, tool.Name) 
+			end
+		end
+	end
+
+	-- 2. CAPTURE PENDING EARNINGS (Robust Check)
+	local currentPending = 0
+	
+	-- A. Check if money is in a Plot
+	local plotName = player:GetAttribute("OccupiedPlot")
+	if plotName then
+		local plot = TycoonFolder:FindFirstChild(plotName)
+		local pendingVal = plot and plot:FindFirstChild("PendingEarnings")
+		if pendingVal then
+			currentPending = pendingVal.Value
+		end
+	end
+	
+	-- B. Check if money is still stuck in Cache (Edge Case Protection)
+	local cached = player:GetAttribute("CachedPending")
+	if cached and cached > 0 then
+		currentPending = cached -- Save the cache if they never got a plot
+	end
+
+	-- 3. Prepare Data Table
+	local dataToSave = {
+		Bank = leaderstats.Cash.Value,
+		Wallet = leaderstats.Wallet.Value,
+		Inventory = inventoryTable,
+		PendingEarnings = currentPending
+	}
+
+	local playerKey = "User_" .. player.UserId
+	
+	-- 4. Retry Logic
+	local attempts = 0
+	local success = false
+	repeat
+		attempts += 1
+		success = pcall(function()
+			PlayerDataStore:SetAsync(playerKey, dataToSave)
+		end)
+		if not success then task.wait(6) end
+	until success or attempts >= 3
+
+	if success then
+		print("💾 Saved Data (Inc. $"..currentPending.." Pending) for " .. player.Name)
+	else
+		warn("⚠️ CRITICAL: Data Save Failed for " .. player.Name)
+	end
 end
+
+Players.PlayerRemoving:Connect(savePlayerData)
+
+game:BindToClose(function() 
+	for _, p in pairs(Players:GetPlayers()) do savePlayerData(p) end 
+	task.wait(3) 
+end)
