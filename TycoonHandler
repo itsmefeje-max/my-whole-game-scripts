@@ -1,27 +1,35 @@
--- [[ SERVER SCRIPT: TycoonHandler (Persistence Update) ]]
--- Updated to allow DataHandler to save 'PendingEarnings' before wiping.
+-- [[ SERVER SCRIPT: TycoonHandler (Final Verified Fix) ]]
+-- Updated: Clears Owner Name on leave (to free plot) but leaves Data for DataHandler.
+-- Wipe happens ONLY when the NEXT player claims.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
--- 🧹 CLEANUP (Runs when player leaves)
+-- 🧹 CLEANUP FUNCTION (Runs when a NEW player claims)
 local function wipePlot(plot)
+	-- Reset Owner Name
 	if plot:FindFirstChild("Owner") then plot.Owner.Value = "" end
 	
-	-- 1. RESET PENDING EARNINGS
-	-- We reset it here so the NEXT player starts at 0.
+	-- Reset Money (Safe to do now, as previous owner is long gone)
 	local pending = plot:FindFirstChild("PendingEarnings")
 	if pending then pending.Value = 0 end
 
+	-- Clear Cars
 	if plot:FindFirstChild("PlacedCars") then plot.PlacedCars:ClearAllChildren() end
+	
+	-- Reset Pads
 	if plot:FindFirstChild("Pads") then
 		for _, padObj in pairs(plot.Pads:GetChildren()) do
 			local padPart = padObj:IsA("Model") and (padObj.PrimaryPart or padObj:FindFirstChildWhichIsA("BasePart")) or padObj
 			if padPart then
 				local occupied = padPart:FindFirstChild("IsOccupied")
 				if occupied then occupied.Value = false end
+				
+				local linkedCar = padPart:FindFirstChild("LinkedCar")
+				if linkedCar then linkedCar.Value = nil end
+
 				local placePrompt = padPart:FindFirstChild("PlacePrompt")
 				local pickupPrompt = padPart:FindFirstChild("PickupPrompt")
 				if placePrompt then placePrompt.Enabled = true end
@@ -31,13 +39,16 @@ local function wipePlot(plot)
 	end
 end
 
--- 🤝 THE FIXED ASSIGN FUNCTION
+-- 🤝 ASSIGN PLOT
 local function assignPlot(player)
 	for _, plot in pairs(TycoonFolder:GetChildren()) do
 		local ownerVal = plot:FindFirstChild("Owner")
 
+		-- We look for a plot where the name is empty (Freed by PlayerRemoving)
 		if ownerVal and ownerVal.Value == "" then
-			-- WIPE FIRST to ensure it's clean for the new user
+			
+			-- 🛑 CRITICAL: Wipe the plot NOW. 
+			-- This cleans up the "Ghost Data" left behind by the previous owner.
 			wipePlot(plot)
 			
 			ownerVal.Value = player.Name
@@ -66,15 +77,17 @@ end
 
 Players.PlayerAdded:Connect(assignPlot)
 
+-- 🚪 LEAVE LOGIC (The Safe "Unlock")
 Players.PlayerRemoving:Connect(function(player)
 	local plotName = player:GetAttribute("OccupiedPlot")
 	if plotName then
 		local plot = TycoonFolder:FindFirstChild(plotName)
-		if plot then 
-			-- ⚠️ CRITICAL WAIT: Give TycoonDataHandler 0.5s to grab the money
-			-- before we wipe it to 0.
-			task.wait(0.5)
-			wipePlot(plot) 
+		if plot and plot:FindFirstChild("Owner") then
+			-- ✅ ACTION: We ONLY clear the name.
+			-- We leave the Cars and PendingMoney intact.
+			-- This allows TycoonDataHandler to read them calmly.
+			-- They will be wiped when the NEXT player calls 'assignPlot'.
+			plot.Owner.Value = "" 
 		end
 	end
 end)
