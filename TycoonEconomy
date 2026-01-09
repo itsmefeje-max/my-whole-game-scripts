@@ -1,43 +1,74 @@
--- ( SERVER SCRIPT: TycoonEconomy - NO VISUALS )
--- Handles: Car Earnings Generation ONLY.
--- Update: Removed "addCashUI" because the user has custom billboards.
+-- [[ SERVER SCRIPT: TycoonEconomy - FIXED & CLEANED ]]
+-- Handles: Cash Generation Loop
+-- Fixes: Correctly finds 'LinkedCar' inside Pad Models or Parts.
 
-local ServerStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
 
-local CarStats = require(ServerStorage:WaitForChild("CarStats"))
+-- 🛠️ Load Module Safely
+local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
 -- ⚙️ SETTINGS
 local PAY_INTERVAL = 1 -- Seconds
 
+-- 🛠️ HELPER: Find the 'LinkedCar' Value anywhere inside the pad
+local function getLinkedCarValue(pad)
+	-- 1. Check directly (if pad is a Part)
+	local direct = pad:FindFirstChild("LinkedCar")
+	if direct then return direct.Value end
+
+	-- 2. Check PrimaryPart (if pad is a Model)
+	if pad:IsA("Model") and pad.PrimaryPart then
+		local prim = pad.PrimaryPart:FindFirstChild("LinkedCar")
+		if prim then return prim.Value end
+	end
+
+	-- 3. Fallback: Scan children (if PrimaryPart isn't set)
+	for _, child in pairs(pad:GetChildren()) do
+		local val = child:FindFirstChild("LinkedCar")
+		if val then return val.Value end
+	end
+	
+	return nil
+end
+
 -- 💰 MAIN ECONOMY LOOP
--- This loop calculates money silently without creating any GUIs.
 task.spawn(function()
+	print("💰 TycoonEconomy: System Active & Monitoring...")
+	
 	while true do
 		task.wait(PAY_INTERVAL)
 		
 		for _, plot in pairs(TycoonFolder:GetChildren()) do
+			-- Ensure plot handles exist
 			local pendingValue = plot:FindFirstChild("PendingEarnings")
 			local padsFolder = plot:FindFirstChild("Pads")
 
 			if pendingValue and padsFolder then
 				local plotTotalIncome = 0
 				
-				-- Scan all pads to calculate total earnings
+				-- Scan all pads
 				for _, pad in pairs(padsFolder:GetChildren()) do
-					local linkedCar = pad:FindFirstChild("LinkedCar") and pad.LinkedCar.Value
+					-- 🛠️ FIX: Use helper to find value safely
+					local linkedCar = getLinkedCarValue(pad)
 					
 					if linkedCar and linkedCar.Parent then
 						local stats = CarStats.Cars[linkedCar.Name]
 						if stats then
 							plotTotalIncome = plotTotalIncome + stats.CPS
+						else
+							-- Warn once if a car name is missing from stats (Debugging)
+							if not pad:GetAttribute("WarnedMissing") then
+								warn("⚠️ Economy Warning: No stats found for '" .. linkedCar.Name .. "'")
+								pad:SetAttribute("WarnedMissing", true)
+							end
 						end
 					end
 				end
 				
-				-- Deposit earnings to the "Pending" pile
+				-- Deposit earnings
 				if plotTotalIncome > 0 then
 					pendingValue.Value = pendingValue.Value + plotTotalIncome
 				end
@@ -45,6 +76,3 @@ task.spawn(function()
 		end
 	end
 end)
-
--- NOTE: The "setupPadListener" and "addCashUI" functions were deleted 
--- so the script no longer creates floating text on your cars.
