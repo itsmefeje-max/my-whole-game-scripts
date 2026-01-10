@@ -1,0 +1,64 @@
+-- [[ SERVER SCRIPT: MovingAddonsHandler ]]
+-- -- Indicating what the script is for: Animates all models in "MovingAddons" with a bobbing and spinning effect.
+-- FEATURES: Handles Models & Parts, prevents drift by caching origin, works automatically on new children.
+
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+-- ⚙️ CONFIGURATION (Matches your image settings)
+local FOLDER_NAME = "MovingAddons"
+local DISPLACEMENT_SPREAD = 0.5   -- How high/low it goes (Studs)
+local DISPLACEMENT_SPEED = 2      -- How fast it bobs up and down
+local SPIN_SPEED = math.rad(50)   -- How fast it spins (Degrees per second)
+
+-- 🛡️ STATE MANAGEMENT
+local movingObjects = {} -- Stores [Object] = OriginalCFrame
+
+-- 1. WAIT FOR FOLDER
+local folder = Workspace:WaitForChild(FOLDER_NAME)
+
+-- 🛠️ SETUP FUNCTION
+local function setupObject(obj)
+	-- Supports both Models and single Parts
+	if obj:IsA("Model") or obj:IsA("BasePart") then
+		
+		-- We capture the "Pivot" (Center point) so animations don't drift away
+		local startCFrame = obj:GetPivot() 
+		movingObjects[obj] = startCFrame
+		
+		print("✅ MovingAddon Registered: " .. obj.Name)
+	end
+end
+
+-- 2. INITIALIZE EXISTING OBJECTS
+for _, child in pairs(folder:GetChildren()) do
+	setupObject(child)
+end
+
+-- 3. LISTEN FOR NEW OBJECTS (If you add them while game runs)
+folder.ChildAdded:Connect(setupObject)
+
+-- 🔄 ANIMATION LOOP (Heartbeat runs every frame on Server)
+RunService.Heartbeat:Connect(function()
+	local t = time() -- Get game time
+	
+	-- Calculate Math (Same as your image)
+	local yDisplacement = math.sin(t * DISPLACEMENT_SPEED) * DISPLACEMENT_SPREAD
+	local orientationDisplacement = t * SPIN_SPEED
+	
+	-- Apply to all objects
+	for obj, originalCF in pairs(movingObjects) do
+		if obj.Parent then 
+			-- LOGIC: Start at Origin -> Move Up/Down -> Spin
+			local targetCFrame = originalCF 
+				* CFrame.new(0, yDisplacement, 0) 
+				* CFrame.Angles(0, orientationDisplacement, 0)
+			
+			-- PivotTo moves the whole Model safely
+			obj:PivotTo(targetCFrame)
+		else
+			-- Clean up if object was deleted
+			movingObjects[obj] = nil 
+		end
+	end
+end)
