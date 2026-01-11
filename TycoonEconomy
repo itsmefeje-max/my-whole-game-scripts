@@ -1,7 +1,5 @@
 -- [[ SERVER SCRIPT: TycoonEconomy - FIXED & CLEANED ]]
--- Handles: Cash Generation Loop
--- Fixes: Correctly finds 'LinkedCar' inside Pad Models or Parts.
-
+-- Handles: Cash Generation Loop & CPS Calculation
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
@@ -59,7 +57,6 @@ task.spawn(function()
 						if stats then
 							plotTotalIncome = plotTotalIncome + stats.CPS
 						else
-							-- Warn once if a car name is missing from stats (Debugging)
 							if not pad:GetAttribute("WarnedMissing") then
 								warn("⚠️ Economy Warning: No stats found for '" .. linkedCar.Name .. "'")
 								pad:SetAttribute("WarnedMissing", true)
@@ -68,10 +65,13 @@ task.spawn(function()
 					end
 				end
 				
-				-- Deposit earnings
+				-- 1. Deposit earnings
 				if plotTotalIncome > 0 then
 					pendingValue.Value = pendingValue.Value + plotTotalIncome
 				end
+
+				-- 2. [NEW] Save CPS for the Display Script to see
+				plot:SetAttribute("CurrentCPS", plotTotalIncome)
 			end
 		end
 	end
