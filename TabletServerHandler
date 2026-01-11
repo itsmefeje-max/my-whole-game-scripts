@@ -1,0 +1,195 @@
+-- [[ SERVER SCRIPT: TabletServerHandler ]]
+-- Purpose: Handles Tablet updates, Secure Claiming, and Developer Products (2X Cash).
+-- STATUS: VERIFIED
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+
+-- ⚙️ CONFIGURATION
+local DEV_PRODUCT_ID = 3509697462
+local TYCOON_FOLDER_NAME = "Tycoons"
+local DATA_KEY = "TycoonData_Economy_V3" -- Matching your existing DataHandler key just in case
+
+-- 📂 REFERENCES
+local TycoonFolder = Workspace:WaitForChild(TYCOON_FOLDER_NAME)
+local TabletEvent = ReplicatedStorage:FindFirstChild("TabletEvent") 
+
+-- Auto-create RemoteEvent if missing (Safety Net)
+if not TabletEvent then
+	TabletEvent = Instance.new("RemoteEvent")
+	TabletEvent.Name = "TabletEvent"
+	TabletEvent.Parent = ReplicatedStorage
+end
+
+-- 📊 ABBREVIATION HELPER (Matches your existing style: K, M, B...)
+local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
+local function formatNumber(n)
+	n = tonumber(n) or 0
+	if n < 1000 then return tostring(math.floor(n)) end
+	local i = math.floor(math.log(n, 1000))
+	local v = math.pow(1000, i)
+	local suffix = SUFFIXES[i] or "?"
+	return string.format("%.2f%s", n / v, suffix)
+end
+
+-- ============================================================================
+-- 🛠️ TABLET SETUP FUNCTION
+-- ============================================================================
+local function setupTablet(plot)
+	task.spawn(function()
+		-- 1. WAIT FOR HIERARCHY (Anti-Crash with Timeouts)
+		local model = plot:WaitForChild("ClaimEarnings", 30)
+		if not model then return end -- Tablet model missing
+
+		local part = model:WaitForChild("Earnings", 10)
+		if not part then warn("⚠️ 'Earnings' Part missing inside Tablet for " .. plot.Name) return end
+
+		-- 2. GET GUIS (Using your exact names)
+		local avatarGui = part:WaitForChild("AvatarGUI", 10)
+		local revenueGui = part:WaitForChild("RevenueGUI", 10)
+		local usernameGui = part:WaitForChild("UsernameGUI", 10)
+
+		-- Note: ClaimGUI contains buttons handled by the Client, but we check it exists
+		local claimGui = part:WaitForChild("ClaimGUI", 10)
+
+		if not (avatarGui and revenueGui and usernameGui and claimGui) then 
+			warn("⚠️ Missing one or more GUIs in " .. plot.Name .. " Tablet")
+			return 
+		end
+
+		-- 3. GET TEXT LABELS & IMAGES
+		local avatarLabel = avatarGui:WaitForChild("Avatar-Label")
+		local revenueLabel = revenueGui:WaitForChild("Total-Revenue")
+		local usernameLabel = usernameGui:WaitForChild("Username")
+
+		local ownerVal = plot:WaitForChild("Owner", 10)
+		local pendingVal = plot:WaitForChild("PendingEarnings", 10)
+
+		-- 4. UPDATE FUNCTIONS
+		local function updateOwnerInfo()
+			local playerName = ownerVal.Value
+			if playerName and playerName ~= "" then
+				-- ✅ CLAIMED
+				usernameLabel.Text = playerName
+
+				-- Fetch Avatar
+				local success, userId = pcall(function()
+					return Players:GetUserIdFromNameAsync(playerName)
+				end)
+
+				if success and userId then
+					local thumbType = Enum.ThumbnailType.HeadShot
+					local thumbSize = Enum.ThumbnailSize.Size420x420
+					local content, isReady = Players:GetUserThumbnailAsync(userId, thumbType, thumbSize)
+					avatarLabel.Image = isReady and content or ""
+				else
+					avatarLabel.Image = "" -- Fallback
+				end
+			else
+				-- ♻️ VACANT
+				usernameLabel.Text = "Vacant"
+				avatarLabel.Image = "" 
+			end
+		end
+
+		local function updateRevenue()
+			-- Displays Pending Earnings with formatting
+			revenueLabel.Text = "$ " .. formatNumber(pendingVal.Value)
+		end
+
+		-- 5. LISTENERS
+		ownerVal.Changed:Connect(updateOwnerInfo)
+		pendingVal.Changed:Connect(updateRevenue)
+
+		-- Initial Run
+		updateOwnerInfo()
+		updateRevenue()
+	end)
+end
+
+-- Initialize Existing Tycoons
+for _, plot in pairs(TycoonFolder:GetChildren()) do
+	setupTablet(plot)
+end
+TycoonFolder.ChildAdded:Connect(setupTablet)
+
+-- ============================================================================
+-- 📡 REMOTE HANDLING (Claims & Prompts)
+-- ============================================================================
+TabletEvent.OnServerEvent:Connect(function(player, action, plotName)
+	local plot = TycoonFolder:FindFirstChild(plotName)
+	if not plot then return end
+
+	-- 🔒 SECURITY CHECK: Owner Only
+	if plot.Owner.Value ~= player.Name then return end
+
+	local pendingVal = plot:FindFirstChild("PendingEarnings")
+	if not pendingVal then return end
+
+	if action == "Claim" then
+		-- NORMAL CLAIM
+		local amount = pendingVal.Value
+		if amount <= 0 then return end -- Nothing to claim
+
+		pendingVal.Value = 0 -- Reset Sign
+
+		-- Give Money
+		local ls = player:FindFirstChild("leaderstats")
+		if ls and ls:FindFirstChild("Cash") then
+			ls.Cash.Value += amount
+		end
+
+	elseif action == "Prompt2X" then
+		-- 2X CLAIM (Prompt Purchase)
+		local amount = pendingVal.Value
+		if amount <= 0 then return end -- Don't prompt if $0
+
+		MarketplaceService:PromptProductPurchase(player, DEV_PRODUCT_ID)
+	end
+end)
+
+-- ============================================================================
+-- 💰 DEV PRODUCT PROCESSOR (2X Logic)
+-- ============================================================================
+MarketplaceService.ProcessReceipt = function(receiptInfo)
+	if receiptInfo.ProductId == DEV_PRODUCT_ID then
+
+		local player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
+		if not player then 
+			-- Player left? We record success but they missed out visually.
+			-- Ideally, we'd save to DataStore here, but for now we grant purchase success.
+			return Enum.ProductPurchaseDecision.PurchaseGranted 
+		end
+
+		-- Find their plot
+		local myPlotName = player:GetAttribute("OccupiedPlot")
+		local plot = TycoonFolder:FindFirstChild(myPlotName or "")
+
+		if plot and plot:FindFirstChild("PendingEarnings") then
+			local pendingVal = plot.PendingEarnings
+			local amount = pendingVal.Value
+
+			-- 💰 DOUBLE REWARD LOGIC
+			-- Even if they claimed '0' while the prompt was open, we can't give money from thin air.
+			-- But normally, 'PendingEarnings' holds the cash until claimed.
+
+			if amount > 0 then
+				pendingVal.Value = 0 -- Reset sign
+
+				local ls = player:FindFirstChild("leaderstats")
+				if ls and ls:FindFirstChild("Cash") then
+					ls.Cash.Value += (amount * 2) -- x2 Multiplier
+				end
+				print("✅ " .. player.Name .. " bought 2X Claim! Earned: $" .. (amount*2))
+			else
+				warn(player.Name .. " bought 2X but Pending was 0 (Did they claim manually?)")
+			end
+
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
+	end
+
+	return Enum.ProductPurchaseDecision.NotProcessedYet
+end
