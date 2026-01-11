@@ -1,6 +1,6 @@
 -- [[ LOCAL SCRIPT: TabletVisuals ]]
 -- Purpose: Handles Tablet Logic.
--- FIX: Uses 'ZOffset' to fix clicking without overlaying the character.
+-- Updated: Now finds ClaimGUI inside 'ClaimPart' to match the Server Script.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -38,11 +38,9 @@ local function enableClicking(gui, part)
 	gui.AlwaysOnTop = false 
 
 	-- ✅ TURN ON Z-OFFSET (Fixes clicking issues)
-	-- This pushes the UI "forward" purely for the mouse detection and rendering order.
-	-- It beats the 'AvatarGUI' and 'RevenueGUI' without beating the Character.
 	gui.ZOffset = 100 
 
-	-- Lighting (Optional: Makes it glow slightly so it's visible in dark garages)
+	-- Lighting
 	gui.LightInfluence = 0.5 
 end
 
@@ -100,14 +98,21 @@ local function setupClientTablet(plot)
 	local model = plot:WaitForChild("ClaimEarnings", 30)
 	if not model then return end
 
-	local part = model:WaitForChild("Earnings", 10)
-	if not part then return end
+	-- [[ UPDATE: Look for ClaimPart instead of Earnings ]] --
+	local claimPart = model:WaitForChild("ClaimPart", 10)
+	
+	-- Fallback: If ClaimPart isn't there, try the old one just in case
+	if not claimPart then 
+		claimPart = model:WaitForChild("Earnings", 1)
+	end
+	
+	if not claimPart then return end
 
-	local claimGui = part:WaitForChild("ClaimGUI", 10)
+	local claimGui = claimPart:WaitForChild("ClaimGUI", 10)
 	if not claimGui then return end
 
-	-- ⚡ APPLY THE FIX
-	enableClicking(claimGui, part)
+	-- ⚡ APPLY THE FIX (Uses ClaimPart as the Adornee now)
+	enableClicking(claimGui, claimPart)
 
 	local btnNormal = claimGui:WaitForChild("ClaimButton", 10)
 	local btn2X = claimGui:WaitForChild("ClaimButton2X", 10)
