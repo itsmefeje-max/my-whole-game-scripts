@@ -1,6 +1,6 @@
 -- [[ LOCAL SCRIPT: TabletVisuals ]]
 -- Purpose: Handles Hover Animations, Click Detection, and SFX for the Tablet.
--- LOCATION: StarterPlayer > StarterPlayerScripts
+-- FIX: Automatically moves GUIs to PlayerGui to ensure clicking ALWAYS works.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,38 +9,55 @@ local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 local TabletEvent = ReplicatedStorage:WaitForChild("TabletEvent")
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
--- ⚙️ ANIMATION CONFIG
-local HOVER_SCALE = 1.05 -- Grows 5% bigger (Subtle & Clean)
+-- ⚙️ CONFIGURATION
+local HOVER_SCALE = 1.05 
 local HOVER_SPEED = 0.2
-local CLICK_SOUND_ID = "rbxassetid://9083627113" -- Matches your Bank/Inventory Sound
+local CLICK_SOUND_ID = "rbxassetid://9083627113"
+
+-- 🛠️ HELPER: Make GUI Clickable (The "Adornee" Fix)
+local function enableClicking(gui, part)
+	if not gui then return end
+	
+	-- 1. Check if it's already fixed
+	if gui.Parent == playerGui then return end
+	
+	-- 2. Clone/Move logic
+	-- We reparent the GUI from Workspace -> PlayerGui
+	-- This wakes up the buttons so they can receive input.
+	gui.Adornee = part -- Tells it to "stick" visually to the tablet part
+	gui.Parent = playerGui -- Moves logic to the player (Clickable!)
+	
+	-- 3. Ensure properties are correct for interaction
+	gui.Active = true
+	gui.Enabled = true
+	-- Note: We DON'T use AlwaysOnTop unless you want it seeing through walls
+end
 
 -- 🛠️ ANIMATION TWEENS
 local function addHoverEffect(button)
 	if not button:IsA("GuiButton") then return end
 	
-	-- Store original size to revert later
-	local originalSize = button.Size
+	-- Ensure button is active
+	button.Active = true
 	
-	-- Calculate Target Size
+	local originalSize = button.Size
 	local targetSize = UDim2.new(
 		originalSize.X.Scale * HOVER_SCALE, originalSize.X.Offset,
 		originalSize.Y.Scale * HOVER_SCALE, originalSize.Y.Offset
 	)
 
-	-- Hover Enter
 	button.MouseEnter:Connect(function()
 		TweenService:Create(button, TweenInfo.new(HOVER_SPEED), {Size = targetSize}):Play()
 	end)
 
-	-- Hover Leave
 	button.MouseLeave:Connect(function()
 		TweenService:Create(button, TweenInfo.new(HOVER_SPEED), {Size = originalSize}):Play()
 	end)
 
-	-- Click Logic (Visuals Only)
 	button.MouseButton1Down:Connect(function()
 		local sound = Instance.new("Sound")
 		sound.SoundId = CLICK_SOUND_ID
@@ -55,7 +72,6 @@ end
 -- 🕵️ MONITOR & CONNECT
 -- ============================================================================
 local function setupClientTablet(plot)
-	-- Look for the Tablet Model
 	local model = plot:WaitForChild("ClaimEarnings", 30)
 	if not model then return end
 	
@@ -64,8 +80,11 @@ local function setupClientTablet(plot)
 	
 	local claimGui = part:WaitForChild("ClaimGUI", 10)
 	if not claimGui then return end
-	
-	-- Find Buttons (Ensure names match your model)
+
+	-- ⚡ APPLY THE FIX: Move GUI to PlayerGui
+	enableClicking(claimGui, part)
+
+	-- Find Buttons (Now they are inside PlayerGui, so we search safely)
 	local btnNormal = claimGui:WaitForChild("ClaimButton", 10)
 	local btn2X = claimGui:WaitForChild("ClaimButton2X", 10)
 
@@ -76,8 +95,8 @@ local function setupClientTablet(plot)
 	-- 2. HANDLE CLICKS (Fire Server)
 	if btnNormal then
 		btnNormal.MouseButton1Click:Connect(function()
-			-- Visual feedback: Maybe dim slightly?
-			btnNormal.ImageTransparency = 0.2
+			-- Visual feedback
+			btnNormal.ImageTransparency = 0.5
 			task.delay(0.1, function() btnNormal.ImageTransparency = 0 end)
 			
 			TabletEvent:FireServer("Claim", plot.Name)
@@ -92,9 +111,11 @@ local function setupClientTablet(plot)
 end
 
 -- Initialize
+task.wait(2) -- Wait for Tycoons to load fully
 for _, plot in pairs(TycoonFolder:GetChildren()) do
 	task.spawn(function() setupClientTablet(plot) end)
 end
+
 TycoonFolder.ChildAdded:Connect(function(plot)
 	task.spawn(function() setupClientTablet(plot) end)
 end)
