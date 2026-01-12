@@ -1,12 +1,11 @@
--- [[ LOCAL SCRIPT: TabletVisuals ]]
--- Purpose: Handles Tablet Logic.
--- Updated: Now finds ClaimGUI inside 'ClaimPart' to match the Server Script.
-
+-- [[ LOCAL SCRIPT: TabletVisuals (Manual GUI Edition) ]]
+-- -- Indicating what the script is for: Handles Tablet Interactions and animates the manual labels.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -14,132 +13,198 @@ local TabletEvent = ReplicatedStorage:WaitForChild("TabletEvent")
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
 -- ⚙️ CONFIGURATION
-local HOVER_SCALE = 1.1
-local HOVER_SPEED = 0.2
-local CLICK_SOUND_ID = "rbxassetid://9083627113" 
+local DEV_PRODUCT_ID = 3509697462
+local HOVER_SCALE = 1.1          
+local SHRINK_SCALE = 0.95        
+local ANIM_SPEED = 0.1           
+
+-- 🔊 SOUNDS
 local HOVER_SOUND_ID = "rbxassetid://6895079853" 
+local CLICK_SOUND_ID = "rbxassetid://9083627113"      
+local FAIL_SOUND_ID = "rbxassetid://3779045779"       
+local SUCCESS_SOUND_ID = "rbxassetid://140072726814802" 
 local HOVER_VOLUME = 0.5
+
+-- 🛡️ STATE
+local isClaiming = false
+local isHoveringMap = {} 
 
 -- 🛠️ HELPER: The "Z-Offset" Fix
 local function enableClicking(gui, part)
 	if not gui then return end
-
-	-- 1. Move to PlayerGui
 	if gui.Parent ~= playerGui then
 		gui.Adornee = part 
 		gui.Parent = playerGui 
 	end
-
-	gui.Active = true
-	gui.Enabled = true
-	gui.ResetOnSpawn = false
-
-	-- 🚫 TURN OFF OVERLAY (Fixes character clipping)
-	gui.AlwaysOnTop = false 
-
-	-- ✅ TURN ON Z-OFFSET (Fixes clicking issues)
-	gui.ZOffset = 100 
-
-	-- Lighting
-	gui.LightInfluence = 0.5 
+	gui.Active = true; gui.Enabled = true; gui.ResetOnSpawn = false
+	gui.AlwaysOnTop = false; gui.ZOffset = 100; gui.LightInfluence = 0.5 
 end
 
--- 🛠️ ANIMATION TWEENS
-local function addHoverEffect(button)
+-- ============================================================================
+-- 💬 FEEDBACK LOGIC (Finds YOUR Labels)
+-- ============================================================================
+local function triggerLabel(labelName)
+	-- 1. Find the GUI you created in StarterGui
+	local screenGui = playerGui:WaitForChild("TycoonFeedbackGUI", 10)
+	if not screenGui then 
+		warn("⚠️ TabletVisuals: Could not find 'TycoonFeedbackGUI' in PlayerGui!")
+		return 
+	end
+	
+	local label = screenGui:FindFirstChild(labelName)
+	if not label then 
+		warn("⚠️ TabletVisuals: Could not find label named '" .. labelName .. "' inside TycoonFeedbackGUI.")
+		return 
+	end
+
+	-- 2. Reset State
+	label.Visible = true
+	label.TextTransparency = 0
+	
+	-- Support UIStroke if you added it
+	if label:FindFirstChild("UIStroke") then
+		label.UIStroke.Transparency = 0
+	end
+	
+	-- 3. Animate (Pop Effect)
+	-- We use a UIScale for smooth popping. We create one if you didn't add it.
+	local uiScale = label:FindFirstChild("UIScale") or Instance.new("UIScale", label)
+	uiScale.Scale = 0
+	
+	-- POP IN
+	local tweenIn = TweenService:Create(uiScale, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1})
+	tweenIn:Play()
+	tweenIn.Completed:Wait()
+	
+	-- WAIT (Read time)
+	task.wait(1)
+	
+	-- FADE OUT
+	local tweenOut = TweenService:Create(label, TweenInfo.new(0.5), {TextTransparency = 1})
+	tweenOut:Play()
+	
+	if label:FindFirstChild("UIStroke") then
+		TweenService:Create(label.UIStroke, TweenInfo.new(0.5), {Transparency = 1}):Play()
+	end
+	
+	tweenOut.Completed:Wait()
+	label.Visible = false
+end
+
+-- ============================================================================
+-- 🎨 BUTTON ANIMATION
+-- ============================================================================
+local function setupAnimatedButton(button, clickFunction)
 	if not button:IsA("GuiButton") then return end
 
-	button.Active = true
-	button.ZIndex = 50 -- Ensure button is above its own background
-
 	local originalSize = button.Size
+	local hoverSize = UDim2.new(originalSize.X.Scale * HOVER_SCALE, originalSize.X.Offset * HOVER_SCALE, originalSize.Y.Scale * HOVER_SCALE, originalSize.Y.Offset * HOVER_SCALE)
+	local shrinkSize = UDim2.new(originalSize.X.Scale * SHRINK_SCALE, originalSize.X.Offset * SHRINK_SCALE, originalSize.Y.Scale * SHRINK_SCALE, originalSize.Y.Offset * SHRINK_SCALE)
 
-	-- Target Size (Centered Growth)
-	local targetSize = UDim2.new(
-		originalSize.X.Scale * HOVER_SCALE, 
-		originalSize.X.Offset * HOVER_SCALE, 
-		originalSize.Y.Scale * HOVER_SCALE, 
-		originalSize.Y.Offset * HOVER_SCALE
-	)
-
-	-- HOVER ENTER
 	button.MouseEnter:Connect(function()
-		TweenService:Create(button, TweenInfo.new(HOVER_SPEED, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = targetSize}):Play()
-
-		if HOVER_SOUND_ID ~= "" and HOVER_SOUND_ID ~= "rbxassetid://0" then
-			local sound = Instance.new("Sound")
-			sound.SoundId = HOVER_SOUND_ID
-			sound.Volume = HOVER_VOLUME
-			sound.Parent = SoundService
-			sound:Play()
-			game.Debris:AddItem(sound, 1)
-		end
+		isHoveringMap[button] = true
+		TweenService:Create(button, TweenInfo.new(0.2), {Size = hoverSize}):Play()
+		local s = Instance.new("Sound"); s.SoundId = HOVER_SOUND_ID; s.Volume = HOVER_VOLUME; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
 	end)
 
-	-- HOVER LEAVE
 	button.MouseLeave:Connect(function()
-		TweenService:Create(button, TweenInfo.new(HOVER_SPEED, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = originalSize}):Play()
+		isHoveringMap[button] = false
+		TweenService:Create(button, TweenInfo.new(0.2), {Size = originalSize}):Play()
 	end)
 
-	-- CLICK
 	button.MouseButton1Down:Connect(function()
-		local sound = Instance.new("Sound")
-		sound.SoundId = CLICK_SOUND_ID
-		sound.Volume = 0.5
-		sound.Parent = SoundService
-		sound:Play()
-		game.Debris:AddItem(sound, 1)
+		local tweenShrink = TweenService:Create(button, TweenInfo.new(ANIM_SPEED, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = shrinkSize})
+		tweenShrink:Play()
+		tweenShrink.Completed:Wait()
+		local returnSize = isHoveringMap[button] and hoverSize or originalSize
+		TweenService:Create(button, TweenInfo.new(ANIM_SPEED, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out), {Size = returnSize}):Play()
+		
+		if clickFunction then clickFunction() end
 	end)
 end
 
 -- ============================================================================
--- 🕵️ MONITOR & CONNECT
+-- 🕵️ LOGIC CONNECTIONS
 -- ============================================================================
 local function setupClientTablet(plot)
 	local model = plot:WaitForChild("ClaimEarnings", 30)
 	if not model then return end
 
-	-- [[ UPDATE: Look for ClaimPart instead of Earnings ]] --
 	local claimPart = model:WaitForChild("ClaimPart", 10)
-
-	-- Fallback: If ClaimPart isn't there, try the old one just in case
-	if not claimPart then 
-		claimPart = model:WaitForChild("Earnings", 1)
-	end
-
+	if not claimPart then claimPart = model:WaitForChild("Earnings", 1) end
 	if not claimPart then return end
 
 	local claimGui = claimPart:WaitForChild("ClaimGUI", 10)
 	if not claimGui then return end
+	
+	local pendingVal = plot:WaitForChild("PendingEarnings", 10)
 
-	-- ⚡ APPLY THE FIX (Uses ClaimPart as the Adornee now)
 	enableClicking(claimGui, claimPart)
 
 	local btnNormal = claimGui:WaitForChild("ClaimButton", 10)
 	local btn2X = claimGui:WaitForChild("ClaimButton2X", 10)
 
-	if btnNormal then addHoverEffect(btnNormal) end
-	if btn2X then addHoverEffect(btn2X) end
-
+	-- 🟢 1. NORMAL CLAIM BUTTON
 	if btnNormal then
-		btnNormal.MouseButton1Click:Connect(function()
-			btnNormal.ImageTransparency = 0.5
-			task.delay(0.1, function() btnNormal.ImageTransparency = 0 end)
+		setupAnimatedButton(btnNormal, function()
+			-- A. TOO FAST
+			if isClaiming then 
+				task.spawn(function() triggerLabel("WarningLabel") end)
+				return 
+			end
+			
+			-- B. NO EARNINGS
+			if pendingVal.Value <= 0 then
+				local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				task.spawn(function() triggerLabel("ErrorLabel") end)
+				return
+			end
+
+			-- C. SUCCESS
+			isClaiming = true
+			local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+			
+			task.spawn(function() triggerLabel("SuccessLabel") end)
 			TabletEvent:FireServer("Claim", plot.Name)
+			
+			task.wait(1.5) 
+			isClaiming = false
 		end)
 	end
 
+	-- 💎 2. DEV PRODUCT BUTTON (2X)
 	if btn2X then
-		btn2X.MouseButton1Click:Connect(function()
+		setupAnimatedButton(btn2X, function()
+			-- B. NO EARNINGS CHECK
+			if pendingVal and pendingVal.Value <= 0 then
+				local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				task.spawn(function() triggerLabel("ErrorLabel") end)
+				return
+			end
+			
+			-- PROMPT (Success label handled by Purchase Listener below)
 			TabletEvent:FireServer("Prompt2X", plot.Name)
 		end)
 	end
 end
 
+-- ============================================================================
+-- 💰 PURCHASE SUCCESS LISTENER
+-- ============================================================================
+MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
+	if userId == player.UserId and productId == DEV_PRODUCT_ID and isPurchased then
+		local s = Instance.new("Sound"); s.SoundId = SUCCESS_SOUND_ID; s.Volume = 1; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s, 2)
+		
+		-- TRIGGER THE SUCCESS LABEL
+		task.spawn(function() triggerLabel("SuccessLabel") end)
+	end
+end)
+
+-- Initialize
 task.wait(2) 
 for _, plot in pairs(TycoonFolder:GetChildren()) do
 	task.spawn(function() setupClientTablet(plot) end)
 end
-
 TycoonFolder.ChildAdded:Connect(function(plot)
 	task.spawn(function() setupClientTablet(plot) end)
 end)
