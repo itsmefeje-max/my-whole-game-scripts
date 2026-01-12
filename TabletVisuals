@@ -1,11 +1,12 @@
--- [[ LOCAL SCRIPT: TabletVisuals (Manual GUI Edition) ]]
--- -- Indicating what the script is for: Handles Tablet Interactions and animates the manual labels.
+-- [[ LOCAL SCRIPT: TabletVisuals (Fixed Visibility) ]]
+-- -- Indicating what the script is for: Handles Interactions, Separate Visibility/Click Ranges, and Floating Feedback.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local MarketplaceService = game:GetService("MarketplaceService")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -15,8 +16,18 @@ local TycoonFolder = Workspace:WaitForChild("Tycoons")
 -- ⚙️ CONFIGURATION
 local DEV_PRODUCT_ID = 3509697462
 local HOVER_SCALE = 1.1          
-local SHRINK_SCALE = 0.95        
+local CLICK_SCALE = 0.9          
 local ANIM_SPEED = 0.1           
+
+-- 📏 DISTANCE SETTINGS (Separated for better feel)
+local VISIBILITY_DISTANCE = 150  -- How far away you can SEE the button (Camera based)
+local CLICK_DISTANCE = 45        -- How close you must be to CLICK (Character based)
+
+-- 💬 FLOATING TEXT SETTINGS
+local FLOAT_HEIGHT = 4           
+local STANDARD_DURATION = 1      
+local DOUBLE_CASH_DURATION = 3   
+local START_OFFSET = Vector3.new(0, 2, 0) 
 
 -- 🔊 SOUNDS
 local HOVER_SOUND_ID = "rbxassetid://6895079853" 
@@ -28,8 +39,9 @@ local HOVER_VOLUME = 0.5
 -- 🛡️ STATE
 local isClaiming = false
 local isHoveringMap = {} 
+local lastProjectedAmount = 0 
 
--- 🛠️ HELPER: The "Z-Offset" Fix
+-- 🛠️ HELPER: The "Z-Offset" Fix & Visibility Logic
 local function enableClicking(gui, part)
 	if not gui then return end
 	if gui.Parent ~= playerGui then
@@ -38,89 +50,90 @@ local function enableClicking(gui, part)
 	end
 	gui.Active = true; gui.Enabled = true; gui.ResetOnSpawn = false
 	gui.AlwaysOnTop = false; gui.ZOffset = 100; gui.LightInfluence = 0.5 
+	
+	-- ✅ VISIBILITY FIX: Set this high so it doesn't vanish in 3rd person
+	if gui:IsA("SurfaceGui") or gui:IsA("BillboardGui") then
+		gui.MaxDistance = VISIBILITY_DISTANCE
+	end
 end
 
 -- ============================================================================
--- 💬 FEEDBACK LOGIC (Finds YOUR Labels)
+-- ☁️ FLOATING TEXT FUNCTION
 -- ============================================================================
-local function triggerLabel(labelName)
-	-- 1. Find the GUI you created in StarterGui
-	local screenGui = playerGui:WaitForChild("TycoonFeedbackGUI", 10)
-	if not screenGui then 
-		warn("⚠️ TabletVisuals: Could not find 'TycoonFeedbackGUI' in PlayerGui!")
-		return 
-	end
-	
-	local label = screenGui:FindFirstChild(labelName)
-	if not label then 
-		warn("⚠️ TabletVisuals: Could not find label named '" .. labelName .. "' inside TycoonFeedbackGUI.")
-		return 
-	end
+local function spawnFloatingText(targetPart, text, color, duration)
+	if not targetPart then return end
+	local timeToFloat = duration or STANDARD_DURATION
 
-	-- 2. Reset State
-	label.Visible = true
-	label.TextTransparency = 0
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "FloatingFeedback"
+	billboard.Adornee = targetPart
+	billboard.Size = UDim2.new(0, 300, 0, 50) 
+	billboard.StudsOffset = START_OFFSET
+	billboard.AlwaysOnTop = true
+	billboard.Parent = playerGui 
+	-- Also apply visibility limit to floating text so it doesn't clutter map
+	billboard.MaxDistance = VISIBILITY_DISTANCE 
+
+	local label = Instance.new("TextLabel")
+	label.Parent = billboard
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = color
+	label.Font = Enum.Font.FredokaOne 
+	label.TextScaled = true
+	label.TextStrokeTransparency = 0 
+	label.TextStrokeColor3 = Color3.new(0,0,0)
+
+	local tweenInfo = TweenInfo.new(timeToFloat, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	
-	-- Support UIStroke if you added it
-	if label:FindFirstChild("UIStroke") then
-		label.UIStroke.Transparency = 0
-	end
+	local goalOffset = START_OFFSET + Vector3.new(0, FLOAT_HEIGHT, 0)
+	TweenService:Create(billboard, tweenInfo, {StudsOffset = goalOffset}):Play()
 	
-	-- 3. Animate (Pop Effect)
-	-- We use a UIScale for smooth popping. We create one if you didn't add it.
-	local uiScale = label:FindFirstChild("UIScale") or Instance.new("UIScale", label)
-	uiScale.Scale = 0
-	
-	-- POP IN
-	local tweenIn = TweenService:Create(uiScale, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1})
-	tweenIn:Play()
-	tweenIn.Completed:Wait()
-	
-	-- WAIT (Read time)
-	task.wait(1)
-	
-	-- FADE OUT
-	local tweenOut = TweenService:Create(label, TweenInfo.new(0.5), {TextTransparency = 1})
-	tweenOut:Play()
-	
-	if label:FindFirstChild("UIStroke") then
-		TweenService:Create(label.UIStroke, TweenInfo.new(0.5), {Transparency = 1}):Play()
-	end
-	
-	tweenOut.Completed:Wait()
-	label.Visible = false
+	local tweenFade = TweenService:Create(label, tweenInfo, {TextTransparency = 1, TextStrokeTransparency = 1})
+	tweenFade:Play()
+
+	Debris:AddItem(billboard, timeToFloat)
 end
 
 -- ============================================================================
--- 🎨 BUTTON ANIMATION
+-- 🎨 SIMPLE POP ANIMATION
 -- ============================================================================
 local function setupAnimatedButton(button, clickFunction)
 	if not button:IsA("GuiButton") then return end
-
 	local originalSize = button.Size
 	local hoverSize = UDim2.new(originalSize.X.Scale * HOVER_SCALE, originalSize.X.Offset * HOVER_SCALE, originalSize.Y.Scale * HOVER_SCALE, originalSize.Y.Offset * HOVER_SCALE)
-	local shrinkSize = UDim2.new(originalSize.X.Scale * SHRINK_SCALE, originalSize.X.Offset * SHRINK_SCALE, originalSize.Y.Scale * SHRINK_SCALE, originalSize.Y.Offset * SHRINK_SCALE)
+	local clickSize = UDim2.new(originalSize.X.Scale * CLICK_SCALE, originalSize.X.Offset * CLICK_SCALE, originalSize.Y.Scale * CLICK_SCALE, originalSize.Y.Offset * CLICK_SCALE)
 
 	button.MouseEnter:Connect(function()
 		isHoveringMap[button] = true
-		TweenService:Create(button, TweenInfo.new(0.2), {Size = hoverSize}):Play()
+		TweenService:Create(button, TweenInfo.new(ANIM_SPEED), {Size = hoverSize}):Play()
 		local s = Instance.new("Sound"); s.SoundId = HOVER_SOUND_ID; s.Volume = HOVER_VOLUME; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
 	end)
 
 	button.MouseLeave:Connect(function()
 		isHoveringMap[button] = false
-		TweenService:Create(button, TweenInfo.new(0.2), {Size = originalSize}):Play()
+		TweenService:Create(button, TweenInfo.new(ANIM_SPEED), {Size = originalSize}):Play()
 	end)
 
 	button.MouseButton1Down:Connect(function()
-		local tweenShrink = TweenService:Create(button, TweenInfo.new(ANIM_SPEED, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = shrinkSize})
-		tweenShrink:Play()
-		tweenShrink.Completed:Wait()
-		local returnSize = isHoveringMap[button] and hoverSize or originalSize
-		TweenService:Create(button, TweenInfo.new(ANIM_SPEED, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out), {Size = returnSize}):Play()
-		
+		TweenService:Create(button, TweenInfo.new(0.05), {Size = clickSize}):Play() 
+	end)
+
+	button.MouseButton1Up:Connect(function()
+		local target = isHoveringMap[button] and hoverSize or originalSize
+		TweenService:Create(button, TweenInfo.new(ANIM_SPEED, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = target}):Play()
 		if clickFunction then clickFunction() end
 	end)
+end
+
+-- ============================================================================
+-- 📏 DISTANCE CHECK HELPER (Character Based)
+-- ============================================================================
+local function isCloseEnough(targetPart)
+	if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return false end
+	local dist = (player.Character.HumanoidRootPart.Position - targetPart.Position).Magnitude
+	return dist <= CLICK_DISTANCE
 end
 
 -- ============================================================================
@@ -147,24 +160,25 @@ local function setupClientTablet(plot)
 	-- 🟢 1. NORMAL CLAIM BUTTON
 	if btnNormal then
 		setupAnimatedButton(btnNormal, function()
-			-- A. TOO FAST
+			-- 📏 STRICT CHECK: Must be close to CLICK
+			if not isCloseEnough(claimPart) then return end 
+			
 			if isClaiming then 
-				task.spawn(function() triggerLabel("WarningLabel") end)
+				spawnFloatingText(claimPart, "Slow Down!", Color3.fromRGB(255, 170, 0))
 				return 
 			end
 			
-			-- B. NO EARNINGS
 			if pendingVal.Value <= 0 then
 				local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
-				task.spawn(function() triggerLabel("ErrorLabel") end)
+				spawnFloatingText(claimPart, "No Earnings!", Color3.fromRGB(255, 80, 80))
 				return
 			end
 
-			-- C. SUCCESS
 			isClaiming = true
 			local s = Instance.new("Sound"); s.SoundId = CLICK_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
 			
-			task.spawn(function() triggerLabel("SuccessLabel") end)
+			spawnFloatingText(claimPart, "+$"..pendingVal.Value, Color3.fromRGB(85, 255, 127))
+			
 			TabletEvent:FireServer("Claim", plot.Name)
 			
 			task.wait(1.5) 
@@ -175,14 +189,16 @@ local function setupClientTablet(plot)
 	-- 💎 2. DEV PRODUCT BUTTON (2X)
 	if btn2X then
 		setupAnimatedButton(btn2X, function()
-			-- B. NO EARNINGS CHECK
+			-- 📏 STRICT CHECK: Must be close to CLICK
+			if not isCloseEnough(claimPart) then return end 
+			
 			if pendingVal and pendingVal.Value <= 0 then
 				local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
-				task.spawn(function() triggerLabel("ErrorLabel") end)
+				spawnFloatingText(claimPart, "No Earnings!", Color3.fromRGB(255, 80, 80))
 				return
 			end
 			
-			-- PROMPT (Success label handled by Purchase Listener below)
+			lastProjectedAmount = pendingVal.Value * 2
 			TabletEvent:FireServer("Prompt2X", plot.Name)
 		end)
 	end
@@ -195,8 +211,17 @@ MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, produc
 	if userId == player.UserId and productId == DEV_PRODUCT_ID and isPurchased then
 		local s = Instance.new("Sound"); s.SoundId = SUCCESS_SOUND_ID; s.Volume = 1; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s, 2)
 		
-		-- TRIGGER THE SUCCESS LABEL
-		task.spawn(function() triggerLabel("SuccessLabel") end)
+		local myPlotName = player:GetAttribute("OccupiedPlot")
+		if myPlotName then
+			local plot = TycoonFolder:FindFirstChild(myPlotName)
+			local model = plot and plot:FindFirstChild("ClaimEarnings")
+			local part = model and (model:FindFirstChild("ClaimPart") or model:FindFirstChild("Earnings"))
+			
+			if part then
+				local msg = "DOUBLE CASH! ( +$" .. lastProjectedAmount .. " )"
+				spawnFloatingText(part, msg, Color3.fromRGB(255, 255, 0), DOUBLE_CASH_DURATION)
+			end
+		end
 	end
 end)
 
