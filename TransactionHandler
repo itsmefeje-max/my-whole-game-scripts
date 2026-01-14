@@ -1,60 +1,124 @@
+-- [[ LOCAL SCRIPT: WithdrawLogic (Final Step: Send to NPC) ]]
+-- -- Indicating what the script is for: Handles Tablet input and sends money to the ATM (NPC) for pickup.
 
--- [[ SERVER SIDE: TransactionHandler (Verified) ]]
--- -- Indicating what the script is for: Securely transfers money from Bank to Wallet.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
 local Players = game:GetService("Players")
 
--- 1. REMOTE EVENT SETUP
-local withdrawEvent = ReplicatedStorage:FindFirstChild("WithdrawEvent")
-if not withdrawEvent then
-	withdrawEvent = Instance.new("RemoteEvent")
-	withdrawEvent.Name = "WithdrawEvent"
-	withdrawEvent.Parent = ReplicatedStorage
-	print("✅ TransactionHandler: Created missing 'WithdrawEvent'")
+local player = Players.LocalPlayer
+local withdrawBtn = script.Parent
+
+-- 🔍 ROBUST FINDER: Finds the Main GUI even if you moved the button
+-- This prevents the "attempt to index nil" errors you had before.
+local mainScreenGui = withdrawBtn:FindFirstAncestorWhichIsA("ScreenGui")
+local amountInput = mainScreenGui and mainScreenGui:FindFirstChild("AmountInput", true) 
+local VerifyLabel = mainScreenGui and mainScreenGui:FindFirstChild("VerifyLabel", true)
+local SuccessLabel = mainScreenGui and mainScreenGui:FindFirstChild("SuccessLabel", true)
+local ErrorLabel = mainScreenGui and mainScreenGui:FindFirstChild("ErrorLabel", true)
+
+-- 📡 EVENTS
+local withdrawEvent = ReplicatedStorage:WaitForChild("WithdrawEvent", 10)
+
+-- 🔊 SOUNDS
+local SUCCESS_SOUND = "rbxassetid://140072726814802"
+local ERROR_SOUND = "rbxassetid://3779045779"
+
+-- ============================================================================
+-- 🧠 SMART INPUT PARSER (k, m, all, commas)
+-- ============================================================================
+local function parseAmount(text)
+	if not text then return 0 end
+	text = text:lower()
+
+	-- Handle "All" or "Max"
+	if text == "all" or text == "max" then
+		if player.leaderstats and player.leaderstats:FindFirstChild("Cash") then
+			return player.leaderstats.Cash.Value
+		end
+		return 0
+	end
+
+	-- Remove commas
+	text = text:gsub(",", "")
+
+	-- Handle Suffixes (k, m, b)
+	local multiplier = 1
+	if text:match("k") then multiplier = 1000 end
+	if text:match("m") then multiplier = 1000000 end
+	if text:match("b") then multiplier = 1000000000 end
+
+	-- Extract Number
+	local cleanNum = tonumber(text:match("[%d%.]+"))
+	if cleanNum then
+		return math.floor(cleanNum * multiplier)
+	end
+
+	return 0
 end
 
--- ⏳ COOLDOWN CONFIG
-local COOLDOWN_TIME = 0.5 
-local cooldowns = {} 
+-- ============================================================================
+-- 🎬 ANIMATIONS
+-- ============================================================================
+local function playSound(id)
+	local s = Instance.new("Sound", SoundService); s.SoundId = id; s.Volume = 0.5; s:Play(); game.Debris:AddItem(s, 2)
+end
 
-withdrawEvent.OnServerEvent:Connect(function(player, amount)
-	-- 🛡️ SECURITY FIX: Type Check
-	if type(amount) ~= "number" then return end
+local function showFeedback(label)
+	if not label then return end
+	label.Visible = true
+	label.TextTransparency = 0
+	task.wait(2)
+	for i = 0, 1, 0.1 do
+		label.TextTransparency = i
+		task.wait(0.05)
+	end
+	label.Visible = false
+end
 
-	-- 1. Validate Amount
-	amount = math.floor(amount) -- Remove decimals
-	if amount <= 0 then return end
+-- ============================================================================
+-- 🟢 MAIN CLICK LOGIC
+-- ============================================================================
+withdrawBtn.MouseButton1Click:Connect(function()
+	-- 1. Validate Input Box
+	if not amountInput then 
+		warn("❌ Error: Cannot find 'AmountInput' text box.") 
+		return 
+	end
 
-	local leaderstats = player:FindFirstChild("leaderstats")
-	if not leaderstats then return end
+	-- 2. Parse the Number
+	local amount = parseAmount(amountInput.Text)
+	local bank = 0
+	if player.leaderstats and player.leaderstats:FindFirstChild("Cash") then
+		bank = player.leaderstats.Cash.Value
+	end
 
-	-- 2. DEFINE VARIABLES
-	local bank = leaderstats:FindFirstChild("Cash")   
-	local wallet = leaderstats:FindFirstChild("Wallet") 
+	-- 3. Check Funds
+	if amount > 0 and amount <= bank then
+		-- ✅ VALID: Send to ATM
+		if withdrawEvent then
+			withdrawEvent:FireServer(amount) -- This goes to TransactionHandler
 
-	if bank and wallet then
+			print("📤 Sent $" .. amount .. " to NPC for pickup.")
+			playSound(SUCCESS_SOUND)
 
-		-- 3. CHECK COOLDOWN (High Precision)
-		local currentTime = os.clock()
-		local lastTime = cooldowns[player.UserId]
+			-- Visual Feedback
+			amountInput.Text = "SENT TO ATM!"
+			if SuccessLabel then task.spawn(function() showFeedback(SuccessLabel) end) end
 
-		if lastTime and (currentTime - lastTime) < COOLDOWN_TIME then
-			return -- Silently ignore spam
-		end
-
-		-- 4. CHECK BALANCE
-		if bank.Value >= amount then
-			-- 5. DO THE TRANSFER
-			bank.Value = bank.Value - amount   
-			wallet.Value = wallet.Value + amount 
-
-			-- Update Cooldown
-			cooldowns[player.UserId] = currentTime
-			print("✅ Success! Withdrew $" .. amount .. " for " .. player.Name)
+			task.wait(1)
+			amountInput.Text = ""
 		else
-			warn("❌ Insufficient Funds for " .. player.Name)
+			warn("❌ Critical: WithdrawEvent not found!")
 		end
 	else
-		warn("❌ CRITICAL: Missing stats for " .. player.Name)
+		-- ❌ INVALID: Not enough money or bad number
+		print("❌ Invalid Amount or Insufficient Funds")
+		playSound(ERROR_SOUND)
+
+		if ErrorLabel then task.spawn(function() showFeedback(ErrorLabel) end) end
+		amountInput.Text = "Error"
+		task.wait(1)
+		amountInput.Text = ""
 	end
 end)
