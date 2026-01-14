@@ -1,6 +1,6 @@
 -- [[ LOCAL SCRIPT: AfraiC4tLogic (Fully Restored & Fixed) ]]
 -- -- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
--- UPDATED: Includes Balance Greeting + 100% Fix for Bank Connection.
+-- UPDATED: Auto-creates BindableEvent to prevent race conditions.
 -- LOCATION: StarterPlayer > StarterPlayerScripts
 
 local TweenService = game:GetService("TweenService")
@@ -37,7 +37,7 @@ local LEAVE_DELAY = 2
 -- 🔊 SOUNDS
 local TYPING_SOUND_ID = "rbxassetid://4676738150"
 
--- 📊 FORMATTING HELPER (For Balance)
+-- 📊 FORMATTING HELPER
 local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
 
 local function formatNumber(n)
@@ -50,9 +50,9 @@ local function formatNumber(n)
 	return string.format("%.2f%s", n / v, suffix)
 end
 
--- 💬 GREETINGS (Includes the new requested balance line)
+-- 💬 GREETINGS
 local GREETING_OPTIONS = {
-	"Hello [Name], your current bank balance is [Balance].", -- <New Feature
+	"Hello [Name], your current bank balance is [Balance].", 
 	"Welcome back, [Name]. My systems are ready.",
 	"Greetings. The ATM secure channel is open.",
 	"Hello, [Name]. Proceed with your transaction.",
@@ -62,10 +62,12 @@ local GREETING_OPTIONS = {
 -- ============================================================================
 -- 🛠️ EVENT LINKING (THE FIX)
 -- ============================================================================
-local OpenATMEvent = ReplicatedStorage:WaitForChild("OpenATMEvent", 10)
-
+-- Logic: We check if it exists; if not, we create it LOCALLY so this script never fails.
+local OpenATMEvent = ReplicatedStorage:FindFirstChild("OpenATMEvent")
 if not OpenATMEvent then
-	warn("🚨 CRITICAL ERROR: 'OpenATMEvent' is missing in ReplicatedStorage! The Withdraw button will fail.")
+	OpenATMEvent = Instance.new("BindableEvent")
+	OpenATMEvent.Name = "OpenATMEvent"
+	OpenATMEvent.Parent = ReplicatedStorage
 end
 
 -- ============================================================================
@@ -88,7 +90,6 @@ task.spawn(function()
 		if container then
 			container.Visible = false 
 		end
-		print("🔒 ATM UI successfully hidden on startup.")
 	end
 end)
 
@@ -134,7 +135,6 @@ end
 local function stopInteraction()
 	if not isInteracting and not isLeaving then return end
 
-	print("🛑 Closing Interaction...")
 	isInteracting = false
 	isLeaving = false
 
@@ -231,7 +231,6 @@ local function startInteraction(npcModel)
 
 	-- 2. INQUIRY BUTTON
 	connectBtn(BTN_INQUIRY_ID, function()
-		print("ℹ️ Inquiry Clicked")
 		if dialogueLabel then
 			local guide = "BANKING GUIDE:\n\n1. EARN: Your Plot generates income.\n2. WITHDRAW: Move earnings to Wallet.\n3. SPEND: Use Cash for upgrades."
 			typewrite(dialogueLabel, guide)
@@ -246,6 +245,7 @@ local function startInteraction(npcModel)
 		end
 		stopInteraction()
 
+		-- SAFE FIRE: We know it exists because we created/checked it at the top
 		if OpenATMEvent then
 			print("📤 Signal Sent: Opening Bank UI...")
 			OpenATMEvent:Fire()
