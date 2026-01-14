@@ -1,39 +1,124 @@
--- [[ LOCAL SCRIPT: AfraiC4tLogic (FIXED EVENT CREATION) ]]
--- -- Purpose: Handles NPC Interaction AND Creates the ATM Event Link.
+-- [[ LOCAL SCRIPT: Bank UI - SFX Only (Final Verified) ]]
+-- -- Indicating what the script is for: Handles Bank UI with SFX, Movement Lock, and ATM Integration.
 
-local TweenService = game:GetService("TweenService")
+print("---------------------------------------------------------")
+print("🛠️ STARTING BANK UI SCRIPT (SFX ONLY)...")
+
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage") -- Added for ATM Event
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 local playerGui = player:WaitForChild("PlayerGui")
 
+-- 🛠️ HELPER: Debug Finder
+local function debugFind(parent, name)
+	local obj = parent:WaitForChild(name, 5) 
+	if obj then return obj else warn("❌ CRITICAL: Missing " .. name) return nil end
+end
+
+-- 1. FIND GUI
+local myScreenGui = debugFind(playerGui, "BankGui") 
+if not myScreenGui then return end
+
+local mainWindow = debugFind(myScreenGui, "BankFrame")
+local transferFrame = myScreenGui:FindFirstChild("TransferFrame") 
+local openButton = debugFind(myScreenGui, "OpenButton")
+
+if not mainWindow or not openButton then return end 
+
+-- 🛑 FORCE HIDE IMMEDIATELY
+mainWindow.Visible = false
+if transferFrame then transferFrame.Visible = false end
+openButton.Visible = true
+
+-- 2. FIND INTERNAL PARTS
+local closeButton = debugFind(mainWindow, "CloseButton")
+local balanceLabel = debugFind(mainWindow, "BalanceLabel")
+local headerContainer = debugFind(mainWindow, "HeaderContainer")
+
+if not headerContainer then return end
+
+local greetingLabel = debugFind(headerContainer, "GreetingLabel")
+local avatarImage = debugFind(headerContainer, "AvatarImage")
+
+if not greetingLabel or not avatarImage then return end
+greetingLabel.RichText = true 
+
+-- ⚙️ CONFIG & SOUNDS
+local OPEN_FOV = 50       
+local NORMAL_FOV = 70       
+local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+local HOVER_TWEEN = TweenInfo.new(0.2)
+local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
+local DIM_COLOR = Color3.fromRGB(200, 200, 200)   
+
+-- 🔊 SOUND IDS (SFX Only - Music Removed)
+local SOUND_ID = "rbxassetid://9083627113" 
+
+-- 🛡️ TRACKING VARIABLES
+local hiddenGuis = {}      
+
+-- 4. SETUP CLICK DETECTOR
+local detector = Instance.new("TextButton")
+detector.Name = "OutsideDetector"
+detector.Parent = myScreenGui
+detector.Size = UDim2.new(1, 0, 1, 0)
+detector.BackgroundTransparency = 1 
+detector.Text = ""
+detector.ZIndex = mainWindow.ZIndex - 1 
+detector.Visible = false
+detector.Active = true 
+
+-- 5. MONEY VARIABLES
+local leaderstats = player:WaitForChild("leaderstats", 10)
+local cash = nil
+if leaderstats then
+	cash = leaderstats:WaitForChild("Cash", 10)
+end
+
 -- ============================================================================
--- 🆔 CONFIGURATION
+-- 🛠️ HELPER: PLAY SFX SAFELY
 -- ============================================================================
-local GUI_ID = "UI_NPC_ATM_AfraiC4t"       
-local CONTAINER_ID = "Frame_ATM_Container" 
-local TEXT_ID = "Text_ATM_Dialogue"        
-local BTN_WITHDRAW_ID = "Btn_ATM_Withdraw" 
-local BTN_INQUIRY_ID = "Btn_ATM_Inquiry"   
-local BTN_LEAVE_ID = "Btn_ATM_Leave"       
+local function playSfx(soundId, volume)
+	local s = Instance.new("Sound")
+	s.SoundId = soundId
+	s.Volume = volume or 0.5
+	s.Parent = openButton 
+	s:Play()
+	game.Debris:AddItem(s, 3)
+end
 
-local NPC_FOLDER = "NPCS"
-local TARGET_NPC = "AfraiC4t"
-local CAMERA_PART = "CameraAimPart"
-local PROMPT_NAME = "TalkPrompt" 
+-- ============================================================================
+-- 👁️ FUNCTION: SMART HIDE OTHER GUIS
+-- ============================================================================
+local function toggleOtherGuis(shouldHide)
+	if shouldHide then
+		hiddenGuis = {} 
+		for _, gui in pairs(playerGui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui ~= myScreenGui and gui.Enabled == true then
+				gui.Enabled = false
+				table.insert(hiddenGuis, gui)
+			end
+		end
+	else
+		for _, gui in pairs(hiddenGuis) do
+			if gui and gui.Parent then 
+				gui.Enabled = true
+			end
+		end
+		hiddenGuis = {} 
+	end
+end
 
--- 🎥 SETTINGS
-local TWEEN_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TYPEWRITER_SPEED = 0.02
-local LEAVE_DELAY = 2 
-local TYPING_SOUND_ID = "rbxassetid://4676738150"
-
--- 📊 FORMATTING HELPER
+-- ============================================================================
+-- 📊 ABBREVIATION SYSTEM
+-- ============================================================================
 local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
+
 local function formatNumber(n)
 	n = tonumber(n)
 	if not n then return "0" end
@@ -44,197 +129,126 @@ local function formatNumber(n)
 	return string.format("%.2f%s", n / v, suffix)
 end
 
--- 💬 GREETINGS
-local GREETING_OPTIONS = {
-	"Hello [Name], your current bank balance is [Balance].", 
-	"Welcome back, [Name]. My systems are ready.",
-	"Greetings. The ATM secure channel is open.",
-	"Hello, [Name]. Proceed with your transaction.",
-	"System Online. Awaiting input."
-}
+local function updateDisplay()
+	if cash then
+		balanceLabel.Text = "$ " .. formatNumber(cash.Value)
+	else
+		balanceLabel.Text = "$ 0"
+	end
+end
 
 -- ============================================================================
--- 🛠️ EVENT LINKING (THE FIX IS HERE)
+-- 🎮 MAIN LOGIC
 -- ============================================================================
--- We check if the event exists; if not, WE CREATE IT immediately.
+
+local function loadAvatar()
+	local content, isReady = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+	if isReady then 
+		avatarImage.Image = content 
+	else 
+		avatarImage.Image = "" 
+	end
+end
+
+local function getRandomHex()
+	return Color3.fromHSV(math.random(), 0.7, 1):ToHex() 
+end
+
+local function setFocusMode(isFocused)
+	detector.Visible = isFocused
+	openButton.Visible = not isFocused 
+
+	if isFocused then
+		mainWindow.Visible = true
+		if transferFrame then transferFrame.Visible = false end
+		toggleOtherGuis(true)
+	else
+		mainWindow.Visible = false
+		if transferFrame then transferFrame.Visible = false end
+		toggleOtherGuis(false)
+	end
+
+	-- Lock Movement
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChild("Humanoid")
+		if humanoid then
+			humanoid.WalkSpeed = isFocused and 0 or 16
+			humanoid.JumpPower = isFocused and 0 or 50
+		end
+	end
+end
+
+-- ============================================================================
+-- 🏧 ATM INTEGRATION (THE FIX)
+-- ============================================================================
+-- Checks for the event created by the NPC script to open this UI remotely.
 local OpenATMEvent = ReplicatedStorage:FindFirstChild("OpenATMEvent")
 if not OpenATMEvent then
 	OpenATMEvent = Instance.new("BindableEvent")
 	OpenATMEvent.Name = "OpenATMEvent"
 	OpenATMEvent.Parent = ReplicatedStorage
-	print("✅ AfraiC4t: Created missing 'OpenATMEvent' link.")
 end
 
--- ============================================================================
--- 🛠️ STATE VARIABLES
--- ============================================================================
-local isInteracting = false
-local isLeaving = false
-local currentDialogueJob = nil 
-local buttonConnections = {} 
-local controls = require(player.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
+OpenATMEvent.Event:Connect(function()
+	playSfx(SOUND_ID, 0.5) 
 
--- ============================================================================
--- 🔒 FORCE HIDE UI ON LOAD
--- ============================================================================
-task.spawn(function()
-	local myGui = playerGui:WaitForChild(GUI_ID, 10)
-	if myGui then
-		myGui.Enabled = false 
-		local container = myGui:FindFirstChild(CONTAINER_ID, true)
-		if container then container.Visible = false end
+	-- 1. Setup Visuals
+	local colorHex = getRandomHex()
+	greetingLabel.Text = "<font color='#" .. colorHex .. "'>" .. player.Name .. "</font>"
+	updateDisplay()
+
+	-- 2. Open UI (Locks movement and hides other GUIs)
+	setFocusMode(true)
+
+	-- 3. Direct to Transfer Screen (Better UX for ATMs)
+	if transferFrame then
+		mainWindow.Visible = false -- Hide main menu
+		transferFrame.Visible = true -- Show transfer/withdraw screen immediately
 	end
+
+	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = OPEN_FOV}):Play()
+	print("✅ ATM Opened Bank UI Successfully")
 end)
 
 -- ============================================================================
--- 🎬 INTERACTION FUNCTIONS
+-- 🟢 OPEN LOGIC (Manual Button)
 -- ============================================================================
+openButton.MouseButton1Click:Connect(function()
+	playSfx(SOUND_ID, 0.5) 
 
-local function clearConnections()
-	for _, conn in pairs(buttonConnections) do
-		if conn then conn:Disconnect() end
-	end
-	buttonConnections = {}
-end
-
-local function typewrite(label, text)
-	if not label then return end
-	if currentDialogueJob then task.cancel(currentDialogueJob) currentDialogueJob = nil end
-	label.Text = "" 
-	currentDialogueJob = task.spawn(function()
-		for i = 1, #text do
-			if not isInteracting and not isLeaving then break end
-			label.Text = string.sub(text, 1, i)
-			if i % 3 == 0 then 
-				local s = Instance.new("Sound", SoundService)
-				s.SoundId = TYPING_SOUND_ID; s.Volume = 0.1
-				s.PlayOnRemove = true; s:Destroy()
-			end
-			task.wait(TYPEWRITER_SPEED)
-		end
-	end)
-end
-
-local function stopInteraction()
-	if not isInteracting and not isLeaving then return end
-	isInteracting = false
-	isLeaving = false
-	if currentDialogueJob then task.cancel(currentDialogueJob) end
-	clearConnections() 
-
-	camera.CameraType = Enum.CameraType.Custom
-	if controls then controls:Enable() end
-	if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-		player.Character.HumanoidRootPart.Anchored = false
-	end
-
-	local myGui = playerGui:FindFirstChild(GUI_ID)
-	if myGui then
-		myGui.Enabled = false
-		local container = myGui:FindFirstChild(CONTAINER_ID, true)
-		if container then container.Visible = false end
-	end
-end
-
-local function startInteraction(npcModel)
-	if isInteracting or isLeaving then return end
-	isInteracting = true
-	clearConnections() 
-
-	local camPart = npcModel:FindFirstChild(CAMERA_PART)
-	if not camPart then warn("❌ Missing CameraAimPart"); isInteracting = false; return end
-
-	if controls then controls:Disable() end
-	if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-		player.Character.HumanoidRootPart.Anchored = true 
-	end
-
-	camera.CameraType = Enum.CameraType.Scriptable
-	TweenService:Create(camera, TWEEN_INFO, {CFrame = camPart.CFrame}):Play()
-
-	local myGui = playerGui:WaitForChild(GUI_ID, 5)
-	if not myGui then stopInteraction() return end
-	myGui.Enabled = true 
-	local container = myGui:FindFirstChild(CONTAINER_ID, true) 
-	if not container then stopInteraction() return end
-	container.Visible = true 
-
-	-- 💬 DIALOGUE
-	local dialogueLabel = container:FindFirstChild(TEXT_ID, true)
-	if dialogueLabel then
-		local currentBalance = "0"
-		if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash") then
-			currentBalance = formatNumber(player.leaderstats.Cash.Value)
-		end
-		local greeting = GREETING_OPTIONS[math.random(1, #GREETING_OPTIONS)]
-		greeting = greeting:gsub("%[Name%]", player.Name)
-		greeting = greeting:gsub("%[Balance%]", "$" .. currentBalance)
-		typewrite(dialogueLabel, greeting)
-	end
-
-	-- 🔘 BUTTON SETUP
-	local function connectBtn(btnName, func)
-		local btn = myGui:FindFirstChild(btnName, true)
-		if btn and btn:IsA("GuiButton") then
-			local conn = btn.MouseButton1Click:Connect(func)
-			table.insert(buttonConnections, conn)
-		end
-	end
-
-	connectBtn(BTN_LEAVE_ID, function()
-		if isLeaving then return end
-		isLeaving = true 
-		clearConnections()
-		if dialogueLabel then typewrite(dialogueLabel, "Thank you for talking, " .. player.Name) end
-		task.wait(LEAVE_DELAY)
-		stopInteraction()
-	end)
-
-	connectBtn(BTN_INQUIRY_ID, function()
-		if dialogueLabel then
-			typewrite(dialogueLabel, "BANKING GUIDE:\n\n1. EARN: Plot income.\n2. WITHDRAW: To Wallet.\n3. SPEND: Upgrades.")
-		end
-	end)
-
-	connectBtn(BTN_WITHDRAW_ID, function()
-		if dialogueLabel then
-			typewrite(dialogueLabel, "Accessing Secure Vault...")
-			task.wait(0.5)
-		end
-		stopInteraction()
-		
-		if OpenATMEvent then
-			print("📤 Signal Sent: Opening Bank UI...")
-			OpenATMEvent:Fire()
-		end
-	end)
-end
+	local colorHex = getRandomHex()
+	greetingLabel.Text = "<font color='#" .. colorHex .. "'>" .. player.Name .. "</font>"
+	updateDisplay()
+	setFocusMode(true)
+	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = OPEN_FOV}):Play()
+end)
 
 -- ============================================================================
--- ⚡ SETUP
+-- 🔴 CLOSE LOGIC
 -- ============================================================================
-local function setupATM()
-	local folder = Workspace:WaitForChild(NPC_FOLDER)
-	local npc = folder:WaitForChild(TARGET_NPC, 10)
-
-	if npc then
-		-- Robust Find: Look in UpperTorso > BodyFrontAttachment
-		local prompt = nil
-		local torso = npc:FindFirstChild("UpperTorso")
-		if torso then
-			local att = torso:FindFirstChild("BodyFrontAttachment")
-			if att then prompt = att:FindFirstChild(PROMPT_NAME) end
-		end
-		-- Fallback: Look everywhere
-		if not prompt then prompt = npc:FindFirstChild(PROMPT_NAME, true) end
-
-		if prompt then
-			print("✅ ATM Ready.")
-			prompt.Triggered:Connect(function() startInteraction(npc) end)
-		else
-			warn("❌ AfraiC4t Setup: Could not find TalkPrompt inside NPC.")
-		end
-	end
+local function performClose()
+	setFocusMode(false)
+	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
 end
 
-setupATM()
+closeButton.MouseButton1Click:Connect(function() 
+	playSfx(SOUND_ID, 0.5) 
+	performClose()
+end) 
+
+detector.MouseButton1Click:Connect(function()
+	playSfx(SOUND_ID, 0.5) 
+	performClose()
+end)
+
+local function addHover(btn)
+	btn.MouseEnter:Connect(function() TweenService:Create(btn, HOVER_TWEEN, {ImageColor3 = DIM_COLOR}):Play() end)
+	btn.MouseLeave:Connect(function() TweenService:Create(btn, HOVER_TWEEN, {ImageColor3 = NORMAL_COLOR}):Play() end)
+end
+
+addHover(openButton)
+if closeButton:IsA("ImageButton") then addHover(closeButton) end
+
+if cash then cash.Changed:Connect(updateDisplay) end
+task.spawn(loadAvatar)
