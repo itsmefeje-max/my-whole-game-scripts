@@ -1,6 +1,6 @@
--- [[ LOCAL SCRIPT: AfraiC4tLogic (Updated Path) ]]
+-- [[ LOCAL SCRIPT: AfraiC4tLogic (Fully Restored & Fixed) ]]
 -- -- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
--- UPDATED: Prompt Path = UpperTorso > BodyFrontAttachment > TalkPrompt
+-- UPDATED: Includes Balance Greeting + 100% Fix for Bank Connection.
 -- LOCATION: StarterPlayer > StarterPlayerScripts
 
 local TweenService = game:GetService("TweenService")
@@ -37,14 +37,36 @@ local LEAVE_DELAY = 2
 -- 🔊 SOUNDS
 local TYPING_SOUND_ID = "rbxassetid://4676738150"
 
--- 💬 RANDOM GREETINGS
+-- 📊 FORMATTING HELPER (For Balance)
+local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
+
+local function formatNumber(n)
+	n = tonumber(n)
+	if not n then return "0" end
+	if n < 1000 then return tostring(math.floor(n)) end
+	local i = math.floor(math.log(n, 1000))
+	local v = math.pow(1000, i)
+	local suffix = SUFFIXES[i] or "?"
+	return string.format("%.2f%s", n / v, suffix)
+end
+
+-- 💬 GREETINGS (Includes the new requested balance line)
 local GREETING_OPTIONS = {
+	"Hello [Name], your current bank balance is [Balance].", -- <New Feature
 	"Welcome back, [Name]. My systems are ready.",
 	"Greetings. The ATM secure channel is open.",
 	"Hello, [Name]. Proceed with your transaction.",
-	"System Online. Awaiting input.",
-	"Good day, [Name]. Banking services are operational."
+	"System Online. Awaiting input."
 }
+
+-- ============================================================================
+-- 🛠️ EVENT LINKING (THE FIX)
+-- ============================================================================
+local OpenATMEvent = ReplicatedStorage:WaitForChild("OpenATMEvent", 10)
+
+if not OpenATMEvent then
+	warn("🚨 CRITICAL ERROR: 'OpenATMEvent' is missing in ReplicatedStorage! The Withdraw button will fail.")
+end
 
 -- ============================================================================
 -- 🛠️ STATE VARIABLES
@@ -54,13 +76,6 @@ local isLeaving = false
 local currentDialogueJob = nil 
 local buttonConnections = {} 
 local controls = require(player.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
-
-local OpenATMEvent = ReplicatedStorage:FindFirstChild("OpenATMEvent")
-if not OpenATMEvent then
-	OpenATMEvent = Instance.new("BindableEvent")
-	OpenATMEvent.Name = "OpenATMEvent"
-	OpenATMEvent.Parent = ReplicatedStorage
-end
 
 -- ============================================================================
 -- 🔒 FORCE HIDE UI ON LOAD
@@ -163,27 +178,35 @@ local function startInteraction(npcModel)
 	camera.CameraType = Enum.CameraType.Scriptable
 	TweenService:Create(camera, TWEEN_INFO, {CFrame = camPart.CFrame}):Play()
 
-	-- Get UI and FORCE SHOW
 	local myGui = playerGui:WaitForChild(GUI_ID, 5)
 	if not myGui then warn("❌ Missing GUI") stopInteraction() return end
 
-	myGui.Enabled = true -- Turn ScreenGui ON
+	myGui.Enabled = true 
 	local container = myGui:FindFirstChild(CONTAINER_ID, true) 
 	if not container then warn("❌ Missing Frame") stopInteraction() return end
 
-	container.Visible = true -- Turn Frame ON
+	container.Visible = true 
 
+	-- 💬 DIALOGUE LOGIC
 	local dialogueLabel = container:FindFirstChild(TEXT_ID, true)
 	if dialogueLabel then
+		-- Get Balance
+		local currentBalance = "0"
+		if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash") then
+			currentBalance = formatNumber(player.leaderstats.Cash.Value)
+		end
+
+		-- Setup Greeting
 		local greeting = GREETING_OPTIONS[math.random(1, #GREETING_OPTIONS)]
 		greeting = greeting:gsub("%[Name%]", player.Name)
+		greeting = greeting:gsub("%[Balance%]", "$" .. currentBalance)
+
 		typewrite(dialogueLabel, greeting)
 	end
 
 	-- ==============================
 	-- 🔘 BUTTON SETUP
 	-- ==============================
-
 	local function connectBtn(btnName, func)
 		local btn = myGui:FindFirstChild(btnName, true)
 		if btn and btn:IsA("GuiButton") then
@@ -192,21 +215,17 @@ local function startInteraction(npcModel)
 		end
 	end
 
-	-- 1. LEAVE BUTTON (2 Second Delay)
+	-- 1. LEAVE BUTTON
 	connectBtn(BTN_LEAVE_ID, function()
 		if isLeaving then return end
 		isLeaving = true 
-
-		clearConnections() -- Disable buttons immediately
+		clearConnections()
 
 		if dialogueLabel then
 			local goodbyeMsg = "Thank you for talking, " .. player.Name
 			typewrite(dialogueLabel, goodbyeMsg)
 		end
-
-		-- WAIT 2 SECONDS
 		task.wait(LEAVE_DELAY)
-
 		stopInteraction()
 	end)
 
@@ -219,26 +238,29 @@ local function startInteraction(npcModel)
 		end
 	end)
 
-	-- 3. WITHDRAW BUTTON
+	-- 3. WITHDRAW BUTTON (Triggers Bank UI)
 	connectBtn(BTN_WITHDRAW_ID, function()
 		if dialogueLabel then
 			typewrite(dialogueLabel, "Accessing Secure Vault...")
 			task.wait(0.5)
 		end
 		stopInteraction()
-		OpenATMEvent:Fire()
+
+		if OpenATMEvent then
+			print("📤 Signal Sent: Opening Bank UI...")
+			OpenATMEvent:Fire()
+		end
 	end)
 end
 
 -- ============================================================================
--- ⚡ SETUP (UPDATED PATH)
+-- ⚡ SETUP
 -- ============================================================================
 local function setupATM()
 	local folder = Workspace:WaitForChild(NPC_FOLDER)
 	local npc = folder:WaitForChild(TARGET_NPC, 10)
 
 	if npc then
-		-- 🛠️ UPDATED PATH: UpperTorso > BodyFrontAttachment > TalkPrompt
 		local torso = npc:WaitForChild("UpperTorso", 10)
 		if not torso then warn("❌ AfraiC4t Setup: Missing UpperTorso") return end
 
