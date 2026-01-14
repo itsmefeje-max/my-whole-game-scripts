@@ -1,0 +1,62 @@
+-- [[ LOCAL SCRIPT: WithdrawMax (DEBUG EDITION) ]]
+-- -- Indicating what the script is for: Instantly withdraws ALL available funds with Debugging.
+
+print("✅ Max Withdraw Script Loaded")
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+local button = script.Parent
+local mainWindow = button.Parent 
+
+local withdrawEvent = ReplicatedStorage:WaitForChild("WithdrawEvent", 5)
+if not withdrawEvent then warn("❌ CRITICAL: WithdrawEvent not found in ReplicatedStorage!") end
+
+local SuccessLabel = mainWindow:WaitForChild("SuccessLabel", 5)
+local ErrorLabel = mainWindow:WaitForChild("ErrorLabel", 5)
+
+local isCoolingDown = false
+
+local function showFeedback(label)
+	if not label then return end
+	label.Visible = true; label.TextTransparency = 0
+	task.wait(2)
+	local tween = TweenService:Create(label, TweenInfo.new(0.5), {TextTransparency = 1})
+	tween:Play()
+	tween.Completed:Wait()
+	label.Visible = false
+end
+
+button.MouseButton1Click:Connect(function()
+	print("🖱️ MAX Withdraw Clicked")
+	if isCoolingDown then return end
+	isCoolingDown = true 
+
+	local currentBank = 0
+	if player.leaderstats and player.leaderstats:FindFirstChild("Cash") then
+		currentBank = player.leaderstats.Cash.Value
+		print("💰 Found Balance: " .. currentBank)
+	else
+		warn("⚠️ Could not find Cash leaderstat!")
+	end
+
+	if currentBank <= 0 then
+		-- 🔴 NOTHING TO WITHDRAW
+		print("❌ Transaction Cancelled: Balance is 0")
+		local s = Instance.new("Sound", SoundService); s.SoundId = "rbxassetid://3779045779"; s:Play(); game.Debris:AddItem(s,2)
+		task.spawn(function() showFeedback(ErrorLabel) end)
+	else
+		-- 🟢 SUCCESS (ALL)
+		print("📤 Firing Withdraw Event for ALL: " .. currentBank)
+		if withdrawEvent then withdrawEvent:FireServer(currentBank) end
+
+		local s = Instance.new("Sound", SoundService); s.SoundId = "rbxassetid://140072726814802"; s:Play(); game.Debris:AddItem(s,2)
+		task.spawn(function() showFeedback(SuccessLabel) end)
+	end
+
+	task.wait(1)
+	isCoolingDown = false
+end)
