@@ -242,4 +242,4 @@ end)
 	textGradient.Offset = Vector2.new(offset, 0)
 end)
 
-
+bro let me tell you something the universal car script isn't necessary because the npc tracks the head of the player when they come close and the car is in drivable which means that they can only be placed in a plot and earn money that's how it works
