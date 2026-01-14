@@ -1,8 +1,6 @@
-
+-- [[ LOCAL SCRIPT: AfraiC4tLogic (Updated Path) ]]
 -- -- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
--- UPDATES: 
--- 1. FIXED: Forces UI to hide immediately when the game starts (even if left Visible in Studio).
--- 2. UPDATED: Leave delay reduced to 2 seconds.
+-- UPDATED: Prompt Path = UpperTorso > BodyFrontAttachment > TalkPrompt
 -- LOCATION: StarterPlayer > StarterPlayerScripts
 
 local TweenService = game:GetService("TweenService")
@@ -34,7 +32,7 @@ local PROMPT_NAME = "TalkPrompt"
 -- 🎥 SETTINGS
 local TWEEN_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local TYPEWRITER_SPEED = 0.02
-local LEAVE_DELAY = 2 -- Changed to 2 seconds
+local LEAVE_DELAY = 2 
 
 -- 🔊 SOUNDS
 local TYPING_SOUND_ID = "rbxassetid://4676738150"
@@ -67,14 +65,13 @@ end
 -- ============================================================================
 -- 🔒 FORCE HIDE UI ON LOAD
 -- ============================================================================
--- This runs immediately when you join to ensure the screen is clean
 task.spawn(function()
 	local myGui = playerGui:WaitForChild(GUI_ID, 10)
 	if myGui then
-		myGui.Enabled = false -- Turn off the main ScreenGui
+		myGui.Enabled = false 
 		local container = myGui:FindFirstChild(CONTAINER_ID, true)
 		if container then
-			container.Visible = false -- Turn off the Frame
+			container.Visible = false 
 		end
 		print("🔒 ATM UI successfully hidden on startup.")
 	end
@@ -234,26 +231,29 @@ local function startInteraction(npcModel)
 end
 
 -- ============================================================================
--- ⚡ SETUP
+-- ⚡ SETUP (UPDATED PATH)
 -- ============================================================================
 local function setupATM()
 	local folder = Workspace:WaitForChild(NPC_FOLDER)
 	local npc = folder:WaitForChild(TARGET_NPC, 10)
 
 	if npc then
-		local prompt = npc:FindFirstChild(PROMPT_NAME, true) 
-		local retries = 0
-		while not prompt and retries < 10 do
-			task.wait(0.5)
-			prompt = npc:FindFirstChild(PROMPT_NAME, true)
-			retries = retries + 1
-		end
+		-- 🛠️ UPDATED PATH: UpperTorso > BodyFrontAttachment > TalkPrompt
+		local torso = npc:WaitForChild("UpperTorso", 10)
+		if not torso then warn("❌ AfraiC4t Setup: Missing UpperTorso") return end
+
+		local attachment = torso:WaitForChild("BodyFrontAttachment", 10)
+		if not attachment then warn("❌ AfraiC4t Setup: Missing BodyFrontAttachment") return end
+
+		local prompt = attachment:WaitForChild(PROMPT_NAME, 10)
 
 		if prompt then
-			print("✅ ATM Ready.")
+			print("✅ ATM Ready (Path: UpperTorso > BodyFrontAttachment)")
 			prompt.Triggered:Connect(function()
 				startInteraction(npc)
 			end)
+		else
+			warn("❌ AfraiC4t Setup: Missing TalkPrompt in BodyFrontAttachment")
 		end
 	end
 end
