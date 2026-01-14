@@ -1,9 +1,18 @@
 -- [[ SERVER SIDE: TransactionHandler (Final Verified Fix) ]]
--- -- Indicating what the script is for: Withdraws money with exploit checks.
--- FIX: Added type checking for 'amount'.
+-- -- Indicating what the script is for: Withdraws money with exploit checks and auto-creates RemoteEvent.
+-- FIX: Added RemoteEvent creation, type checking, and precise os.clock() for cooldowns.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local withdrawEvent = ReplicatedStorage:WaitForChild("WithdrawEvent")
+local Players = game:GetService("Players")
+
+-- 1. REMOTE EVENT SETUP (Auto-Create to prevent Infinite Yield)
+local withdrawEvent = ReplicatedStorage:FindFirstChild("WithdrawEvent")
+if not withdrawEvent then
+	withdrawEvent = Instance.new("RemoteEvent")
+	withdrawEvent.Name = "WithdrawEvent"
+	withdrawEvent.Parent = ReplicatedStorage
+	print("✅ TransactionHandler: Created missing 'WithdrawEvent'")
+end
 
 -- ⏳ COOLDOWN CONFIG
 local COOLDOWN_TIME = 0.5 
@@ -28,9 +37,11 @@ withdrawEvent.OnServerEvent:Connect(function(player, amount)
 
 	if bank and wallet then
 
-		-- 3. CHECK COOLDOWN
+		-- 3. CHECK COOLDOWN (Fixed using os.clock for sub-second precision)
+		local currentTime = os.clock()
 		local lastTime = cooldowns[player.UserId]
-		if lastTime and (os.time() - lastTime) < COOLDOWN_TIME then
+		
+		if lastTime and (currentTime - lastTime) < COOLDOWN_TIME then
 			warn("⏳ Transaction too fast for " .. player.Name)
 			return 
 		end
@@ -43,7 +54,7 @@ withdrawEvent.OnServerEvent:Connect(function(player, amount)
 			wallet.Value = wallet.Value + amount 
 
 			-- Update Cooldown
-			cooldowns[player.UserId] = os.time()
+			cooldowns[player.UserId] = currentTime
 
 			print("✅ Success! Withdrew $" .. amount .. " for " .. player.Name)
 		else
