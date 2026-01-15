@@ -1,5 +1,7 @@
--- ( LOCAL SCRIPT: Inventory - MOVEMENT & ZOOM LOCK (Final Verified) )
--- -- Indicating what the script is for: Inventory UI with Movement/Zoom Locking and Original Music/SFX.
+-- ( LOCAL SCRIPT: Inventory - SINGLE EQUIP FIX )
+-- Fixes: "Holding 2 items at once."
+-- Logic: Auto-unequips any currently held tool before equipping the new one.
+
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
@@ -32,7 +34,7 @@ local GAME_THEME_NAME = "GameTheme"
 
 -- 🎨 COLORS
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
-local DIM_COLOR = Color3.fromRGB(170, 170, 170)  
+local DIM_COLOR = Color3.fromRGB(170, 170, 170)      
 
 -- ============================================================================
 -- 📂 HIERARCHY & MUSIC SETUP
@@ -96,9 +98,7 @@ local CarStats = nil
 local success, err = pcall(function()
 	CarStats = require(ReplicatedStorage:WaitForChild("CarStats", 5))
 end)
-if not success then 
-	warn("❌ CRITICAL: CarStats could not be loaded! Inventory will be broken.") 
-end
+if not success then warn("❌ CRITICAL: CarStats could not be loaded! Inventory will be broken.") end
 
 pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false) end)
 
@@ -137,32 +137,6 @@ local function toggleOtherGuis(shouldHide)
 			end
 		end
 		hiddenGuis = {} 
-	end
-end
-
--- ============================================================================
--- 🚶 MOVEMENT & ZOOM LOCK (NEW FEATURE)
--- ============================================================================
-local function toggleControls(isLocked)
-	local character = player.Character
-	if character then
-		local humanoid = character:FindFirstChild("Humanoid")
-		if humanoid then
-			-- 1. Freezes player movement
-			humanoid.WalkSpeed = isLocked and 0 or 16
-			humanoid.JumpPower = isLocked and 0 or 50
-		end
-	end
-
-	if isLocked then
-		-- 2. LOCKS ZOOM (Cannot scroll in/out)
-		local currentDist = (camera.CFrame.Position - camera.Focus.Position).Magnitude
-		player.CameraMinZoomDistance = currentDist
-		player.CameraMaxZoomDistance = currentDist
-	else
-		-- 2. RESTORES ZOOM (Default Roblox settings)
-		player.CameraMinZoomDistance = 0.5
-		player.CameraMaxZoomDistance = 400
 	end
 end
 
@@ -272,19 +246,17 @@ local function updateInventory()
 			btn.Font = Enum.Font.FredokaOne
 			btn.TextWrapped = true
 			btn.AnchorPoint = Vector2.new(0.5, 0.5) 
-			local corner = Instance.new("UICorner");
-			corner.CornerRadius = UDim.new(0, 8); corner.Parent = btn
+			local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = btn
 
 			if tool.Parent == player.Character then
 				local stroke = Instance.new("UIStroke")
-				stroke.Color = Color3.new(1,1,1); stroke.Thickness = 3;
-				stroke.Parent = btn
+				stroke.Color = Color3.new(1,1,1); stroke.Thickness = 3; stroke.Parent = btn
 				btn.Text = carName .. "\n(Equipped)"
 			end
 
 			addScaleEffect(btn)
 
-			-- 🛑 CLICK HANDLER (SINGLE EQUIP)
+			-- 🛑 CLICK HANDLER (UPDATED FOR SINGLE EQUIP)
 			btn.MouseButton1Click:Connect(function()
 				playSfx(EQUIP_SOUND_ID, 0.5)
 				local char = player.Character
@@ -293,16 +265,20 @@ local function updateInventory()
 				local existingTool = char:FindFirstChild(tool.Name)
 
 				if existingTool then
-					-- Unequip
+					-- Case A: You are holding THIS car. Unequip it.
 					existingTool.Parent = player.Backpack 
 				else
-					-- Equip: Unequip others first
+					-- Case B: You want to equip a NEW car.
 					if tool.Parent == player.Backpack then
+
+						-- 1. UNEQUIP EVERYTHING ELSE FIRST
 						for _, object in pairs(char:GetChildren()) do
 							if object:IsA("Tool") then
 								object.Parent = player.Backpack
 							end
 						end
+
+						-- 2. NOW EQUIP THE TARGET CAR
 						tool.Parent = char
 					end
 				end
@@ -334,7 +310,6 @@ openButton.MouseButton1Click:Connect(function()
 	end
 
 	toggleOtherGuis(true)
-	toggleControls(true) -- 🚫 Lock Movement & Zoom (Updated)
 
 	currentTab = "Common" 
 	updateInventory()
@@ -350,7 +325,6 @@ openButton.MouseButton1Click:Connect(function()
 		end
 	end
 
-	-- 🎥 Camera Effect (Allows Zooming/Scrolling still, but sets base FOV)
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = OPEN_FOV}):Play()
 end)
 
@@ -364,7 +338,6 @@ local function performClose()
 	end
 
 	toggleOtherGuis(false)
-	toggleControls(false) -- ✅ Unlock Movement & Zoom
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
 
 	if shopMusic.IsPlaying then
