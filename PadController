@@ -1,5 +1,6 @@
--- [[ SERVER SCRIPT: PadController (Anti-Deadlock Edition) ]]
--- Fixes: Teleport Upwards & Forces Pad Reset if tool is missing.
+-- [[ SERVER SCRIPT: PadController (Final Secure Edition) ]]
+-- -- Indicating what the script is for: Manages car placement, anti-duplication, and secure pickup.
+-- FEATURES: Server-Side Distance Check, StarterGear Cleaning, Anti-Data Loss.
 
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
@@ -8,14 +9,16 @@ local Debris = game:GetService("Debris")
 
 -- === ⚙️ TUNING ===
 local VERTICAL_OFFSET = -1
-local PROMPT_RANGE = 14
-local SAFETY_JUMP_HEIGHT = 8 
+local PROMPT_RANGE = 14      -- Interaction distance
+local MAX_CHECK_DIST = 20    -- Security Limit (Prevents "Long Arms" exploit)
+local SAFETY_JUMP_HEIGHT = 8 -- Eject height
 -- =================
 
 local CarModels = ServerStorage:WaitForChild("CarModels")
 local CarTools = ServerStorage:WaitForChild("CarTools")
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
+-- 🛠️ HELPER: Find Plot Folder
 local function getPlotFolder(obj)
 	local current = obj
 	while current and current.Parent do
@@ -25,6 +28,7 @@ local function getPlotFolder(obj)
 	return nil
 end
 
+-- 🛠️ HELPER: Get Main Part safely
 local function getMainPart(obj)
 	if obj:IsA("BasePart") then return obj end
 	if obj:IsA("Model") then
@@ -33,6 +37,14 @@ local function getMainPart(obj)
 	return nil
 end
 
+-- 🛠️ HELPER: Security Distance Check
+local function isCloseEnough(player, padPart)
+	if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return false end
+	local dist = (player.Character.HumanoidRootPart.Position - padPart.Position).Magnitude
+	return dist <= MAX_CHECK_DIST
+end
+
+-- 🛠️ MAIN LOGIC
 local function setupPad(padObject)
 	local padPart = getMainPart(padObject)
 	if not padPart then return end
@@ -59,6 +71,7 @@ local function setupPad(padObject)
 	pickupPrompt.HoldDuration = 0.5; pickupPrompt.MaxActivationDistance = PROMPT_RANGE; pickupPrompt.RequiresLineOfSight = false
 	pickupPrompt.Enabled = false
 
+	-- Sync State
 	if occupiedVal.Value == true then
 		placePrompt.Enabled = false; pickupPrompt.Enabled = true
 	else
@@ -67,18 +80,28 @@ local function setupPad(padObject)
 
 	local isProcessing = false
 
-	-- 🟢 PLACE LOGIC
+	-- ========================================================================
+	-- 🟢 PLACE LOGIC (Secure)
+	-- ========================================================================
 	placePrompt.Triggered:Connect(function(player)
 		if isProcessing or occupiedVal.Value then return end
 		isProcessing = true
 
+		-- 1. Security Checks
 		local thisPlot = getPlotFolder(padObject)
 		if not thisPlot or player:GetAttribute("OccupiedPlot") ~= thisPlot.Name then
 			isProcessing = false; return
 		end
+		
+		if not isCloseEnough(player, padPart) then
+			warn("⚠️ PadController: Possible exploit attempt (Distance) by " .. player.Name)
+			isProcessing = false; return
+		end
 
+		-- 2. Tool Logic
 		local tool = player.Character:FindFirstChildWhichIsA("Tool")
 		if tool then
+			-- Normalize name (Remove " Item" suffix if present to find the Model)
 			local cleanName = tool.Name:gsub(" Item", ""):gsub("Item", "")
 			local realCar = CarModels:FindFirstChild(cleanName)
 
@@ -86,8 +109,21 @@ local function setupPad(padObject)
 				occupiedVal.Value = true
 				placePrompt.Enabled = false
 				pickupPrompt.Enabled = true
-				tool:Destroy()
+				
+				-- 🛡️ SECURITY FIX: REMOVE TOOL FROM CHARACTER AND STARTERGEAR
+				local toolName = tool.Name -- Save name
+				tool:Destroy() -- Remove from hand
+				
+				-- Aggressively remove duplicates from StarterGear (Fixes Infinite Money Glitch)
+				if player:FindFirstChild("StarterGear") then
+					for _, gTool in pairs(player.StarterGear:GetChildren()) do
+						if gTool.Name == toolName then
+							gTool:Destroy()
+						end
+					end
+				end
 
+				-- 3. Spawn Car
 				local placedCar = realCar:Clone()
 				local padTop = padPart.CFrame * CFrame.new(0, (padPart.Size.Y / 2) + VERTICAL_OFFSET + 1, 0)
 				placedCar:PivotTo(padTop)
@@ -120,23 +156,32 @@ local function setupPad(padObject)
 		isProcessing = false
 	end)
 
-	-- 🔴 PICKUP LOGIC (SAFE)
+	-- ========================================================================
+	-- 🔴 PICKUP LOGIC (Safe)
+	-- ========================================================================
 	pickupPrompt.Triggered:Connect(function(player)
 		if isProcessing then return end
 		isProcessing = true
 
+		-- 1. Security Checks
 		local thisPlot = getPlotFolder(padObject)
 		if not thisPlot or player:GetAttribute("OccupiedPlot") ~= thisPlot.Name then
+			isProcessing = false; return
+		end
+		
+		if not isCloseEnough(player, padPart) then
+			warn("⚠️ PadController: Possible exploit attempt (Distance) by " .. player.Name)
 			isProcessing = false; return
 		end
 
 		local carToRemove = linkedCarVal.Value
 		
-		-- 🛡️ RECOVERY LOGIC
+		-- 🛡️ RECOVERY LOGIC (Prevents Item Loss)
 		if carToRemove then
 			local carName = carToRemove.Name
 			local foundTool = nil
-			local possibleNames = {carName .. " Item", carName .. "Item", carName}
+			-- Try exact match, then with " Item" suffix
+			local possibleNames = {carName, carName .. " Item", carName .. "Item"}
 
 			for _, name in ipairs(possibleNames) do
 				local t = CarTools:FindFirstChild(name)
@@ -152,25 +197,38 @@ local function setupPad(padObject)
 			end
 
 			if foundTool then
+				-- Give back to user
 				foundTool.Parent = player.Backpack
 				foundTool:Clone().Parent = player.StarterGear
+				
+				-- Only destroy car if we successfully gave the tool back
+				carToRemove:Destroy()
+				
+				-- Reset Pad
+				occupiedVal.Value = false
+				linkedCarVal.Value = nil
+				placePrompt.Enabled = true
+				pickupPrompt.Enabled = false
+				
+				local sFolder = game.ReplicatedStorage:FindFirstChild("GameSounds")
+				if sFolder and sFolder:FindFirstChild("EquipSound") then
+					local s = sFolder.EquipSound:Clone(); s.Parent = padPart; s:Play(); Debris:AddItem(s, 2)
+				end
 			else
-				-- ⚠️ CRITICAL SAFETY: 
-				-- Tool is missing, but we MUST clear the pad or the game breaks.
-				warn("⚠️ Tool missing for '" .. carName .. "'. Pad forced reset to prevent deadlock.")
+				-- ⚠️ CRITICAL SAFETY: Tool is missing from game files!
+				-- We DO NOT destroy the car, so the player doesn't lose their item.
+				warn("⚠️ CRITICAL: Could not find Tool for '" .. carName .. "'. Pickup aborted to prevent item loss.")
+				
+				-- Feedback to dev/player
+				local h = Instance.new("Hint", Workspace)
+				h.Text = "SYSTEM ERROR: Tool missing for this car. Cannot pick up."; Debris:AddItem(h, 3)
 			end
-			carToRemove:Destroy()
-		end
-
-		-- Reset Pad (Always happens now)
-		occupiedVal.Value = false
-		linkedCarVal.Value = nil
-		placePrompt.Enabled = true
-		pickupPrompt.Enabled = false
-		
-		local sFolder = game.ReplicatedStorage:FindFirstChild("GameSounds")
-		if sFolder and sFolder:FindFirstChild("EquipSound") then
-			local s = sFolder.EquipSound:Clone(); s.Parent = padPart; s:Play(); Debris:AddItem(s, 2)
+		else
+			-- Pad thinks it's occupied, but car is gone (Glitch). Force reset.
+			occupiedVal.Value = false
+			linkedCarVal.Value = nil
+			placePrompt.Enabled = true
+			pickupPrompt.Enabled = false
 		end
 
 		task.wait(0.2)
@@ -178,6 +236,7 @@ local function setupPad(padObject)
 	end)
 end
 
+-- Initialize
 for _, plot in pairs(TycoonFolder:GetChildren()) do
 	local padsFolder = plot:FindFirstChild("Pads")
 	if padsFolder then
