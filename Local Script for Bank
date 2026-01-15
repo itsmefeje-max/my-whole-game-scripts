@@ -1,13 +1,13 @@
--- [[ LOCAL SCRIPT: Bank UI - SFX Only (Final Verified) ]]
--- -- Indicating what the script is for: Handles Bank UI with SFX, Movement Lock, and ATM Integration.
+-- ( LOCAL SCRIPT: Bank UI - WITH MUSIC, FADE & SMART HIDE )
+-- ( Updated to match Inventory GUI's sound & logic )
+-- -- Indicating what the script is for, its function and use.
 
 print("---------------------------------------------------------")
-print("🛠️ STARTING BANK UI SCRIPT (SFX ONLY)...")
+print("🛠️ STARTING BANK UI SCRIPT...")
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage") -- Added for ATM Event
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
@@ -56,10 +56,29 @@ local HOVER_TWEEN = TweenInfo.new(0.2)
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
 local DIM_COLOR = Color3.fromRGB(200, 200, 200)   
 
--- 🔊 SOUND IDS (SFX Only - Music Removed)
+-- 🔊 SOUND IDS
 local SOUND_ID = "rbxassetid://9083627113" 
+local BANK_MUSIC_ID = "rbxassetid://15689439732" -- < 🎵 PASTE YOUR BANK MUSIC ID HERE
+
+-- ⚠️ IMPORTANT: Exact name of your game music in SoundService
+local GAME_THEME_NAME = "GameTheme" 
+
+-- 3. MUSIC SETUP
+local gameThemeSound = SoundService:FindFirstChild(GAME_THEME_NAME)
+if not gameThemeSound then
+	warn("⚠️ Bank Script: Could not find sound named '"..GAME_THEME_NAME.."' in SoundService.")
+end
+
+-- Create Internal Bank Music
+local bankMusic = Instance.new("Sound")
+bankMusic.Name = "BankMusic_Internal"
+bankMusic.SoundId = BANK_MUSIC_ID
+bankMusic.Volume = 0.5 
+bankMusic.Looped = true
+bankMusic.Parent = SoundService 
 
 -- 🛡️ TRACKING VARIABLES
+local currentFadeTween = nil      
 local hiddenGuis = {}      
 
 -- 4. SETUP CLICK DETECTOR
@@ -87,7 +106,7 @@ local function playSfx(soundId, volume)
 	local s = Instance.new("Sound")
 	s.SoundId = soundId
 	s.Volume = volume or 0.5
-	s.Parent = openButton 
+	s.Parent = openButton -- Parent to GUI ensures reliability
 	s:Play()
 	game.Debris:AddItem(s, 3)
 end
@@ -143,6 +162,7 @@ end
 
 local function loadAvatar()
 	local content, isReady = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+	-- ✅ FIXED: Set to empty string "" instead of "rbxassetid://0"
 	if isReady then 
 		avatarImage.Image = content 
 	else 
@@ -161,10 +181,14 @@ local function setFocusMode(isFocused)
 	if isFocused then
 		mainWindow.Visible = true
 		if transferFrame then transferFrame.Visible = false end
+
+		-- 👁️ Hide others
 		toggleOtherGuis(true)
 	else
 		mainWindow.Visible = false
 		if transferFrame then transferFrame.Visible = false end
+
+		-- 👁️ Show others
 		toggleOtherGuis(false)
 	end
 
@@ -180,43 +204,28 @@ local function setFocusMode(isFocused)
 end
 
 -- ============================================================================
--- 🏧 ATM INTEGRATION (THE FIX)
--- ============================================================================
--- Checks for the event created by the NPC script to open this UI remotely.
-local OpenATMEvent = ReplicatedStorage:FindFirstChild("OpenATMEvent")
-if not OpenATMEvent then
-	OpenATMEvent = Instance.new("BindableEvent")
-	OpenATMEvent.Name = "OpenATMEvent"
-	OpenATMEvent.Parent = ReplicatedStorage
-end
-
-OpenATMEvent.Event:Connect(function()
-	playSfx(SOUND_ID, 0.5) 
-
-	-- 1. Setup Visuals
-	local colorHex = getRandomHex()
-	greetingLabel.Text = "<font color='#" .. colorHex .. "'>" .. player.Name .. "</font>"
-	updateDisplay()
-
-	-- 2. Open UI (Locks movement and hides other GUIs)
-	setFocusMode(true)
-
-	-- 3. Direct to Transfer Screen (Better UX for ATMs)
-	if transferFrame then
-		mainWindow.Visible = false -- Hide main menu
-		transferFrame.Visible = true -- Show transfer/withdraw screen immediately
-	end
-
-	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = OPEN_FOV}):Play()
-	print("✅ ATM Opened Bank UI Successfully")
-end)
-
--- ============================================================================
--- 🟢 OPEN LOGIC (Manual Button)
+-- 🟢 OPEN LOGIC
 -- ============================================================================
 openButton.MouseButton1Click:Connect(function()
-	playSfx(SOUND_ID, 0.5) 
+	playSfx(SOUND_ID, 0.5)
 
+	-- 1. STOP FADE OUT (Fixes conflict)
+	if currentFadeTween then
+		currentFadeTween:Cancel()
+		currentFadeTween = nil
+	end
+
+	-- 2. HANDLE MUSIC (Pause Game, Play Bank)
+	if gameThemeSound and gameThemeSound.IsPlaying then
+		gameThemeSound:Pause()
+	end
+
+	bankMusic.Volume = 0.5 
+	if not bankMusic.IsPlaying then
+		bankMusic:Play()
+	end
+
+	-- 3. UI LOGIC
 	local colorHex = getRandomHex()
 	greetingLabel.Text = "<font color='#" .. colorHex .. "'>" .. player.Name .. "</font>"
 	updateDisplay()
@@ -230,15 +239,31 @@ end)
 local function performClose()
 	setFocusMode(false)
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
+
+	-- 4. FADE OUT MUSIC SAFELY
+	if bankMusic.IsPlaying then
+		currentFadeTween = TweenService:Create(bankMusic, TweenInfo.new(1, Enum.EasingStyle.Linear), {Volume = 0})
+		currentFadeTween:Play()
+
+		currentFadeTween.Completed:Connect(function(playbackState)
+			if playbackState == Enum.PlaybackState.Completed then
+				bankMusic:Stop()
+				if gameThemeSound then
+					gameThemeSound:Resume() 
+				end
+			end
+			currentFadeTween = nil 
+		end)
+	end
 end
 
 closeButton.MouseButton1Click:Connect(function() 
-	playSfx(SOUND_ID, 0.5) 
+	playSfx(SOUND_ID, 0.5)
 	performClose()
 end) 
 
 detector.MouseButton1Click:Connect(function()
-	playSfx(SOUND_ID, 0.5) 
+	playSfx(SOUND_ID, 0.5) -- Optional: Click sound when clicking outside
 	performClose()
 end)
 
@@ -252,3 +277,4 @@ if closeButton:IsA("ImageButton") then addHover(closeButton) end
 
 if cash then cash.Changed:Connect(updateDisplay) end
 task.spawn(loadAvatar)
+
