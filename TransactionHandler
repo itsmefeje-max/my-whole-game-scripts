@@ -1,53 +1,46 @@
--- ( SERVER SIDE: Withdraw Money from Bank -> Wallet )
--- FIXED: Matches TycoonDataHandler names ("Cash" = Bank, "Wallet" = Pocket)
-
+-- [[ SERVER SCRIPT: TransactionHandler (Step 1: Bank -> NPC Holding) ]]
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local withdrawEvent = ReplicatedStorage:WaitForChild("WithdrawEvent")
 
--- ⏳ COOLDOWN CONFIG (Set to 0.5s to prevent spam, NOT 3 hours)
-local COOLDOWN_TIME = 0.5 
-local cooldowns = {} 
+-- ⚠️ Ensure "WithdrawFunction" exists in ReplicatedStorage (RemoteFunction)
+local withdrawFunc = ReplicatedStorage:WaitForChild("WithdrawFunction")
 
-withdrawEvent.OnServerEvent:Connect(function(player, amount)
-	-- 1. Validate Amount
-	if not amount or amount <= 0 then return end
+-- [[ CORE TRANSFER LOGIC ]]
+local function TransferToManager(player, rawAmount)
+	print("🏦 [BANK DEBUG] Transferring to NPC for " .. player.Name)
 
-	-- Prevent decimals/glitches
-	amount = math.floor(amount) 
-
-	local leaderstats = player:FindFirstChild("leaderstats")
-	if not leaderstats then return end
-
-	-- 2. DEFINE VARIABLES (SYNCED WITH TYCOONDATAHANDLER)
-	-- "Cash" is your BANK (Where tycoon money goes)
-	-- "Wallet" is your POCKET (Where you withdraw to)
-	local bank = leaderstats:FindFirstChild("Cash")   
-	local wallet = leaderstats:FindFirstChild("Wallet") 
-
-	if bank and wallet then
-
-		-- 3. CHECK COOLDOWN
-		local lastTime = cooldowns[player.UserId]
-		if lastTime and (os.time() - lastTime) < COOLDOWN_TIME then
-			warn("⏳ Transaction too fast for " .. player.Name)
-			return 
-		end
-
-		-- 4. CHECK BALANCE (Do they have enough in the BANK?)
-		if bank.Value >= amount then
-
-			-- 5. DO THE TRANSFER
-			bank.Value = bank.Value - amount   -- Take from Bank (Cash)
-			wallet.Value = wallet.Value + amount -- Give to Wallet
-
-			-- Update Cooldown
-			cooldowns[player.UserId] = os.time()
-
-			print("✅ Success! Withdrew $" .. amount .. " from Bank to Wallet.")
-		else
-			warn("❌ Insufficient Funds. Bank: " .. bank.Value .. " | Needed: " .. amount)
-		end
-	else
-		warn("❌ CRITICAL: Missing 'Cash' or 'Wallet' in leaderstats for " .. player.Name)
+	-- 1. Validate Input
+	if not player or typeof(rawAmount) ~= "number" or rawAmount ~= rawAmount then
+		return false, "System Error (Invalid Data)"
 	end
-end)
+
+	local amount = math.floor(rawAmount)
+	if amount <= 0 then return false, "Invalid Amount" end
+
+	-- 2. Validate Funds
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if not leaderstats then return false, "Missing Leaderstats" end
+
+	local bank = leaderstats:FindFirstChild("Cash")        -- The Bank
+	local atmBal = leaderstats:FindFirstChild("ATMBalance") -- The NPC Holding
+
+	if not bank or not atmBal then return false, "Missing Bank/ATM Values" end
+
+	print("   > Current Bank: " .. bank.Value .. " | Sending to ATM: " .. amount)
+
+	if bank.Value >= amount then
+		-- THE SWAP
+		bank.Value = bank.Value - amount      -- Remove from Digital Bank
+		atmBal.Value = atmBal.Value + amount  -- Add to NPC Manager Holding
+
+		print("✅ [BANK DEBUG] Success. NPC now holds: " .. atmBal.Value)
+		return true, "Sent to ATM Manager! Visit him to collect."
+	else
+		return false, "Insufficient Bank Funds"
+	end
+end
+
+-- [[ SERVER LISTENER ]]
+withdrawFunc.OnServerInvoke = function(player, amount)
+	-- No distance check. This is a digital transfer.
+	return TransferToManager(player, amount)
+end
