@@ -1,6 +1,6 @@
--- [[ LOCAL SCRIPT: AfraiC4tLogic (Final Visual Update) ]]
--- -- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
--- FEATURES: Rich Text Highlighting for Name, Money, AND Inquiry Guide.
+-- [[ LOCAL SCRIPT: AfraiC4tLogic (Final Visual Update + Bug Fix) ]]
+-- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
+-- FEATURES: Rich Text Highlighting, Typewriter Effect, and Physical Withdraw Logic.
 
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -11,6 +11,9 @@ local SoundService = game:GetService("SoundService")
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 local playerGui = player:WaitForChild("PlayerGui")
+
+-- ⚠️ NEW: Connect to the Server Function we created
+local withdrawFunc = ReplicatedStorage:WaitForChild("WithdrawFunction")
 
 -- ============================================================================
 -- 🎨 COLOR CONFIGURATION (Hex Codes)
@@ -24,12 +27,12 @@ local SPEND_COLOR = "#FFAA00"   -- Gold/Orange (Spending/Upgrades)
 -- ============================================================================
 -- 🆔 UNIQUE IDENTIFIERS
 -- ============================================================================
-local GUI_ID = "UI_NPC_ATM_AfraiC4t"       
+local GUI_ID = "UI_NPC_ATM_AfraiC4t"        
 local CONTAINER_ID = "Frame_ATM_Container" 
-local TEXT_ID = "Text_ATM_Dialogue"        
+local TEXT_ID = "Text_ATM_Dialogue"         
 local BTN_WITHDRAW_ID = "Btn_ATM_Withdraw" 
-local BTN_INQUIRY_ID = "Btn_ATM_Inquiry"   
-local BTN_LEAVE_ID = "Btn_ATM_Leave"       
+local BTN_INQUIRY_ID = "Btn_ATM_Inquiry"    
+local BTN_LEAVE_ID = "Btn_ATM_Leave"        
 
 -- 📍 NPC CONFIGURATION
 local NPC_FOLDER = "NPCS"
@@ -61,11 +64,11 @@ end
 
 -- 💬 SINGLE NPC GREETINGS
 local GREETING_OPTIONS = {
-	"Hi [Name], I see your current balance is [Balance].",
-	"Welcome back, [Name]. My records show you have [Balance].",
-	"Greetings. I am ready to assist. Balance: [Balance].",
-	"Hello, [Name]. Your funds of [Balance] are safe with me.",
-	"System Online. User: [Name] | Balance: [Balance]."
+	"Hi [Name], I am currently holding [Balance] for you.",
+	"Welcome back, [Name]. My records show [Balance] pending pickup.",
+	"Greetings. Ready to dispense. Holding: [Balance].",
+	"Hello, [Name]. Your transferred funds of [Balance] are here.",
+	"System Online. User: [Name] | ATM Holding: [Balance]."
 }
 
 -- ============================================================================
@@ -76,13 +79,6 @@ local isLeaving = false
 local currentDialogueJob = nil 
 local buttonConnections = {} 
 local controls = require(player.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
-
-local OpenATMEvent = ReplicatedStorage:FindFirstChild("OpenATMEvent")
-if not OpenATMEvent then
-	OpenATMEvent = Instance.new("BindableEvent")
-	OpenATMEvent.Name = "OpenATMEvent"
-	OpenATMEvent.Parent = ReplicatedStorage
-end
 
 -- ============================================================================
 -- 🔒 FORCE HIDE UI ON LOAD
@@ -112,7 +108,7 @@ end
 -- 📝 TYPEWRITER WITH RICH TEXT SUPPORT
 local function typewrite(label, text)
 	if not label then return end
-	
+
 	-- 🛠️ Force RichText so colors work
 	label.RichText = true
 
@@ -205,82 +201,91 @@ local function startInteraction(npcModel)
 	-- 🗣️ GENERATE DIALOGUE WITH COLORS
 	local dialogueLabel = container:FindFirstChild(TEXT_ID, true)
 	if dialogueLabel then
-		-- 1. Get Balance
-		local currentBalance = 0
-		if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash") then
-			currentBalance = player.leaderstats.Cash.Value
+		-- 1. [BUG FIX] READ ATM BALANCE, NOT BANK CASH
+		local currentATM = 0
+		if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("ATMBalance") then
+			currentATM = player.leaderstats.ATMBalance.Value
 		end
 
 		-- 2. Pick Random Greeting
 		local greeting = GREETING_OPTIONS[math.random(1, #GREETING_OPTIONS)]
-		
+
 		-- 3. Prepare Colored Strings
 		local coloredName = "<font color='" .. NAME_COLOR .. "'>" .. player.Name .. "</font>"
-		local coloredBalance = "<font color='" .. MONEY_COLOR .. "'>$" .. formatNumber(currentBalance) .. "</font>"
+		local coloredBalance = "<font color='" .. MONEY_COLOR .. "'>$" .. formatNumber(currentATM) .. "</font>"
 
 		-- 4. Replace Placeholders
 		greeting = greeting:gsub("%[Name%]", coloredName)
 		greeting = greeting:gsub("%[Balance%]", coloredBalance)
 
+		-- Special case: If ATM is empty
+		if currentATM <= 0 then
+			greeting = "Hello " .. coloredName .. ". I am not holding any funds for you. Transfer from your Bank App first."
+		end
+
 		typewrite(dialogueLabel, greeting)
+
+		-- ==============================
+		-- 🔘 BUTTON SETUP (Inside Interaction Scope)
+		-- ==============================
+
+		local function connectBtn(btnName, func)
+			local btn = myGui:FindFirstChild(btnName, true)
+			if btn and btn:IsA("GuiButton") then
+				local conn = btn.MouseButton1Click:Connect(func)
+				table.insert(buttonConnections, conn)
+			end
+		end
+
+		-- 1. LEAVE BUTTON
+		connectBtn(BTN_LEAVE_ID, function()
+			if isLeaving then return end
+			isLeaving = true 
+			clearConnections()
+
+			if dialogueLabel then
+				local coloredName = "<font color='" .. NAME_COLOR .. "'>" .. player.Name .. "</font>"
+				local goodbyeMsg = "Thank you for stopping by, " .. coloredName .. "."
+				typewrite(dialogueLabel, goodbyeMsg)
+			end
+			task.wait(LEAVE_DELAY)
+			stopInteraction()
+		end)
+
+		-- 2. INQUIRY BUTTON
+		connectBtn(BTN_INQUIRY_ID, function()
+			print("ℹ️ Inquiry Clicked")
+			if dialogueLabel then
+				local guide = "<b>MY GUIDE:</b>\n\n" ..
+					"<font color='"..NUM_COLOR.."'><b>1.</b></font> <font color='"..MONEY_COLOR.."'><b>EARN:</b></font> Your Plot generates income.\n" ..
+					"<font color='"..NUM_COLOR.."'><b>2.</b></font> <font color='"..WITHDRAW_COLOR.."'><b>WITHDRAW:</b></font> Move earnings to Wallet.\n" ..
+					"<font color='"..NUM_COLOR.."'><b>3.</b></font> <font color='"..SPEND_COLOR.."'><b>SPEND:</b></font> Use Cash for upgrades."
+				typewrite(dialogueLabel, guide)
+			end
+		end)
+
+		-- 3. WITHDRAW BUTTON (UPDATED LOGIC)
+		connectBtn(BTN_WITHDRAW_ID, function()
+			-- [LOGIC FIX] Don't just open a GUI, ACTUALLY WITHDRAW
+			if currentATM <= 0 then
+				typewrite(dialogueLabel, "You have no funds here to withdraw.")
+				return
+			end
+
+			typewrite(dialogueLabel, "Processing withdrawal...")
+
+			-- FIRE SERVER (Action: "Withdraw")
+			local success, msg = withdrawFunc:InvokeServer(currentATM, "Withdraw")
+
+			if success then
+				typewrite(dialogueLabel, "<font color='"..MONEY_COLOR.."'>Success!</font> Here is your cash.")
+				task.wait(1.5)
+				stopInteraction()
+			else
+				typewrite(dialogueLabel, "Error: " .. msg)
+			end
+		end)
 	end
-
-	-- ==============================
-	-- 🔘 BUTTON SETUP
-	-- ==============================
-
-	local function connectBtn(btnName, func)
-		local btn = myGui:FindFirstChild(btnName, true)
-		if btn and btn:IsA("GuiButton") then
-			local conn = btn.MouseButton1Click:Connect(func)
-			table.insert(buttonConnections, conn)
-		end
-	end
-
-	-- 1. LEAVE BUTTON (2 Second Delay)
-	connectBtn(BTN_LEAVE_ID, function()
-		if isLeaving then return end
-		isLeaving = true 
-
-		clearConnections() -- Disable buttons immediately
-
-		if dialogueLabel then
-			local coloredName = "<font color='" .. NAME_COLOR .. "'>" .. player.Name .. "</font>"
-			local goodbyeMsg = "Thank you for stopping by, " .. coloredName .. "."
-			typewrite(dialogueLabel, goodbyeMsg)
-		end
-
-		-- WAIT 2 SECONDS
-		task.wait(LEAVE_DELAY)
-
-		stopInteraction()
-	end)
-
-	-- 2. INQUIRY BUTTON (Visual & Psychological Update)
-	connectBtn(BTN_INQUIRY_ID, function()
-		print("ℹ️ Inquiry Clicked")
-		if dialogueLabel then
-			-- Constructing the Guide with Colors
-			-- Black Numbers, Colored Actions, White Description
-			
-			local guide = "<b>MY GUIDE:</b>\n\n" ..
-				"<font color='"..NUM_COLOR.."'><b>1.</b></font> <font color='"..MONEY_COLOR.."'><b>EARN:</b></font> Your Plot generates income.\n" ..
-				"<font color='"..NUM_COLOR.."'><b>2.</b></font> <font color='"..WITHDRAW_COLOR.."'><b>WITHDRAW:</b></font> Move earnings to Wallet.\n" ..
-				"<font color='"..NUM_COLOR.."'><b>3.</b></font> <font color='"..SPEND_COLOR.."'><b>SPEND:</b></font> Use Cash for upgrades."
-
-			typewrite(dialogueLabel, guide)
-		end
-	end)
-
-	-- 3. WITHDRAW BUTTON
-	connectBtn(BTN_WITHDRAW_ID, function()
-		if dialogueLabel then
-			typewrite(dialogueLabel, "I am opening the vault now...")
-			task.wait(0.5)
-		end
-		stopInteraction()
-		OpenATMEvent:Fire()
-	end)
 end
 
 -- ============================================================================
