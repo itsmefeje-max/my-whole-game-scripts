@@ -1,8 +1,6 @@
+-- [[ LOCAL SCRIPT: AfraiC4tLogic (Singular NPC Edition) ]]
 -- -- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
--- UPDATES: 
--- 1. FIXED: Forces UI to hide immediately when the game starts (even if left Visible in Studio).
--- 2. UPDATED: Leave delay reduced to 2 seconds.
--- LOCATION: StarterPlayer > StarterPlayerScripts
+-- FEATURES: Single NPC interaction (No plural "Us"), Balance Display with Suffixes.
 
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -33,18 +31,34 @@ local PROMPT_NAME = "TalkPrompt"
 -- 🎥 SETTINGS
 local TWEEN_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local TYPEWRITER_SPEED = 0.02
-local LEAVE_DELAY = 2 -- Changed to 2 seconds
+local LEAVE_DELAY = 2 
 
 -- 🔊 SOUNDS
 local TYPING_SOUND_ID = "rbxassetid://4676738150"
 
--- 💬 RANDOM GREETINGS
+-- ============================================================================
+-- 📊 ABBREVIATION HELPER (Suffixes)
+-- ============================================================================
+local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
+
+local function formatNumber(n)
+	n = tonumber(n) or 0
+	if n < 1000 then return tostring(math.floor(n)) end
+	local i = math.floor(math.log(n, 1000))
+	local v = math.pow(1000, i)
+	local suffix = SUFFIXES[i] or "?"
+	return string.format("%.2f%s", n / v, suffix)
+end
+
+-- 💬 SINGLE NPC GREETINGS
+-- [Name] = Player Name
+-- [Balance] = Formatted Cash Amount
 local GREETING_OPTIONS = {
-	"Welcome back, [Name]. My systems are ready.",
-	"Greetings. The ATM secure channel is open.",
-	"Hello, [Name]. Proceed with your transaction.",
-	"System Online. Awaiting input.",
-	"Good day, [Name]. Banking services are operational."
+	"Hi [Name], I see your current balance is $[Balance].",
+	"Welcome back, [Name]. My records show you have $[Balance].",
+	"Greetings. I am ready to assist. Balance: $[Balance].",
+	"Hello, [Name]. Your funds of $[Balance] are safe with me.",
+	"System Online. User: [Name] | Balance: $[Balance]."
 }
 
 -- ============================================================================
@@ -66,16 +80,14 @@ end
 -- ============================================================================
 -- 🔒 FORCE HIDE UI ON LOAD
 -- ============================================================================
--- This runs immediately when you join to ensure the screen is clean
 task.spawn(function()
 	local myGui = playerGui:WaitForChild(GUI_ID, 10)
 	if myGui then
-		myGui.Enabled = false -- Turn off the main ScreenGui
+		myGui.Enabled = false 
 		local container = myGui:FindFirstChild(CONTAINER_ID, true)
 		if container then
-			container.Visible = false -- Turn off the Frame
+			container.Visible = false 
 		end
-		print("🔒 ATM UI successfully hidden on startup.")
 	end
 end)
 
@@ -175,10 +187,22 @@ local function startInteraction(npcModel)
 
 	container.Visible = true -- Turn Frame ON
 
+	-- 🗣️ GENERATE DIALOGUE WITH BALANCE
 	local dialogueLabel = container:FindFirstChild(TEXT_ID, true)
 	if dialogueLabel then
+		-- 1. Get Balance
+		local currentBalance = 0
+		if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash") then
+			currentBalance = player.leaderstats.Cash.Value
+		end
+
+		-- 2. Pick Random Greeting
 		local greeting = GREETING_OPTIONS[math.random(1, #GREETING_OPTIONS)]
+		
+		-- 3. Replace Placeholders
 		greeting = greeting:gsub("%[Name%]", player.Name)
+		greeting = greeting:gsub("%[Balance%]", formatNumber(currentBalance))
+
 		typewrite(dialogueLabel, greeting)
 	end
 
@@ -202,7 +226,8 @@ local function startInteraction(npcModel)
 		clearConnections() -- Disable buttons immediately
 
 		if dialogueLabel then
-			local goodbyeMsg = "Thank you for talking, " .. player.Name
+			-- 🟢 UPDATED: Singular "Thank you" (No "us")
+			local goodbyeMsg = "Thank you for stopping by, " .. player.Name .. "."
 			typewrite(dialogueLabel, goodbyeMsg)
 		end
 
@@ -216,7 +241,7 @@ local function startInteraction(npcModel)
 	connectBtn(BTN_INQUIRY_ID, function()
 		print("ℹ️ Inquiry Clicked")
 		if dialogueLabel then
-			local guide = "BANKING GUIDE:\n\n1. EARN: Your Plot generates income.\n2. WITHDRAW: Move earnings to Wallet.\n3. SPEND: Use Cash for upgrades."
+			local guide = "MY GUIDE:\n\n1. EARN: Your Plot generates income.\n2. WITHDRAW: Move earnings to Wallet.\n3. SPEND: Use Cash for upgrades."
 			typewrite(dialogueLabel, guide)
 		end
 	end)
@@ -224,7 +249,7 @@ local function startInteraction(npcModel)
 	-- 3. WITHDRAW BUTTON
 	connectBtn(BTN_WITHDRAW_ID, function()
 		if dialogueLabel then
-			typewrite(dialogueLabel, "Accessing Secure Vault...")
+			typewrite(dialogueLabel, "I am opening the vault now...")
 			task.wait(0.5)
 		end
 		stopInteraction()
