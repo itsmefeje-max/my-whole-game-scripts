@@ -1,6 +1,6 @@
--- [[ LOCAL SCRIPT: AfraiC4tLogic (Singular NPC Edition) ]]
+-- [[ LOCAL SCRIPT: AfraiC4tLogic (Final Visual Update) ]]
 -- -- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
--- FEATURES: Single NPC interaction (No plural "Us"), Balance Display with Suffixes.
+-- FEATURES: Rich Text Highlighting for Name, Money, AND Inquiry Guide.
 
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -11,6 +11,15 @@ local SoundService = game:GetService("SoundService")
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 local playerGui = player:WaitForChild("PlayerGui")
+
+-- ============================================================================
+-- 🎨 COLOR CONFIGURATION (Hex Codes)
+-- ============================================================================
+local NAME_COLOR = "#FF4444"    -- Red (Player Name)
+local MONEY_COLOR = "#55FF7F"   -- Green (Money/Earn)
+local NUM_COLOR = "#000000"     -- Black (Numbers 1. 2. 3.)
+local WITHDRAW_COLOR = "#55AAFF" -- Soft Blue (Trust/Banking)
+local SPEND_COLOR = "#FFAA00"   -- Gold/Orange (Spending/Upgrades)
 
 -- ============================================================================
 -- 🆔 UNIQUE IDENTIFIERS
@@ -51,14 +60,12 @@ local function formatNumber(n)
 end
 
 -- 💬 SINGLE NPC GREETINGS
--- [Name] = Player Name
--- [Balance] = Formatted Cash Amount
 local GREETING_OPTIONS = {
-	"Hi [Name], I see your current balance is $[Balance].",
-	"Welcome back, [Name]. My records show you have $[Balance].",
-	"Greetings. I am ready to assist. Balance: $[Balance].",
-	"Hello, [Name]. Your funds of $[Balance] are safe with me.",
-	"System Online. User: [Name] | Balance: $[Balance]."
+	"Hi [Name], I see your current balance is [Balance].",
+	"Welcome back, [Name]. My records show you have [Balance].",
+	"Greetings. I am ready to assist. Balance: [Balance].",
+	"Hello, [Name]. Your funds of [Balance] are safe with me.",
+	"System Online. User: [Name] | Balance: [Balance]."
 }
 
 -- ============================================================================
@@ -102,21 +109,28 @@ local function clearConnections()
 	buttonConnections = {}
 end
 
+-- 📝 TYPEWRITER WITH RICH TEXT SUPPORT
 local function typewrite(label, text)
 	if not label then return end
+	
+	-- 🛠️ Force RichText so colors work
+	label.RichText = true
 
 	if currentDialogueJob then 
 		task.cancel(currentDialogueJob) 
 		currentDialogueJob = nil 
 	end
 
-	label.Text = "" 
+	-- STRATEGY: Use MaxVisibleGraphemes for smooth RichText typing
+	label.Text = text
+	label.MaxVisibleGraphemes = 0
 
 	currentDialogueJob = task.spawn(function()
-		for i = 1, #text do
+		local len = #label.ContentText -- Get the length of the CLEAN text (no tags)
+		for i = 1, len do
 			if not isInteracting and not isLeaving then break end
 
-			label.Text = string.sub(text, 1, i)
+			label.MaxVisibleGraphemes = i
 
 			if i % 3 == 0 then 
 				local s = Instance.new("Sound", SoundService)
@@ -127,6 +141,7 @@ local function typewrite(label, text)
 			end
 			task.wait(TYPEWRITER_SPEED)
 		end
+		label.MaxVisibleGraphemes = -1 -- Show all at end
 	end)
 end
 
@@ -187,7 +202,7 @@ local function startInteraction(npcModel)
 
 	container.Visible = true -- Turn Frame ON
 
-	-- 🗣️ GENERATE DIALOGUE WITH BALANCE
+	-- 🗣️ GENERATE DIALOGUE WITH COLORS
 	local dialogueLabel = container:FindFirstChild(TEXT_ID, true)
 	if dialogueLabel then
 		-- 1. Get Balance
@@ -199,9 +214,13 @@ local function startInteraction(npcModel)
 		-- 2. Pick Random Greeting
 		local greeting = GREETING_OPTIONS[math.random(1, #GREETING_OPTIONS)]
 		
-		-- 3. Replace Placeholders
-		greeting = greeting:gsub("%[Name%]", player.Name)
-		greeting = greeting:gsub("%[Balance%]", formatNumber(currentBalance))
+		-- 3. Prepare Colored Strings
+		local coloredName = "<font color='" .. NAME_COLOR .. "'>" .. player.Name .. "</font>"
+		local coloredBalance = "<font color='" .. MONEY_COLOR .. "'>$" .. formatNumber(currentBalance) .. "</font>"
+
+		-- 4. Replace Placeholders
+		greeting = greeting:gsub("%[Name%]", coloredName)
+		greeting = greeting:gsub("%[Balance%]", coloredBalance)
 
 		typewrite(dialogueLabel, greeting)
 	end
@@ -226,8 +245,8 @@ local function startInteraction(npcModel)
 		clearConnections() -- Disable buttons immediately
 
 		if dialogueLabel then
-			-- 🟢 UPDATED: Singular "Thank you" (No "us")
-			local goodbyeMsg = "Thank you for stopping by, " .. player.Name .. "."
+			local coloredName = "<font color='" .. NAME_COLOR .. "'>" .. player.Name .. "</font>"
+			local goodbyeMsg = "Thank you for stopping by, " .. coloredName .. "."
 			typewrite(dialogueLabel, goodbyeMsg)
 		end
 
@@ -237,11 +256,18 @@ local function startInteraction(npcModel)
 		stopInteraction()
 	end)
 
-	-- 2. INQUIRY BUTTON
+	-- 2. INQUIRY BUTTON (Visual & Psychological Update)
 	connectBtn(BTN_INQUIRY_ID, function()
 		print("ℹ️ Inquiry Clicked")
 		if dialogueLabel then
-			local guide = "MY GUIDE:\n\n1. EARN: Your Plot generates income.\n2. WITHDRAW: Move earnings to Wallet.\n3. SPEND: Use Cash for upgrades."
+			-- Constructing the Guide with Colors
+			-- Black Numbers, Colored Actions, White Description
+			
+			local guide = "<b>MY GUIDE:</b>\n\n" ..
+				"<font color='"..NUM_COLOR.."'><b>1.</b></font> <font color='"..MONEY_COLOR.."'><b>EARN:</b></font> Your Plot generates income.\n" ..
+				"<font color='"..NUM_COLOR.."'><b>2.</b></font> <font color='"..WITHDRAW_COLOR.."'><b>WITHDRAW:</b></font> Move earnings to Wallet.\n" ..
+				"<font color='"..NUM_COLOR.."'><b>3.</b></font> <font color='"..SPEND_COLOR.."'><b>SPEND:</b></font> Use Cash for upgrades."
+
 			typewrite(dialogueLabel, guide)
 		end
 	end)
