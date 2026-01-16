@@ -1,5 +1,5 @@
 -- [[ LOCAL SCRIPT: WithdrawLogic (Synced with ATM Manager) ]]
--- VERSION: Pulse Animation + RemoteFunction Sync
+-- VERSION: Pulse Animation + RemoteFunction Sync + Logic Fixes
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -117,12 +117,14 @@ withdrawBtn.MouseButton1Click:Connect(function()
 	-- 5. PREPARE DATA
 	local rawText = amountInput.Text
 	local amount = tonumber(rawText) 
+	-- FIX 1: We use this variable now!
 	local currentBank = player.leaderstats.Cash.Value
 
 	-- 6. CLIENT-SIDE CHECK (Fast Fail)
-	if (not amount) or (amount <= 0) then
+	-- FIX 1: Added 'or (amount > currentBank)' to catch insufficient funds locally
+	if (not amount) or (amount <= 0) or (amount > currentBank) then
 		stopVerifying()
-		print("❌ Invalid Input")
+		print("❌ Invalid Input or Insufficient Funds")
 		playSound(ERROR_SOUND_ID)
 		task.spawn(function() animateResult(ErrorLabel) end)
 
@@ -135,8 +137,8 @@ withdrawBtn.MouseButton1Click:Connect(function()
 	end
 
 	-- 7. 🔒 SERVER REQUEST (The Sync)
-	-- We InvokeServer and WAIT for the return values (success, message)
-	local success, msg = withdrawFunc:InvokeServer(amount)
+	-- FIX 2: Added "Transfer" so the server knows to move money to ATM (not withdraw to wallet)
+	local success, msg = withdrawFunc:InvokeServer(amount, "Transfer")
 
 	-- 8. STOP VFX (Now that server replied)
 	stopVerifying()
