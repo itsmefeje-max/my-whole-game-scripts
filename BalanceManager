@@ -1,0 +1,54 @@
+-- [[ LOCAL SCRIPT: BalanceManager ]]
+-- Indicating what the script is for: Tracks the "Physical Wallet" (Withdrawn Funds).
+-- LOCATION: StarterGui > Balance-Indicator > Balance (TextLabel)
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- 1. TARGET THE LABEL
+local label = script.Parent
+
+-- 2. WAIT FOR DATA
+-- ⚠️ CRITICAL CHANGE: We track "Wallet", not "Cash".
+-- "Cash" is your Bank (Tablet). "Wallet" is what you hold after withdrawing from the NPC.
+local leaderstats = player:WaitForChild("leaderstats")
+local walletValue = leaderstats:WaitForChild("Wallet") 
+
+-- ============================================================================
+-- 📊 FORMATTING HELPER (Example: 1.1B$)
+-- ============================================================================
+local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
+
+local function formatMoney(n)
+	n = tonumber(n) or 0
+	
+	-- Case 1: Less than 1,000 (No decimals needed) -> "500$"
+	if n < 1000 then 
+		return tostring(math.floor(n)) .. "$" 
+	end
+
+	-- Case 2: 1,000+ (Suffixes) -> "1.10B$"
+	local i = math.floor(math.log(n, 1000))
+	local v = math.pow(1000, i)
+	local suffix = SUFFIXES[i] or "?"
+	
+	-- We format with 2 decimals to be precise, followed by the Suffix and Dollar Sign
+	return string.format("%.2f%s$", n / v, suffix)
+end
+
+-- ============================================================================
+-- 🔄 UPDATE LOGIC
+-- ============================================================================
+local function updateDisplay()
+	-- Update the text using the Wallet value
+	label.Text = formatMoney(walletValue.Value)
+end
+
+-- 1. Run immediately on load
+updateDisplay()
+
+-- 2. Connect to the .Changed event
+-- This makes the label update INSTANTLY when the ATM transaction finishes.
+walletValue.Changed:Connect(function()
+	updateDisplay()
+end)
