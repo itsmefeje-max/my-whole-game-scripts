@@ -1,4 +1,4 @@
--- [[ LOCAL SCRIPT: AfraiC4tLogic (Final Visual Update + Bug Fix) ]]
+-- [[ LOCAL SCRIPT: AfraiC4tLogic (Dynamic Success Update) ]]
 -- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
 -- FEATURES: Rich Text Highlighting, Typewriter Effect, and Physical Withdraw Logic.
 
@@ -12,7 +12,7 @@ local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 local playerGui = player:WaitForChild("PlayerGui")
 
--- ⚠️ NEW: Connect to the Server Function we created
+-- ⚠️ CONNECT TO SERVER FUNCTION
 local withdrawFunc = ReplicatedStorage:WaitForChild("WithdrawFunction")
 
 -- ============================================================================
@@ -27,7 +27,7 @@ local SPEND_COLOR = "#FFAA00"   -- Gold/Orange (Spending/Upgrades)
 -- ============================================================================
 -- 🆔 UNIQUE IDENTIFIERS
 -- ============================================================================
-local GUI_ID = "UI_NPC_ATM_AfraiC4t"        
+local GUI_ID = "UI_NPC_ATM_AfraiC4t"   
 local CONTAINER_ID = "Frame_ATM_Container" 
 local TEXT_ID = "Text_ATM_Dialogue"         
 local BTN_WITHDRAW_ID = "Btn_ATM_Withdraw" 
@@ -201,7 +201,7 @@ local function startInteraction(npcModel)
 	-- 🗣️ GENERATE DIALOGUE WITH COLORS
 	local dialogueLabel = container:FindFirstChild(TEXT_ID, true)
 	if dialogueLabel then
-		-- 1. [BUG FIX] READ ATM BALANCE, NOT BANK CASH
+		-- 1. READ ATM BALANCE
 		local currentATM = 0
 		if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("ATMBalance") then
 			currentATM = player.leaderstats.ATMBalance.Value
@@ -264,7 +264,7 @@ local function startInteraction(npcModel)
 			end
 		end)
 
-		-- 3. WITHDRAW BUTTON (UPDATED LOGIC)
+		-- 3. WITHDRAW BUTTON (UPDATED)
 		connectBtn(BTN_WITHDRAW_ID, function()
 			-- [LOGIC FIX] Don't just open a GUI, ACTUALLY WITHDRAW
 			if currentATM <= 0 then
@@ -278,8 +278,14 @@ local function startInteraction(npcModel)
 			local success, msg = withdrawFunc:InvokeServer(currentATM, "Withdraw")
 
 			if success then
-				typewrite(dialogueLabel, "<font color='"..MONEY_COLOR.."'>Success!</font> Here is your cash.")
-				task.wait(1.5)
+				-- ✅ UPDATED SUCCESS MESSAGE
+				local coloredName = "<font color='" .. NAME_COLOR .. "'>" .. player.Name .. "</font>"
+				local coloredAmount = "<font color='" .. MONEY_COLOR .. "'>$" .. formatNumber(currentATM) .. "</font>"
+				
+				local successMsg = "Hi " .. coloredName .. ", you have successfully withdrawn " .. coloredAmount .. "."
+				
+				typewrite(dialogueLabel, successMsg)
+				task.wait(2.5) -- Increased wait time slightly so they can read it
 				stopInteraction()
 			else
 				typewrite(dialogueLabel, "Error: " .. msg)
