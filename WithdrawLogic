@@ -1,5 +1,6 @@
--- [[ LOCAL SCRIPT: WithdrawLogic (Synced with ATM Manager) ]]
--- VERSION: Pulse Animation + RemoteFunction Sync + Logic Fixes
+-- [[ LOCAL SCRIPT: WithdrawLogic (Synced + Max Button Feature) ]]
+-- VERSION: Pulse Animation + RemoteFunction Sync + Logic Fixes + MAX BUTTON
+-- LOCATION: Inside the "Withdraw" Button (Child of the Frame)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -8,20 +9,26 @@ local Players = game:GetService("Players")
 
 local player = Players.LocalPlayer
 local withdrawBtn = script.Parent
-local mainWindow = withdrawBtn.Parent 
+local mainWindow = withdrawBtn.Parent -- The Frame holding the buttons
 
--- 🔄 CHANGE: Now looking for a RemoteFunction
+-- 🔄 REMOTE FUNCTION
 local withdrawFunc = ReplicatedStorage:WaitForChild("WithdrawFunction")
 
 -- 📂 UI REFERENCES
+-- The script looks for these siblings inside 'mainWindow'
 local amountInput = mainWindow:WaitForChild("AmountInput", 5)
 local VerifyLabel = mainWindow:WaitForChild("VerifyLabel", 5) 
 local SuccessLabel = mainWindow:WaitForChild("SuccessLabel", 5)
 local ErrorLabel = mainWindow:WaitForChild("ErrorLabel", 5)
 
+-- 🆕 MAX BUTTON REFERENCE
+-- MUST be a direct child of 'mainWindow' (Same folder as AmountInput)
+local maxBtn = mainWindow:WaitForChild("MaxButton", 5) 
+
 -- 🔊 SOUND CONFIG
 local CASH_SOUND_ID = "rbxassetid://140072726814802"
 local ERROR_SOUND_ID = "rbxassetid://3779045779"
+local CLICK_SOUND_ID = "rbxassetid://9083627113" 
 
 -- ⚙️ STATE VARIABLES
 local currentVerifyTween = nil 
@@ -96,7 +103,34 @@ local function stopVerifying()
 end
 
 -- ============================================================================
--- 🟢 MAIN BUTTON LOGIC
+-- 🆕 MAX BUTTON LOGIC (Added Feature)
+-- ============================================================================
+if maxBtn then
+	maxBtn.MouseButton1Click:Connect(function()
+		-- 1. Get Current "Cash" (Bank Balance)
+		local currentBank = 0
+		if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash") then
+			currentBank = player.leaderstats.Cash.Value
+		end
+
+		-- 2. Aesthetic Click
+		playSound(CLICK_SOUND_ID)
+
+		-- 3. Auto-Fill Input
+		if currentBank > 0 then
+			-- We use math.floor to ensure no decimals break the transfer
+			amountInput.Text = tostring(math.floor(currentBank))
+			print("✅ Max Amount Set: " .. amountInput.Text)
+		else
+			amountInput.Text = "0"
+		end
+	end)
+else
+	warn("⚠️ 'MaxButton' not found in Transfer UI. Max feature disabled.")
+end
+
+-- ============================================================================
+-- 🟢 MAIN TRANSFER BUTTON LOGIC
 -- ============================================================================
 withdrawBtn.MouseButton1Click:Connect(function()
 
@@ -117,11 +151,9 @@ withdrawBtn.MouseButton1Click:Connect(function()
 	-- 5. PREPARE DATA
 	local rawText = amountInput.Text
 	local amount = tonumber(rawText) 
-	-- FIX 1: We use this variable now!
 	local currentBank = player.leaderstats.Cash.Value
 
 	-- 6. CLIENT-SIDE CHECK (Fast Fail)
-	-- FIX 1: Added 'or (amount > currentBank)' to catch insufficient funds locally
 	if (not amount) or (amount <= 0) or (amount > currentBank) then
 		stopVerifying()
 		print("❌ Invalid Input or Insufficient Funds")
@@ -137,7 +169,6 @@ withdrawBtn.MouseButton1Click:Connect(function()
 	end
 
 	-- 7. 🔒 SERVER REQUEST (The Sync)
-	-- FIX 2: Added "Transfer" so the server knows to move money to ATM (not withdraw to wallet)
 	local success, msg = withdrawFunc:InvokeServer(amount, "Transfer")
 
 	-- 8. STOP VFX (Now that server replied)
@@ -150,7 +181,7 @@ withdrawBtn.MouseButton1Click:Connect(function()
 		amountInput.Text = "" -- Clear the box
 		task.spawn(function() animateResult(SuccessLabel) end)
 	else
-		-- 🔴 REAL FAILURE (Server denied it - e.g. Distance or Funds)
+		-- 🔴 REAL FAILURE (Server denied it)
 		print("❌ Transaction Denied: " .. msg)
 		playSound(ERROR_SOUND_ID)
 		task.spawn(function() animateResult(ErrorLabel) end)
