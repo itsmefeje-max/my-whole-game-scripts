@@ -1,9 +1,9 @@
--- ( LOCAL SCRIPT: Bank UI - WITH MUSIC, FADE & SMART HIDE )
+-- ( LOCAL SCRIPT: Bank UI - SILENT VERSION / NO MUSIC )
 -- ( Updated to match Inventory GUI's sound & logic )
 -- -- Indicating what the script is for, its function and use.
 
 print("---------------------------------------------------------")
-print("🛠️ STARTING BANK UI SCRIPT...")
+print("🛠️ STARTING BANK UI SCRIPT (SILENT MODE)...")
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -48,40 +48,21 @@ local avatarImage = debugFind(headerContainer, "AvatarImage")
 if not greetingLabel or not avatarImage then return end
 greetingLabel.RichText = true 
 
--- ⚙️ CONFIG & SOUNDS
-local OPEN_FOV = 50       
-local NORMAL_FOV = 70       
+-- ⚙️ CONFIG
+local OPEN_FOV = 50        
+local NORMAL_FOV = 70        
 local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
 local HOVER_TWEEN = TweenInfo.new(0.2)
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
-local DIM_COLOR = Color3.fromRGB(200, 200, 200)   
+local DIM_COLOR = Color3.fromRGB(200, 200, 200)    
 
--- 🔊 SOUND IDS
+-- 🔊 SOUND IDS (SFX ONLY)
 local SOUND_ID = "rbxassetid://9083627113" 
-local BANK_MUSIC_ID = "rbxassetid://15689439732" -- < 🎵 PASTE YOUR BANK MUSIC ID HERE
-
--- ⚠️ IMPORTANT: Exact name of your game music in SoundService
-local GAME_THEME_NAME = "GameTheme" 
-
--- 3. MUSIC SETUP
-local gameThemeSound = SoundService:FindFirstChild(GAME_THEME_NAME)
-if not gameThemeSound then
-	warn("⚠️ Bank Script: Could not find sound named '"..GAME_THEME_NAME.."' in SoundService.")
-end
-
--- Create Internal Bank Music
-local bankMusic = Instance.new("Sound")
-bankMusic.Name = "BankMusic_Internal"
-bankMusic.SoundId = BANK_MUSIC_ID
-bankMusic.Volume = 0.5 
-bankMusic.Looped = true
-bankMusic.Parent = SoundService 
 
 -- 🛡️ TRACKING VARIABLES
-local currentFadeTween = nil      
-local hiddenGuis = {}      
+local hiddenGuis = {}       
 
--- 4. SETUP CLICK DETECTOR
+-- 3. SETUP CLICK DETECTOR
 local detector = Instance.new("TextButton")
 detector.Name = "OutsideDetector"
 detector.Parent = myScreenGui
@@ -92,7 +73,7 @@ detector.ZIndex = mainWindow.ZIndex - 1
 detector.Visible = false
 detector.Active = true 
 
--- 5. MONEY VARIABLES
+-- 4. MONEY VARIABLES
 local leaderstats = player:WaitForChild("leaderstats", 10)
 local cash = nil
 if leaderstats then
@@ -162,7 +143,6 @@ end
 
 local function loadAvatar()
 	local content, isReady = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
-	-- ✅ FIXED: Set to empty string "" instead of "rbxassetid://0"
 	if isReady then 
 		avatarImage.Image = content 
 	else 
@@ -209,23 +189,7 @@ end
 openButton.MouseButton1Click:Connect(function()
 	playSfx(SOUND_ID, 0.5)
 
-	-- 1. STOP FADE OUT (Fixes conflict)
-	if currentFadeTween then
-		currentFadeTween:Cancel()
-		currentFadeTween = nil
-	end
-
-	-- 2. HANDLE MUSIC (Pause Game, Play Bank)
-	if gameThemeSound and gameThemeSound.IsPlaying then
-		gameThemeSound:Pause()
-	end
-
-	bankMusic.Volume = 0.5 
-	if not bankMusic.IsPlaying then
-		bankMusic:Play()
-	end
-
-	-- 3. UI LOGIC
+	-- 1. UI LOGIC
 	local colorHex = getRandomHex()
 	greetingLabel.Text = "<font color='#" .. colorHex .. "'>" .. player.Name .. "</font>"
 	updateDisplay()
@@ -239,22 +203,6 @@ end)
 local function performClose()
 	setFocusMode(false)
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
-
-	-- 4. FADE OUT MUSIC SAFELY
-	if bankMusic.IsPlaying then
-		currentFadeTween = TweenService:Create(bankMusic, TweenInfo.new(1, Enum.EasingStyle.Linear), {Volume = 0})
-		currentFadeTween:Play()
-
-		currentFadeTween.Completed:Connect(function(playbackState)
-			if playbackState == Enum.PlaybackState.Completed then
-				bankMusic:Stop()
-				if gameThemeSound then
-					gameThemeSound:Resume() 
-				end
-			end
-			currentFadeTween = nil 
-		end)
-	end
 end
 
 closeButton.MouseButton1Click:Connect(function() 
@@ -277,4 +225,3 @@ if closeButton:IsA("ImageButton") then addHover(closeButton) end
 
 if cash then cash.Changed:Connect(updateDisplay) end
 task.spawn(loadAvatar)
-
