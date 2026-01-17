@@ -1,4 +1,4 @@
--- [[ LOCAL SCRIPT: BalanceManager (Tablet-Style Floating Feedback) ]]
+-- [[ LOCAL SCRIPT: BalanceManager (3s Float + Join Bug Fix) ]]
 -- Indicating what the script is for: Tracks Wallet & Spawns Floating "+Cash" Feedback.
 -- LOCATION: StarterGui > Balance-Indicator > Balance (TextLabel)
 
@@ -16,14 +16,15 @@ local leaderstats = player:WaitForChild("leaderstats")
 local walletValue = leaderstats:WaitForChild("Wallet") 
 
 -- STATE VARIABLES
-local currentBalance = walletValue.Value -- Track previous value to calculate difference
+local currentBalance = walletValue.Value 
+local scriptStartTime = os.clock() -- [FIX] We record exactly when the GUI loaded
 
 -- ============================================================================
--- ⚙️ SETTINGS (Matches TabletVisuals Style)
+-- ⚙️ SETTINGS
 -- ============================================================================
-local FLOAT_DURATION = 3.0       -- You requested ~3 seconds
+local FLOAT_DURATION = 3.0       -- [UPDATED] Reverted to 3 seconds
 local FLOAT_DISTANCE = 0.08      -- How high it floats (Scale 0-1)
-local TEXT_COLOR = Color3.fromRGB(85, 255, 127) -- The Green color from TabletVisuals
+local TEXT_COLOR = Color3.fromRGB(85, 255, 127) -- Green Color
 
 -- ============================================================================
 -- 📊 FORMATTING HELPER
@@ -40,43 +41,41 @@ local function formatMoney(n)
 end
 
 -- ============================================================================
--- ☁️ FLOATING TEXT LOGIC (Ported from TabletVisuals)
+-- ☁️ FLOATING TEXT LOGIC (Tablet Style)
 -- ============================================================================
 local function spawnFloatingFeedback(amountAdded)
-	-- 1. Create a Clone of the main label (matches your Font/Size/Style automatically)
+	-- 1. Clone the label to match style
 	local floatLabel = label:Clone()
 	floatLabel.Name = "FloatingFeedback"
 	floatLabel.Text = "+" .. formatMoney(amountAdded)
 	floatLabel.TextColor3 = TEXT_COLOR
 	floatLabel.BackgroundTransparency = 1
-	floatLabel.Parent = label.Parent -- Put it in the same GUI container
-
-	-- 2. Make sure it's on top but behind nothing crucial
+	floatLabel.Parent = label.Parent 
+	
+	-- 2. Layering
 	floatLabel.ZIndex = label.ZIndex + 1
-
-	-- 3. Remove any scripts inside the clone (so it doesn't try to run logic)
+	
+	-- 3. Cleanup scripts from clone
 	for _, child in pairs(floatLabel:GetChildren()) do
 		if child:IsA("LocalScript") or child:IsA("Script") or child:IsA("UIScale") then 
 			child:Destroy() 
 		end
 	end
 
-	-- 4. Set Initial Position (Start exactly where the main Balance is)
+	-- 4. Start Position (Matches Label)
 	floatLabel.Position = label.Position
-
-	-- 5. Animate (Float Up + Fade Out)
-	-- We move it UP by subtracting from the Y Scale/Offset
+	
+	-- 5. Animate
 	local targetPos = floatLabel.Position - UDim2.new(0, 0, FLOAT_DISTANCE, 0)
-
 	local tweenInfo = TweenInfo.new(FLOAT_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
+	
 	local moveTween = TweenService:Create(floatLabel, tweenInfo, {Position = targetPos})
 	local fadeTween = TweenService:Create(floatLabel, tweenInfo, {TextTransparency = 1, TextStrokeTransparency = 1})
-
+	
 	moveTween:Play()
 	fadeTween:Play()
-
-	-- 6. Cleanup
+	
+	-- 6. Destroy after 3 seconds
 	Debris:AddItem(floatLabel, FLOAT_DURATION)
 end
 
@@ -94,13 +93,15 @@ updateDisplay()
 walletValue.Changed:Connect(function(newValue)
 	-- CHECK: Did money go UP?
 	local difference = newValue - currentBalance
-
-	if difference > 0 then
-		-- Spawn the tablet-style floating text
+	
+	-- [FIXED LOGIC] 
+	-- We ensure the game has been running for at least 2 seconds.
+	-- This prevents the "Loading Data" jump from triggering the animation on join.
+	if difference > 0 and (os.clock() - scriptStartTime > 2) then
 		spawnFloatingFeedback(difference)
 	end
-
-	-- Update logic
+	
+	-- Update state & text
 	currentBalance = newValue
 	updateDisplay()
 end)
