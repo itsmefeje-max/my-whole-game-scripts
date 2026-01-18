@@ -1,6 +1,5 @@
--- ( LOCAL SCRIPT: Inventory - SINGLE EQUIP FIX )
--- Fixes: "Holding 2 items at once."
--- Logic: Auto-unequips any currently held tool before equipping the new one.
+-- [[ LOCAL SCRIPT: Inventory - MOBILE PERFECT (Move + Zoom Fix) ]]
+-- Fixes: "Holding 2 items", "Walking while open", "Camera moving on touch", and "Zooming locked".
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -8,10 +7,15 @@ local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 local openButton = script.Parent 
+
+-- ✅ MOBILE FIX: GET PLAYER CONTROLS
+local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule"))
+local Controls = PlayerModule:GetControls()
 
 -- ============================================================================
 -- ⚙️ CONFIGURATION
@@ -19,6 +23,10 @@ local openButton = script.Parent
 local OPEN_FOV = 50 
 local NORMAL_FOV = 70 
 local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+
+-- ZOOM SETTINGS (Standard Roblox Defaults)
+local DEFAULT_MIN_ZOOM = 0.5
+local DEFAULT_MAX_ZOOM = 128
 
 -- 🔊 SOUNDS
 local CLICK_SOUND_ID = "rbxassetid://9083627113"
@@ -37,9 +45,22 @@ local NORMAL_COLOR = Color3.fromRGB(255, 255, 255)
 local DIM_COLOR = Color3.fromRGB(170, 170, 170)      
 
 -- ============================================================================
--- 📂 HIERARCHY & MUSIC SETUP
+-- 📂 HIERARCHY & INPUT SINK SETUP
 -- ============================================================================
 local myScreenGui = openButton:FindFirstAncestorWhichIsA("ScreenGui")
+
+-- ✅ MOBILE FIX: CREATE INPUT SINK (Prevents camera panning outside frame)
+local inputSink = Instance.new("TextButton")
+inputSink.Name = "MobileInputSink"
+inputSink.BackgroundTransparency = 1 -- Invisible
+inputSink.Text = ""
+inputSink.Size = UDim2.new(1, 0, 1, 0) -- Covers entire screen
+inputSink.Position = UDim2.new(0, 0, 0, 0)
+inputSink.ZIndex = 0 -- Behind everything else in the GUI
+inputSink.Modal = true -- Helps with mouse unlocking on PC
+inputSink.Active = true -- Stops clicks/touches from passing through to the game
+inputSink.Visible = false -- Hidden by default
+inputSink.Parent = myScreenGui
 
 -- Main Window Components
 local mainWindow = myScreenGui:WaitForChild("InventoryWindow", 10)
@@ -144,8 +165,10 @@ end
 -- 1️⃣ UI EFFECTS
 -- ============================================================================
 local function addDimEffect(btn)
-	btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = DIM_COLOR}):Play() end)
-	btn.MouseLeave:Connect(function() TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = NORMAL_COLOR}):Play() end)
+	if not UserInputService.TouchEnabled then
+		btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = DIM_COLOR}):Play() end)
+		btn.MouseLeave:Connect(function() TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = NORMAL_COLOR}):Play() end)
+	end
 end
 
 local function forceSafeCenter(btn)
@@ -162,16 +185,18 @@ local function addScaleEffect(btn)
 	forceSafeCenter(btn)
 	local scale = btn:FindFirstChild("UIScale") or Instance.new("UIScale", btn)
 
-	btn.MouseEnter:Connect(function()
-		playSfx(HOVER_SOUND_ID, 0.3) 
-		btn.ZIndex = 10 
-		TweenService:Create(scale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 1.2}):Play()
-	end)
+	if not UserInputService.TouchEnabled then
+		btn.MouseEnter:Connect(function()
+			playSfx(HOVER_SOUND_ID, 0.3) 
+			btn.ZIndex = 10 
+			TweenService:Create(scale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 1.2}):Play()
+		end)
 
-	btn.MouseLeave:Connect(function()
-		btn.ZIndex = 1
-		TweenService:Create(scale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 1}):Play()
-	end)
+		btn.MouseLeave:Connect(function()
+			btn.ZIndex = 1
+			TweenService:Create(scale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 1}):Play()
+		end)
+	end
 end
 
 -- ============================================================================
@@ -201,14 +226,12 @@ local function getRarityColor(rarity)
 end
 
 local function updateInventory()
-	-- Clear old buttons
 	for _, child in pairs(itemsContainer:GetChildren()) do
 		if child:IsA("GuiButton") then child:Destroy() end
 	end
 
 	local items = {}
 
-	-- 🔍 ROBUST SCAN
 	local function scan(loc)
 		if not loc then return end
 		for _, tool in pairs(loc:GetChildren()) do
@@ -231,7 +254,6 @@ local function updateInventory()
 	scan(player:FindFirstChild("Backpack")) 
 	scan(player.Character)
 
-	-- Create Buttons
 	for carName, tool in pairs(items) do
 		local stats = CarStats.Cars[carName]
 
@@ -256,7 +278,6 @@ local function updateInventory()
 
 			addScaleEffect(btn)
 
-			-- 🛑 CLICK HANDLER (UPDATED FOR SINGLE EQUIP)
 			btn.MouseButton1Click:Connect(function()
 				playSfx(EQUIP_SOUND_ID, 0.5)
 				local char = player.Character
@@ -265,20 +286,14 @@ local function updateInventory()
 				local existingTool = char:FindFirstChild(tool.Name)
 
 				if existingTool then
-					-- Case A: You are holding THIS car. Unequip it.
 					existingTool.Parent = player.Backpack 
 				else
-					-- Case B: You want to equip a NEW car.
 					if tool.Parent == player.Backpack then
-
-						-- 1. UNEQUIP EVERYTHING ELSE FIRST
 						for _, object in pairs(char:GetChildren()) do
 							if object:IsA("Tool") then
 								object.Parent = player.Backpack
 							end
 						end
-
-						-- 2. NOW EQUIP THE TARGET CAR
 						tool.Parent = char
 					end
 				end
@@ -289,7 +304,7 @@ local function updateInventory()
 end
 
 -- ============================================================================
--- 🟢 OPEN / CLOSE LOGIC
+-- 🟢 OPEN / CLOSE LOGIC (ZOOM & MOVEMENT LOCK)
 -- ============================================================================
 
 openButton.MouseButton1Click:Connect(function()
@@ -315,6 +330,16 @@ openButton.MouseButton1Click:Connect(function()
 	updateInventory()
 	updateBackground()
 
+	-- ✅ MOBILE FIX 1: DISABLE MOVEMENT & ENABLE INPUT SINK
+	Controls:Disable()
+	inputSink.Visible = true
+
+	-- ✅ MOBILE FIX 2: LOCK ZOOM TO CURRENT DISTANCE
+	-- This stops players from pinching/scrolling while UI is open
+	local currentZoom = (camera.CFrame.Position - camera.Focus.Position).Magnitude
+	player.CameraMinZoomDistance = currentZoom
+	player.CameraMaxZoomDistance = currentZoom
+
 	mainWindow.Visible = true
 	tierFrame.Visible = true
 	openButton.Visible = false
@@ -332,6 +357,12 @@ local function performClose()
 	mainWindow.Visible = false
 	tierFrame.Visible = false
 	openButton.Visible = true
+
+	-- ✅ MOBILE FIX: RESTORE CONTROLS & ZOOM
+	Controls:Enable()
+	inputSink.Visible = false
+	player.CameraMinZoomDistance = DEFAULT_MIN_ZOOM
+	player.CameraMaxZoomDistance = DEFAULT_MAX_ZOOM
 
 	for _, obj in pairs(myScreenGui:GetDescendants()) do
 		if obj:IsA("GuiButton") then obj.Visible = true end
