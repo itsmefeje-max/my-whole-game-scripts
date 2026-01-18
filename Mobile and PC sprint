@@ -1,6 +1,6 @@
--- [[ LOCAL SCRIPT: Universal Sprint (Merged) ]]
+-- [[ LOCAL SCRIPT: Universal Sprint (Initialization Fix) ]]
 -- -- Indicating what the script is for: Handles Mobile Button + PC Shift + Custom Running Animation.
--- UPDATED: Merged ContextActionService logic with GUI logic to prevent conflicts.
+-- -- UPDATE: Fixed bug where WalkSpeed (30) wasn't applying immediately on spawn.
 
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
@@ -11,7 +11,7 @@ local button = script.Parent -- The ImageButton
 
 -- === CONFIGURATION ===
 local WALK_SPEED = 30       -- Normal Speed
-local SPRINT_SPEED = 50     -- Sprint Speed (Adjusted to match your pasted script)
+local SPRINT_SPEED = 50     -- Sprint Speed
 local ANIMATION_ID = "rbxassetid://103489308479400" -- Your Animation ID
 
 -- === STATE ===
@@ -88,7 +88,7 @@ local function setupCharacter(character)
 	runTrack.Priority = Enum.AnimationPriority.Action
 	runTrack.Looped = true
 
-	-- 2. TOOL MONITORING (The Fix)
+	-- 2. TOOL MONITORING
 	local function checkTools()
 		if character:FindFirstChildWhichIsA("Tool") then
 			-- ✋ PLAYER IS HOLDING A ITEM -> DISABLE SPRINT
@@ -99,18 +99,22 @@ local function setupCharacter(character)
 			if UserInputService.TouchEnabled then
 				button.Visible = true
 			end
+			-- Re-apply speed in case we just dropped a tool
+			updateSpeed()
 		end
 	end
 
 	character.ChildAdded:Connect(checkTools)
 	character.ChildRemoved:Connect(checkTools)
 
-	-- 3. MOVEMENT MONITORING (Stops animation if player stands still while holding shift)
+	-- 3. MOVEMENT MONITORING
 	humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
 		updateAnimation(humanoid)
 	end)
 
-	checkTools()
+	-- 4. INITIALIZATION (The Fix)
+	checkTools()   -- Checks if we have tools
+	updateSpeed()  -- 🔥 FORCES the WalkSpeed to 30 immediately!
 end
 
 -- ============================================================================
