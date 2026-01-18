@@ -1,24 +1,26 @@
--- [[ SERVER SIDE: TycoonDataHandler (V23: SELF-HEALING FIX) ]]
--- [[ FIXES: Automatically creates 'PlacedCars' folder if missing to prevent load crash ]]
+-- [[ SERVER SIDE: TycoonDataHandler (V28: PHYSICS SAFE) ]]
+-- [[ FIX: Anchors cars BEFORE parenting them to prevent "Physics Explosions" ]]
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
 local DataStoreService = game:GetService("DataStoreService")
 local Workspace = game:GetService("Workspace")
 local TextChatService = game:GetService("TextChatService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
--- 🔒 KEY: Same key (Your data is safe, we just need to load it right)
-local DATA_KEY = "TycoonData_Production_V20_Debug"
+local DATA_KEY = "TycoonData_Release_V25_Fixed"
 local PlayerDataStore = DataStoreService:GetDataStore(DATA_KEY)
 
 local CarTools = ServerStorage:WaitForChild("CarTools")
 local CarModels = ServerStorage:WaitForChild("CarModels")
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
+local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
 local STARTER_CAR_NAME = "Delta Item" 
 
 -- ============================================================================
--- 🔍 DEBUG HELPER
+-- 🔍 HELPER FUNCTIONS
 -- ============================================================================
 local function debugLog(player, message)
 	print("🔍 [DATA][" .. player.Name .. "]: " .. message)
@@ -31,9 +33,37 @@ local function notify(player, msg)
 	end)
 end
 
--- ============================================================================
--- 🛠️ ROBUST PART FINDER
--- ============================================================================
+local function FindToolNameFromModel(modelName)
+	if CarTools:FindFirstChild(modelName) then return modelName end
+	if CarTools:FindFirstChild(modelName .. " Item") then return modelName .. " Item" end
+
+	local clean = modelName:gsub(" Item", ""):gsub("Item", "")
+	for _, t in pairs(CarTools:GetChildren()) do
+		if t.Name:gsub(" Item", "") == clean then return t.Name end
+	end
+
+	-- Smart Reverse Lookup
+	if CarStats and CarStats.Cars then
+		for internalID, stats in pairs(CarStats.Cars) do
+			if stats.Name == modelName then
+				if CarTools:FindFirstChild(internalID .. " Item") then return internalID .. " Item"
+				elseif CarTools:FindFirstChild(internalID) then return internalID end
+			end
+		end
+	end
+	return nil
+end
+
+local function FindModelNameFromTool(toolName)
+	local clean = toolName:gsub(" Item", ""):gsub("Item", "")
+	if CarModels:FindFirstChild(clean) then return clean end
+	if CarStats and CarStats.Cars and CarStats.Cars[clean] then
+		local stats = CarStats.Cars[clean]
+		if CarModels:FindFirstChild(stats.Name) then return stats.Name end
+	end
+	return nil
+end
+
 local function getMainPart(obj)
 	if obj:IsA("BasePart") then return obj end
 	if obj:IsA("Model") then
@@ -46,25 +76,9 @@ local function getMainPart(obj)
 	return nil
 end
 
-local function FindToolNameFromModel(modelName)
-	if CarTools:FindFirstChild(modelName) then return modelName end
-	if CarTools:FindFirstChild(modelName .. " Item") then return modelName .. " Item" end
-	local clean = modelName:gsub(" Item", ""):gsub("Item", "")
-	for _, t in pairs(CarTools:GetChildren()) do
-		if t.Name:gsub(" Item", "") == clean then return t.Name end
-	end
-	return nil
-end
-
-local function FindModelNameFromTool(toolName)
-	local clean = toolName:gsub(" Item", ""):gsub("Item", "")
-	if CarModels:FindFirstChild(clean) then return clean end
-	return nil
-end
-
 local function giveTool(player, toolName)
 	if not player or not player.Parent then return end
-	if player.Backpack:FindFirstChild(toolName) or player.StarterGear:FindFirstChild(toolName) then return end
+	if player.Backpack:FindFirstChild(toolName) or (player:FindFirstChild("StarterGear") and player.StarterGear:FindFirstChild(toolName)) then return end
 
 	local tool = CarTools:FindFirstChild(toolName)
 	if not tool then tool = CarTools:FindFirstChild(toolName:gsub(" Item", "")) end
@@ -74,36 +88,26 @@ local function giveTool(player, toolName)
 	end
 
 	if tool then
-		local bClone = tool:Clone()
-		bClone.CanBeDropped = false
-		bClone.Parent = player.Backpack
-
-		local gClone = tool:Clone()
-		gClone.CanBeDropped = false
-		gClone.Parent = player.StarterGear
+		tool:Clone().Parent = player.Backpack
+		tool:Clone().Parent = player.StarterGear
 		debugLog(player, "🎁 Given Item: " .. toolName)
 	end
 end
 
 -- ============================================================================
--- 🏗️ RESTORE LAYOUT (THE FIX)
+-- 🏗️ RESTORE LAYOUT (THE PHYSICS FIX)
 -- ============================================================================
 local function RestoreLayout(player, plot, layoutData)
 	if not layoutData then return end
 	debugLog(player, "🏗️ Restoring " .. #layoutData .. " cars...")
 
 	local padsFolder = plot:WaitForChild("Pads", 10)
-	
-	-- 🛑 SELF-HEALING FIX: Create PlacedCars if it's missing
 	local placedCarsFolder = plot:FindFirstChild("PlacedCars")
 	if not placedCarsFolder then
-		debugLog(player, "⚠️ 'PlacedCars' folder missing. Creating it now...")
-		placedCarsFolder = Instance.new("Folder")
-		placedCarsFolder.Name = "PlacedCars"
-		placedCarsFolder.Parent = plot
+		placedCarsFolder = Instance.new("Folder"); placedCarsFolder.Name = "PlacedCars"; placedCarsFolder.Parent = plot
 	end
 
-	for _, data in pairs(layoutData) do
+	for i, data in pairs(layoutData) do
 		local toolName = data.Tool
 		local padName = data.Pad
 
@@ -112,42 +116,46 @@ local function RestoreLayout(player, plot, layoutData)
 			local padPart = getMainPart(pad)
 			if padPart then
 				local isOccupied = padPart:FindFirstChild("IsOccupied")
-				
-				-- Force verify
+
 				if isOccupied and not isOccupied.Value then
 					local realModelName = FindModelNameFromTool(toolName)
-					local carModel = CarModels:FindFirstChild(realModelName)
 
-					if carModel then
-						-- 1. Clean Inventory
-						if player.Backpack:FindFirstChild(toolName) then player.Backpack[toolName]:Destroy() end
-						if player.StarterGear:FindFirstChild(toolName) then player.StarterGear[toolName]:Destroy() end
+					if realModelName then
+						local carModel = CarModels:FindFirstChild(realModelName)
+						if carModel then
+							local newCar = carModel:Clone()
 
-						-- 2. Spawn Car
-						local newCar = carModel:Clone()
-						local padTop = padPart.CFrame * CFrame.new(0, (padPart.Size.Y/2) + 5, 0)
-						newCar:PivotTo(padTop)
-						newCar.Parent = placedCarsFolder -- ✅ Now guaranteed to exist
+							-- 🛡️ STEP 1: FREEZE PHYSICS FIRST (Crucial!)
+							for _, p in pairs(newCar:GetDescendants()) do
+								if p:IsA("BasePart") then 
+									p.Anchored = true 
+									p.CanCollide = true 
+								end
+							end
 
-						-- 3. Lock & Link
-						isOccupied.Value = true
-						local linked = padPart:FindFirstChild("LinkedCar")
-						if not linked then
-							linked = Instance.new("ObjectValue", padPart)
-							linked.Name = "LinkedCar"
+							-- 🛡️ STEP 2: POSITION
+							local padTop = padPart.CFrame * CFrame.new(0, (padPart.Size.Y/2) + 5, 0)
+							newCar:PivotTo(padTop)
+
+							-- 🛡️ STEP 3: PARENT (Only safe now that it's anchored)
+							newCar.Parent = placedCarsFolder 
+
+							-- Link
+							isOccupied.Value = true
+							local linked = padPart:FindFirstChild("LinkedCar")
+							if not linked then linked = Instance.new("ObjectValue", padPart); linked.Name = "LinkedCar" end
+							linked.Value = newCar
+
+							-- Prompts
+							if padPart:FindFirstChild("PlacePrompt") then padPart.PlacePrompt.Enabled = false end
+							if padPart:FindFirstChild("PickupPrompt") then padPart.PickupPrompt.Enabled = true end
+
+							print("   ✅ [RESTORE] Safely placed " .. realModelName .. " on " .. padName)
+						else
+							warn("   ❌ [RESTORE] Model missing: " .. realModelName)
 						end
-						linked.Value = newCar
-
-						-- 4. Anchor
-						for _, p in pairs(newCar:GetDescendants()) do
-							if p:IsA("BasePart") then p.Anchored = true; p.CanCollide = true end
-						end
-						
-						-- 5. Prompts
-						if padPart:FindFirstChild("PlacePrompt") then padPart.PlacePrompt.Enabled = false end
-						if padPart:FindFirstChild("PickupPrompt") then padPart.PickupPrompt.Enabled = true end
-						
-						debugLog(player, "   ✅ Restored " .. toolName)
+					else
+						warn("   ❌ [RESTORE] Could not map Tool '"..toolName.."' to a Model.")
 					end
 				end
 			end
@@ -159,27 +167,29 @@ end
 -- 💾 SAVING
 -- ============================================================================
 local function save(player)
+	print("💾 [SAVE START] for " .. player.Name)
 	if not player:GetAttribute("DataLoaded") then return end
-	
+
 	local inventory = {}
 	local layout = {}
 	local seen = {}
 	local totalPending = player:GetAttribute("RestoredPending") or 0
-	
+
+	-- Inventory
 	local function add(name)
 		if not seen[name] then table.insert(inventory, name); seen[name] = true end
 	end
-
 	for _, t in pairs(player.Backpack:GetChildren()) do if CarTools:FindFirstChild(t.Name) then add(t.Name) end end
 	if player:FindFirstChild("StarterGear") then
 		for _, t in pairs(player.StarterGear:GetChildren()) do if CarTools:FindFirstChild(t.Name) then add(t.Name) end end
 	end
-	
+
+	-- Layout
 	local plotName = player:GetAttribute("OccupiedPlot")
 	if plotName and TycoonFolder:FindFirstChild(plotName) then
 		local plot = TycoonFolder[plotName]
 		if plot:FindFirstChild("PendingEarnings") then totalPending = totalPending + plot.PendingEarnings.Value end
-		
+
 		local pads = plot:FindFirstChild("Pads")
 		if pads then
 			for _, padObject in pairs(pads:GetChildren()) do
@@ -187,18 +197,21 @@ local function save(player)
 				if padPart then
 					local linked = padPart:FindFirstChild("LinkedCar")
 					if linked and linked.Value then
-						local tName = FindToolNameFromModel(linked.Value.Name)
+						local carName = linked.Value.Name
+						local tName = FindToolNameFromModel(carName)
+
 						if tName then
 							table.insert(layout, {Tool = tName, Pad = padObject.Name})
-							add(tName)
+							add(tName) -- Ensure ownership
+							print("   ✅ SAVED: " .. carName .. " (as " .. tName .. ")")
 						end
 					end
 				end
 			end
 		end
 	end
-	
-	local key = "User_V20_" .. player.UserId
+
+	local key = "User_V25_" .. player.UserId
 	local success, err = pcall(function()
 		PlayerDataStore:UpdateAsync(key, function()
 			return {
@@ -214,7 +227,8 @@ local function save(player)
 
 	if success then
 		notify(player, "💾 Data Saved.")
-		debugLog(player, "Saved " .. #layout .. " cars.")
+	else
+		warn("❌ [SAVE ERROR] " .. tostring(err))
 	end
 end
 
@@ -226,10 +240,10 @@ Players.PlayerAdded:Connect(function(player)
 	local cash = Instance.new("IntValue"); cash.Name = "Cash"; cash.Parent = ls
 	local wallet = Instance.new("IntValue"); wallet.Name = "Wallet"; wallet.Parent = ls
 	local atm = Instance.new("IntValue"); atm.Name = "ATMBalance"; atm.Parent = ls
-	
+
 	player.Chatted:Connect(function(msg) if msg:lower() == "/save" then save(player) end end)
 
-	local key = "User_V20_" .. player.UserId
+	local key = "User_V25_" .. player.UserId
 	local data = nil
 	local success, err = pcall(function() data = PlayerDataStore:GetAsync(key) end)
 
@@ -239,16 +253,12 @@ Players.PlayerAdded:Connect(function(player)
 			cash.Value = data.Bank or 0
 			wallet.Value = data.Wallet or 0
 			atm.Value = data.ATMBalance or 0
-			
-			local hasItems = false
-			local hasLayout = false
 
 			if data.Inventory then
-				for _, name in pairs(data.Inventory) do giveTool(player, name); hasItems = true end
+				for _, name in pairs(data.Inventory) do giveTool(player, name) end
 			end
-			
+
 			if data.Layout and #data.Layout > 0 then
-				hasLayout = true
 				player:GetAttributeChangedSignal("OccupiedPlot"):Connect(function()
 					local plotName = player:GetAttribute("OccupiedPlot")
 					local plot = TycoonFolder:FindFirstChild(plotName)
@@ -259,18 +269,18 @@ Players.PlayerAdded:Connect(function(player)
 				end)
 			end
 
-			if not hasItems and not hasLayout then
+			if (#data.Inventory == 0) and (not data.Layout or #data.Layout == 0) then
 				giveTool(player, STARTER_CAR_NAME)
 			end
-			
+
 			if data.PendingEarnings then player:SetAttribute("RestoredPending", data.PendingEarnings) end
 		else
 			giveTool(player, STARTER_CAR_NAME)
 		end
 	else
-		player:Kick("Data Error. Rejoin.")
+		player:Kick("Data Load Error. Rejoin.")
 	end
-	
+
 	player:GetAttributeChangedSignal("OccupiedPlot"):Connect(function() 
 		local amount = player:GetAttribute("RestoredPending")
 		if amount and amount > 0 then
@@ -285,6 +295,8 @@ end)
 
 Players.PlayerRemoving:Connect(save)
 game:BindToClose(function()
-	for _, p in pairs(Players:GetPlayers()) do save(p) end
-	task.wait(3)
+	if RunService:IsStudio() then
+		for _, p in pairs(Players:GetPlayers()) do save(p) end
+		task.wait(3)
+	end
 end)
