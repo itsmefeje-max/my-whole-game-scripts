@@ -1,5 +1,5 @@
--- [[ SERVER SIDE: TycoonDataHandler (Refactored V29: PERSISTENCE FIXED) ]]
--- [[ FIXES: Race Condition, Data Integrity, Safe Serialization ]]
+-- [[ SERVER SIDE: TycoonDataHandler (Refactored V30: EARNINGS PERSISTENCE FIXED) ]]
+-- [[ FIXES: Car Persistence Race Condition AND Earnings Race Condition ]]
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
@@ -23,10 +23,10 @@ local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
 
 -- ⚙️ CONSTANTS
 local STARTER_CAR_NAME = "Delta Item" 
-local AUTOSAVE_INTERVAL = 120 -- Seconds (Optional safety)
+local AUTOSAVE_INTERVAL = 120 
 
 -- ============================================================================
--- 🔍 HELPER FUNCTIONS (PRESERVED)
+-- 🔍 HELPER FUNCTIONS
 -- ============================================================================
 
 local function debugLog(player, message)
@@ -47,13 +47,11 @@ local function FindToolNameFromModel(modelName)
 	if CarTools:FindFirstChild(modelName) then return modelName end
 	if CarTools:FindFirstChild(modelName .. " Item") then return modelName .. " Item" end
 
-	-- String cleanup approach
 	local clean = modelName:gsub(" Item", ""):gsub("Item", "")
 	for _, t in pairs(CarTools:GetChildren()) do
 		if t.Name:gsub(" Item", "") == clean then return t.Name end
 	end
 
-	-- Smart CarStats lookup (The most robust method)
 	if CarStats and CarStats.Cars then
 		for internalID, stats in pairs(CarStats.Cars) do
 			if stats.Name == modelName then
@@ -69,8 +67,7 @@ end
 local function FindModelNameFromTool(toolName)
 	local clean = toolName:gsub(" Item", ""):gsub("Item", "")
 	if CarModels:FindFirstChild(clean) then return clean end
-
-	-- Check CarStats for display name mapping
+	
 	if CarStats and CarStats.Cars and CarStats.Cars[clean] then
 		local stats = CarStats.Cars[clean]
 		if CarModels:FindFirstChild(stats.Name) then return stats.Name end
@@ -78,7 +75,6 @@ local function FindModelNameFromTool(toolName)
 	return nil
 end
 
--- Utility to find the physical part of a pad/model
 local function getMainPart(obj)
 	if obj:IsA("BasePart") then return obj end
 	if obj:IsA("Model") then
@@ -91,26 +87,21 @@ local function getMainPart(obj)
 	return nil
 end
 
--- Safely gives items ensuring no duplicates in current session
 local function giveTool(player, toolName)
 	if not player or not player.Parent then return end
-
-	-- Check Backpack and StarterGear
+	
 	if player.Backpack:FindFirstChild(toolName) then return end
 	if player:FindFirstChild("StarterGear") and player.StarterGear:FindFirstChild(toolName) then return end
 
-	-- Attempt to find the tool
 	local tool = CarTools:FindFirstChild(toolName)
 	if not tool then tool = CarTools:FindFirstChild(toolName:gsub(" Item", "")) end
-
-	-- Fallback to reverse lookup if name doesn't match perfectly
+	
 	if not tool then
 		local rec = FindToolNameFromModel(toolName)
 		if rec then tool = CarTools:FindFirstChild(rec) end
 	end
 
 	if tool then
-		-- Grant item
 		tool:Clone().Parent = player.Backpack
 		tool:Clone().Parent = player.StarterGear
 		debugLog(player, "🎁 Given Item: " .. toolName)
@@ -120,7 +111,7 @@ local function giveTool(player, toolName)
 end
 
 -- ============================================================================
--- 🏗️ RESTORE LAYOUT (LOGIC FIXED)
+-- 🏗️ RESTORE LAYOUT (CARS)
 -- ============================================================================
 local function RestoreLayout(player, plot, layoutData)
 	if not layoutData then return end
@@ -146,7 +137,6 @@ local function RestoreLayout(player, plot, layoutData)
 			if padPart then
 				local isOccupied = padPart:FindFirstChild("IsOccupied")
 
-				-- Only restore if the pad is actually empty (prevents dupes)
 				if isOccupied and not isOccupied.Value then
 					local realModelName = FindModelNameFromTool(toolName)
 
@@ -156,7 +146,6 @@ local function RestoreLayout(player, plot, layoutData)
 							local newCar = carModel:Clone()
 
 							-- 🛡️ PHYSICS FIX: Anchor BEFORE parenting
-							-- This prevents the car from flying off due to physics collisions on spawn
 							for _, p in pairs(newCar:GetDescendants()) do
 								if p:IsA("BasePart") then 
 									p.Anchored = true 
@@ -164,15 +153,10 @@ local function RestoreLayout(player, plot, layoutData)
 								end
 							end
 
-							-- 🛡️ POSITIONING: Place perfectly on top
-							-- We assume PadController logic: Pad Center + Vertical Offset
 							local padTop = padPart.CFrame * CFrame.new(0, (padPart.Size.Y/2) + 5, 0)
 							newCar:PivotTo(padTop)
-
-							-- 🛡️ PARENTING: Safe to parent now
 							newCar.Parent = placedCarsFolder 
 
-							-- 🛡️ STATE SYNC: Lock the pad so PadController knows it's full
 							isOccupied.Value = true
 							local linked = padPart:FindFirstChild("LinkedCar")
 							if not linked then 
@@ -181,16 +165,9 @@ local function RestoreLayout(player, plot, layoutData)
 							end
 							linked.Value = newCar
 
-							-- 🛡️ PROMPTS: Update interaction prompts
 							if padPart:FindFirstChild("PlacePrompt") then padPart.PlacePrompt.Enabled = false end
 							if padPart:FindFirstChild("PickupPrompt") then padPart.PickupPrompt.Enabled = true end
-
-							print("   ✅ [RESTORE] Safely placed " .. realModelName .. " on " .. padName)
-						else
-							warn("   ❌ [RESTORE] Model missing in ServerStorage: " .. realModelName)
 						end
-					else
-						warn("   ❌ [RESTORE] Could not map Tool '"..tostring(toolName).."' to a Model.")
 					end
 				end
 			end
@@ -199,13 +176,11 @@ local function RestoreLayout(player, plot, layoutData)
 end
 
 -- ============================================================================
--- 💾 SAVING (DATA INTEGRITY PROTECTED)
+-- 💾 SAVING (INCLUDES EARNINGS PERSISTENCE)
 -- ============================================================================
 local function save(player)
 	print("💾 [SAVE START] for " .. player.Name)
-
-	-- 🛡️ DATA LOSS PREVENTION
-	-- If data failed to load, DO NOT OVERWRITE with empty data.
+	
 	if not player:GetAttribute("DataLoaded") then 
 		warn("⚠️ [SAVE ABORTED] Data was not loaded for " .. player.Name)
 		return 
@@ -214,33 +189,33 @@ local function save(player)
 	local inventory = {}
 	local layout = {}
 	local seen = {}
+	
+	-- 🛡️ EARNINGS LOGIC:
+	-- Start with any "Trapped" earnings that failed to restore to the plot
 	local totalPending = player:GetAttribute("RestoredPending") or 0
 
-	-- 1. CAPTURE INVENTORY (Deduplicated)
 	local function add(name)
 		if not seen[name] then 
 			table.insert(inventory, name)
 			seen[name] = true 
 		end
 	end
-
-	-- Scan Backpack
+	
 	for _, t in pairs(player.Backpack:GetChildren()) do 
 		if CarTools:FindFirstChild(t.Name) then add(t.Name) end 
 	end
-	-- Scan StarterGear (Items persist after death)
 	if player:FindFirstChild("StarterGear") then
 		for _, t in pairs(player.StarterGear:GetChildren()) do 
 			if CarTools:FindFirstChild(t.Name) then add(t.Name) end 
 		end
 	end
 
-	-- 2. CAPTURE LAYOUT (Placed Cars)
 	local plotName = player:GetAttribute("OccupiedPlot")
 	if plotName and TycoonFolder:FindFirstChild(plotName) then
 		local plot = TycoonFolder[plotName]
-
-		-- Save uncollected cash
+		
+		-- 💰 ADD PLOT EARNINGS TO TOTAL
+		-- This combines "Trapped" earnings (RestoredPending) with "Active" earnings (Plot Value)
 		if plot:FindFirstChild("PendingEarnings") then 
 			totalPending = totalPending + plot.PendingEarnings.Value 
 		end
@@ -251,18 +226,12 @@ local function save(player)
 				local padPart = getMainPart(padObject)
 				if padPart then
 					local linked = padPart:FindFirstChild("LinkedCar")
-					-- Check if a car is linked and actually exists
 					if linked and linked.Value and linked.Value.Parent then
 						local carName = linked.Value.Name
 						local tName = FindToolNameFromModel(carName)
-
 						if tName then
-							-- Save position
 							table.insert(layout, {Tool = tName, Pad = padObject.Name})
-
-							-- Ensure player "owns" the placed item too
 							add(tName) 
-							print("   ✅ SAVED: " .. carName .. " (as " .. tName .. ")")
 						end
 					end
 				end
@@ -270,7 +239,6 @@ local function save(player)
 		end
 	end
 
-	-- 3. COMMIT TO DATASTORE
 	local key = "User_V25_" .. player.UserId
 	local success, err = pcall(function()
 		PlayerDataStore:UpdateAsync(key, function(oldData)
@@ -280,7 +248,7 @@ local function save(player)
 				ATMBalance = player.leaderstats.ATMBalance.Value,
 				Inventory = inventory,
 				Layout = layout,
-				PendingEarnings = totalPending
+				PendingEarnings = totalPending -- ✅ SAVING CORRECTLY
 			}
 		end)
 	end)
@@ -293,116 +261,111 @@ local function save(player)
 end
 
 -- ============================================================================
--- 📥 LOADING (RACE CONDITION FIXED)
+-- 📥 LOADING (EARNINGS FIX APPLIED)
 -- ============================================================================
 Players.PlayerAdded:Connect(function(player)
-	-- 1. Initialize Leaderstats
 	local ls = Instance.new("Folder")
 	ls.Name = "leaderstats"; ls.Parent = player
 	local cash = Instance.new("IntValue"); cash.Name = "Cash"; cash.Parent = ls
 	local wallet = Instance.new("IntValue"); wallet.Name = "Wallet"; wallet.Parent = ls
 	local atm = Instance.new("IntValue"); atm.Name = "ATMBalance"; atm.Parent = ls
 
-	-- Chat command for manual save
 	player.Chatted:Connect(function(msg) if msg:lower() == "/save" then save(player) end end)
 
-	-- 2. Fetch Data
 	local key = "User_V25_" .. player.UserId
 	local data = nil
 	local success, err = pcall(function() data = PlayerDataStore:GetAsync(key) end)
 
 	if success then
-		-- 🛡️ MARK DATA AS LOADED (Enables Saving)
 		player:SetAttribute("DataLoaded", true)
-
+		
 		if data then
-			-- Restore Values
 			cash.Value = data.Bank or 0
 			wallet.Value = data.Wallet or 0
 			atm.Value = data.ATMBalance or 0
 
-			-- Restore Inventory
 			if data.Inventory then
 				for _, name in pairs(data.Inventory) do giveTool(player, name) end
 			end
+			
+			-- ✅ LOAD EARNINGS DATA INTO BUFFER
+			if data.PendingEarnings then 
+				player:SetAttribute("RestoredPending", data.PendingEarnings) 
+			end
 
-			-- [[ 🚨 CRITICAL FIX: PLACEMENT RESTORATION ]]
+			-- [[ 1. CAR LAYOUT RESTORATION ]]
 			if data.Layout and #data.Layout > 0 then
-
-				-- Define the Restoration Function locally
-				local hasRestored = false -- Debounce to prevent double restoration
-				local function TriggerRestore()
-					if hasRestored then return end
-
+				local hasRestoredCars = false 
+				local function TriggerCarRestore()
+					if hasRestoredCars then return end
+					
 					local plotName = player:GetAttribute("OccupiedPlot")
 					if plotName then
 						local plot = TycoonFolder:FindFirstChild(plotName)
 						if plot then
-							hasRestored = true
-							print("🏗️ Plot Detected ("..plotName.."). Triggering RestoreLayout...")
-
-							-- Small delay to ensure plot visuals are fully streamed/loaded
+							hasRestoredCars = true
 							task.wait(1) 
 							RestoreLayout(player, plot, data.Layout)
 						end
 					end
 				end
 
-				-- PATH A: Event Listener (If plot is assigned LATER)
-				player:GetAttributeChangedSignal("OccupiedPlot"):Connect(TriggerRestore)
+				player:GetAttributeChangedSignal("OccupiedPlot"):Connect(TriggerCarRestore)
+				if player:GetAttribute("OccupiedPlot") then task.spawn(TriggerCarRestore) end
+			end
+			
+			-- [[ 2. PENDING EARNINGS RESTORATION (THE FIX) ]]
+			local hasRestoredMoney = false
+			local function TriggerMoneyRestore()
+				-- Safety Check: prevent double restore if Listener and Immediate check both fire
+				if hasRestoredMoney then return end
 
-				-- PATH B: Immediate Check (If plot was assigned DURING loading)
-				-- This specifically fixes the race condition where GetAsync() yields too long
-				if player:GetAttribute("OccupiedPlot") then
-					task.spawn(TriggerRestore)
+				local amount = player:GetAttribute("RestoredPending")
+				if amount and amount > 0 then
+					local plotName = player:GetAttribute("OccupiedPlot")
+					if plotName then
+						local plot = TycoonFolder:FindFirstChild(plotName)
+						-- Wait for PendingEarnings value to exist (Streaming Enabled safety)
+						local pendingVal = plot and plot:WaitForChild("PendingEarnings", 10)
+						
+						if pendingVal then
+							hasRestoredMoney = true
+							print("💰 Restoring Unclaimed Earnings: $" .. amount)
+							pendingVal.Value = pendingVal.Value + amount
+							player:SetAttribute("RestoredPending", 0) -- Clear buffer so it doesn't double save
+						end
+					end
 				end
+			end
+
+			-- Path A: Event Listener (If plot is assigned LATER)
+			player:GetAttributeChangedSignal("OccupiedPlot"):Connect(TriggerMoneyRestore)
+
+			-- Path B: Immediate Check (If plot was assigned DURING load)
+			-- ⚠️ THIS WAS MISSING BEFORE, CAUSING THE "RESET" ⚠️
+			if player:GetAttribute("OccupiedPlot") then
+				task.spawn(TriggerMoneyRestore)
 			end
 			-- [[ END OF FIX ]]
 
-			-- Starter Item Fallback
 			if (#data.Inventory == 0) and (not data.Layout or #data.Layout == 0) then
 				giveTool(player, STARTER_CAR_NAME)
 			end
-
-			if data.PendingEarnings then player:SetAttribute("RestoredPending", data.PendingEarnings) end
 		else
-			-- New Player
 			giveTool(player, STARTER_CAR_NAME)
 		end
 	else
-		-- Kick to prevent data overwriting
 		player:Kick("Data Load Error. Please Rejoin.")
 	end
-
-	-- Restore Pending Earnings Logic
-	player:GetAttributeChangedSignal("OccupiedPlot"):Connect(function() 
-		local amount = player:GetAttribute("RestoredPending")
-		if amount and amount > 0 then
-			local plotName = player:GetAttribute("OccupiedPlot")
-			local plot = TycoonFolder:FindFirstChild(plotName)
-			-- Wait for PendingEarnings value to exist
-			local pendingVal = plot and plot:WaitForChild("PendingEarnings", 10)
-
-			if pendingVal then
-				pendingVal.Value = pendingVal.Value + amount
-				player:SetAttribute("RestoredPending", 0) -- Clear buffer
-			end
-		end
-	end)
 end)
 
--- ============================================================================
--- 🛑 SHUTDOWN HANDLING
--- ============================================================================
 Players.PlayerRemoving:Connect(save)
 
 game:BindToClose(function()
 	if RunService:IsStudio() then
-		-- Fast save for studio
 		for _, p in pairs(Players:GetPlayers()) do save(p) end
 		task.wait(2)
 	else
-		-- Robust save for live servers
 		local threads = 0
 		for _, p in pairs(Players:GetPlayers()) do
 			threads = threads + 1
@@ -411,7 +374,6 @@ game:BindToClose(function()
 				threads = threads - 1
 			end)
 		end
-		-- Wait until all threads finish or 30s timeout
 		local start = os.clock()
 		while threads > 0 and (os.clock() - start) < 30 do
 			task.wait()
