@@ -1,5 +1,5 @@
 -- [[ SERVER SCRIPT: PadController (Refactored & Secure) ]]
--- [[ FIXES: Transaction Order (Anti-Dupe), Ghost-Lock Auto-Correction, Modular Logic ]]
+-- [[ FIXES: Transaction Order (Anti-Dupe), Ghost-Lock Auto-Correction, Modular Logic, 1.5s Hold ]]
 
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
@@ -14,7 +14,8 @@ local CONSTANTS = {
 	MAX_CHECK_DIST = 20,
 	EJECT_HEIGHT = 5,
 	EJECT_DISTANCE = 4,
-	RETRY_DELAY = 0.2
+	RETRY_DELAY = 0.2,
+	HOLD_DURATION = 1.5 -- ⏳ UPDATED: Interaction takes 1.5 seconds
 }
 
 -- 📂 ASSETS
@@ -258,10 +259,12 @@ local function setupPad(padObject)
 	local placePrompt = Instance.new("ProximityPrompt", padPart)
 	placePrompt.Name = "PlacePrompt"; placePrompt.ActionText = "Place Car"; placePrompt.ObjectText = "Car Pad"
 	placePrompt.MaxActivationDistance = CONSTANTS.PROMPT_RANGE; placePrompt.RequiresLineOfSight = false
+	placePrompt.HoldDuration = CONSTANTS.HOLD_DURATION -- ⏳ 1.5 Seconds
 
 	local pickupPrompt = Instance.new("ProximityPrompt", padPart)
 	pickupPrompt.Name = "PickupPrompt"; pickupPrompt.ActionText = "Pick Up"; pickupPrompt.ObjectText = "Occupied Pad"
 	pickupPrompt.MaxActivationDistance = CONSTANTS.PROMPT_RANGE; pickupPrompt.RequiresLineOfSight = false
+	pickupPrompt.HoldDuration = CONSTANTS.HOLD_DURATION -- ⏳ 1.5 Seconds
 	pickupPrompt.Enabled = false
 
 	-- Initial Validate
