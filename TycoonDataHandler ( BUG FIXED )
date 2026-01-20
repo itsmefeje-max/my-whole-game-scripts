@@ -1,5 +1,5 @@
--- [[ SERVER SIDE: TycoonDataHandler (Refactored V30: EARNINGS PERSISTENCE FIXED) ]]
--- [[ FIXES: Car Persistence Race Condition AND Earnings Race Condition ]]
+-- [[ SERVER SIDE: TycoonDataHandler (Refactored V31: FINAL DUPE FIX) ]]
+-- [[ FIXES: "Double-Count" Logic Error where placed cars were re-added to Inventory ]]
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
@@ -188,34 +188,29 @@ local function save(player)
 
 	local inventory = {}
 	local layout = {}
-	local seen = {}
 	
 	-- 🛡️ EARNINGS LOGIC:
-	-- Start with any "Trapped" earnings that failed to restore to the plot
 	local totalPending = player:GetAttribute("RestoredPending") or 0
 
-	local function add(name)
-		if not seen[name] then 
-			table.insert(inventory, name)
-			seen[name] = true 
-		end
+	local function add_to_inventory(name)
+		table.insert(inventory, name)
 	end
 	
+	-- 1. SAVE BACKPACK (Items you are holding)
 	for _, t in pairs(player.Backpack:GetChildren()) do 
-		if CarTools:FindFirstChild(t.Name) then add(t.Name) end 
+		if CarTools:FindFirstChild(t.Name) then add_to_inventory(t.Name) end 
 	end
+	
+	-- 2. SAVE STARTERGEAR (Items you own but aren't holding)
 	if player:FindFirstChild("StarterGear") then
 		for _, t in pairs(player.StarterGear:GetChildren()) do 
-			if CarTools:FindFirstChild(t.Name) then add(t.Name) end 
+			if CarTools:FindFirstChild(t.Name) then add_to_inventory(t.Name) end 
 		end
 	end
 
 	local plotName = player:GetAttribute("OccupiedPlot")
 	if plotName and TycoonFolder:FindFirstChild(plotName) then
 		local plot = TycoonFolder[plotName]
-		
-		-- 💰 ADD PLOT EARNINGS TO TOTAL
-		-- This combines "Trapped" earnings (RestoredPending) with "Active" earnings (Plot Value)
 		if plot:FindFirstChild("PendingEarnings") then 
 			totalPending = totalPending + plot.PendingEarnings.Value 
 		end
@@ -230,8 +225,11 @@ local function save(player)
 						local carName = linked.Value.Name
 						local tName = FindToolNameFromModel(carName)
 						if tName then
+							-- ✅ FIXED HERE: Only add to LAYOUT. Do NOT add to Inventory.
 							table.insert(layout, {Tool = tName, Pad = padObject.Name})
-							add(tName) 
+							
+							-- ❌ REMOVED: add(tName) 
+							-- This line was causing the duplication!
 						end
 					end
 				end
@@ -248,13 +246,18 @@ local function save(player)
 				ATMBalance = player.leaderstats.ATMBalance.Value,
 				Inventory = inventory,
 				Layout = layout,
-				PendingEarnings = totalPending -- ✅ SAVING CORRECTLY
+				PendingEarnings = totalPending
 			}
 		end)
 	end)
 
 	if success then
 		notify(player, "💾 Data Saved.")
+		
+		-- ✅ SENIOR SYNC: Prevents plot wiping before save is done
+		local syncEvent = game.ServerStorage:FindFirstChild("TycoonSaveCompleted")
+		if syncEvent then syncEvent:Fire(player.Name) end
+		
 	else
 		warn("❌ [SAVE ERROR] " .. tostring(err))
 	end
@@ -314,10 +317,9 @@ Players.PlayerAdded:Connect(function(player)
 				if player:GetAttribute("OccupiedPlot") then task.spawn(TriggerCarRestore) end
 			end
 			
-			-- [[ 2. PENDING EARNINGS RESTORATION (THE FIX) ]]
+			-- [[ 2. PENDING EARNINGS RESTORATION ]]
 			local hasRestoredMoney = false
 			local function TriggerMoneyRestore()
-				-- Safety Check: prevent double restore if Listener and Immediate check both fire
 				if hasRestoredMoney then return end
 
 				local amount = player:GetAttribute("RestoredPending")
@@ -325,28 +327,22 @@ Players.PlayerAdded:Connect(function(player)
 					local plotName = player:GetAttribute("OccupiedPlot")
 					if plotName then
 						local plot = TycoonFolder:FindFirstChild(plotName)
-						-- Wait for PendingEarnings value to exist (Streaming Enabled safety)
 						local pendingVal = plot and plot:WaitForChild("PendingEarnings", 10)
 						
 						if pendingVal then
 							hasRestoredMoney = true
 							print("💰 Restoring Unclaimed Earnings: $" .. amount)
 							pendingVal.Value = pendingVal.Value + amount
-							player:SetAttribute("RestoredPending", 0) -- Clear buffer so it doesn't double save
+							player:SetAttribute("RestoredPending", 0) 
 						end
 					end
 				end
 			end
 
-			-- Path A: Event Listener (If plot is assigned LATER)
 			player:GetAttributeChangedSignal("OccupiedPlot"):Connect(TriggerMoneyRestore)
-
-			-- Path B: Immediate Check (If plot was assigned DURING load)
-			-- ⚠️ THIS WAS MISSING BEFORE, CAUSING THE "RESET" ⚠️
 			if player:GetAttribute("OccupiedPlot") then
 				task.spawn(TriggerMoneyRestore)
 			end
-			-- [[ END OF FIX ]]
 
 			if (#data.Inventory == 0) and (not data.Layout or #data.Layout == 0) then
 				giveTool(player, STARTER_CAR_NAME)
