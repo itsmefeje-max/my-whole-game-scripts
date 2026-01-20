@@ -1,6 +1,7 @@
--- [[ LOCAL SCRIPT: AfraiC4tLogic (Processing Delay + Movement Fix + Mobile Patch) ]]
+-- [[ LOCAL SCRIPT: AfraiC4tLogic (Optimized with Dialogue Lock) ]]
 -- Indicating what the script is for: Handles Camera, Logic, and UI for AfraiC4t ATM.
 -- FEATURES: Buttons Hierarchy, Pop Animations, Sounds, Dynamic Feedback, and Cash SFX.
+-- OPTIMIZATION: "Dialogue Lock" ensures buttons are hidden/disabled while NPC speaks.
 
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -35,7 +36,9 @@ local TEXT_ID = "Text_ATM_Dialogue"
 -- BUTTON NAMES
 local BTN_WITHDRAW_ID = "Btn_ATM_Withdraw" 
 local BTN_INQUIRY_ID = "Btn_ATM_Inquiry"    
-local BTN_LEAVE_ID = "Btn_ATM_Leave"        
+local BTN_LEAVE_ID = "Btn_ATM_Leave"
+-- List for easy iteration
+local ALL_BUTTON_IDS = {BTN_WITHDRAW_ID, BTN_INQUIRY_ID, BTN_LEAVE_ID}
 
 -- 📍 NPC CONFIGURATION
 local NPC_FOLDER = "NPCS"
@@ -110,6 +113,20 @@ end)
 -- 🎬 INTERACTION FUNCTIONS
 -- ============================================================================
 
+-- ✅ NEW HELPER: Controls visibility of all buttons
+local function setButtonsState(isActive)
+	local myGui = playerGui:FindFirstChild(GUI_ID)
+	if not myGui then return end
+	
+	for _, btnID in ipairs(ALL_BUTTON_IDS) do
+		local btn = myGui:FindFirstChild(btnID, true)
+		if btn then
+			btn.Visible = isActive -- Hides button if false, Shows if true
+			btn.Active = isActive  -- Prevents interaction
+		end
+	end
+end
+
 local function clearConnections()
 	for _, conn in pairs(buttonConnections) do
 		if conn then conn:Disconnect() end
@@ -131,8 +148,9 @@ local function playSound(id, vol)
 	game.Debris:AddItem(s, 1)
 end
 
--- 📝 TYPEWRITER
-local function typewrite(label, text)
+-- 📝 TYPEWRITER (OPTIMIZED WITH CALLBACK)
+-- Added 'onComplete' parameter to know when text finishes
+local function typewrite(label, text, onComplete)
 	if not label then return end
 	label.RichText = true
 
@@ -159,6 +177,11 @@ local function typewrite(label, text)
 			task.wait(TYPEWRITER_SPEED)
 		end
 		label.MaxVisibleGraphemes = -1 
+		
+		-- ✅ TRIGGER CALLBACK IF PROVIDED
+		if onComplete and isInteracting then
+			onComplete()
+		end
 	end)
 end
 
@@ -281,6 +304,9 @@ local function startInteraction(npcModel)
 
 	container.Visible = true
 
+	-- ✅ ENSURE BUTTONS ARE HIDDEN INITIALLY
+	setButtonsState(false)
+
 	local dialogueLabel = container:FindFirstChild(TEXT_ID, true)
 	if dialogueLabel then
 		-- 1. READ ATM BALANCE
@@ -301,7 +327,10 @@ local function startInteraction(npcModel)
 			greeting = "Hello " .. coloredName .. ". I am not holding any funds for you. Transfer from your Bank App first."
 		end
 
-		typewrite(dialogueLabel, greeting)
+		-- ✅ TYPEWRITER WITH CALLBACK (SHOWS BUTTONS AFTER TEXT)
+		typewrite(dialogueLabel, greeting, function()
+			setButtonsState(true) -- SHOW BUTTONS
+		end)
 
 		-- ==============================
 		-- 🔘 BUTTON SETUP
@@ -326,10 +355,15 @@ local function startInteraction(npcModel)
 			if isLeaving then return end
 			isLeaving = true 
 			clearConnections() 
+			
+			-- ✅ HIDE BUTTONS IMMEDIATELY ON LEAVE
+			setButtonsState(false)
 
 			if dialogueLabel then
 				local coloredName = "<font color='" .. NAME_COLOR .. "'>" .. player.Name .. "</font>"
 				local goodbyeMsg = "Thank you for stopping by, " .. coloredName .. "."
+				
+				-- No callback needed here as we are stopping interaction after
 				typewrite(dialogueLabel, goodbyeMsg)
 			end
 			task.wait(LEAVE_DELAY)
@@ -337,21 +371,33 @@ local function startInteraction(npcModel)
 		end)
 
 		connectBtn(BTN_INQUIRY_ID, function()
+			-- ✅ HIDE BUTTONS WHILE EXPLAINING
+			setButtonsState(false)
+			
 			if dialogueLabel then
 				local guide = "<b>MY GUIDE:</b>\n\n" ..
 					"<font color='"..NUM_COLOR.."'><b>1.</b></font> <font color='"..MONEY_COLOR.."'><b>EARN:</b></font> Your Plot generates income.\n" ..
 					"<font color='"..NUM_COLOR.."'><b>2.</b></font> <font color='"..WITHDRAW_COLOR.."'><b>WITHDRAW:</b></font> Move earnings to Wallet.\n" ..
 					"<font color='"..NUM_COLOR.."'><b>3.</b></font> <font color='"..SPEND_COLOR.."'><b>SPEND:</b></font> Use Cash for upgrades."
-				typewrite(dialogueLabel, guide)
+				
+				typewrite(dialogueLabel, guide, function()
+					setButtonsState(true) -- SHOW BUTTONS WHEN DONE
+				end)
 			end
 		end)
 
 		-- 3. WITHDRAW BUTTON (UPDATED)
 		connectBtn(BTN_WITHDRAW_ID, function()
 			if currentATM <= 0 then
-				typewrite(dialogueLabel, "You have no funds here to withdraw.")
+				setButtonsState(false)
+				typewrite(dialogueLabel, "You have no funds here to withdraw.", function()
+					setButtonsState(true)
+				end)
 				return
 			end
+			
+			-- ✅ HIDE BUTTONS DURING TRANSACTION
+			setButtonsState(false)
 
 			-- ✅ PROCESSING DELAY IMPLEMENTATION
 			typewrite(dialogueLabel, "Processing withdrawal...")
@@ -373,7 +419,9 @@ local function startInteraction(npcModel)
 				task.wait(2.5) 
 				stopInteraction()
 			else
-				typewrite(dialogueLabel, "Error: " .. msg)
+				typewrite(dialogueLabel, "Error: " .. msg, function()
+					setButtonsState(true) -- Show buttons if error occurred so they can try again or leave
+				end)
 			end
 		end)
 	end
