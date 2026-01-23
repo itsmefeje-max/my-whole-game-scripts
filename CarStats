@@ -1,166 +1,183 @@
--- [[ MODULE SCRIPT: CarStats ]]
+-- [[ MODULE SCRIPT: CarStats (Upgraded Schema) ]]
 -- LOCATION: ReplicatedStorage > CarStats
+-- STATUS: Production Ready. Includes Visual Data field.
 
 local CarStats = {}
+
 -- ========================================================================
 -- 🚗 VEHICLE DATABASE
 -- ========================================================================
+-- INSTRUCTIONS: Replace "rbxassetid://0" with your uploaded Image Asset IDs.
+-- To get an ID: Right-click an image in the Toolbox > Copy Asset ID.
+--  the irl names of the car is for example Honda Civic Type R
+-- the real names in the car should be like Maverick, Stuttgart, not like
+-- "2025 Honda Civic Type R" or "2025 Civic Type R" or "2025 Civic Type R N"
+
 CarStats.Cars = {
 
-	-- ⬜ COMMON TIERS (The Hook)
-	-- Goal: Fast progression.
-	-- Players get addicted quickly. [FIXED]
+	-- ⬜ COMMON TIERS
 	-- ====================================================================
 	["Delta"] = { 
 		Name = "Delta",
 		CPS = 1,
 		Rarity = "Common",
-		Price = 0 -- Free Starter Car
+		Price = 0,
+		Image = "rbxassetid://0" -- [TODO] Replace with Delta Image ID
 	},
 	["Iva"] = { 
 		Name = "Iva",
 		CPS = 2,
 		Rarity = "Common",
-		Price = 50 -- Very cheap upgrade
+		Price = 50,
+		Image = "rbxassetid://0"
 	},
-	["Atom"] = { -- Ensure you have an "Atom" model in the folder!
+	["Atom"] = {
 		Name = "Atom",
 		CPS = 3, 
 		Rarity = "Common",
-		Price = 150 -- $150
+		Price = 150,
+		Image = "rbxassetid://0"
 	},
 	["Windsor"] = { 
 		Name = "Windsor",
 		CPS = 8, 
 		Rarity = "Common",
-		Price = 1200 -- $1.2k
+		Price = 1200,
+		Image = "rbxassetid://0"
 	},
 	["Senator"] = { 
 		Name = "Senator",
 		CPS = 22, 
 		Rarity = "Common",
-		Price = 5500 -- $5.5k
+		Price = 5500,
+		Image = "rbxassetid://0"
 	},
 	["Riva"] = { 
 		Name = "Riva",
 		CPS = 55, 
 		Rarity = "Common", 
-		Price = 18000 -- $18k (The first "Wall")
+		Price = 18000,
+		Image = "rbxassetid://0"
 	},
 
-	-- 🟩 UNCOMMON TIERS (The Bridge)
-	-- Goal: Keeps them playing.
-	-- "I can afford this soon." [FIXED]
+	-- 🟩 UNCOMMON TIERS
 	-- ====================================================================
 	["Raiju"] = {
 		Name = "Nissan Skyline V37",
 		CPS = 85,
 		Rarity = "Uncommon",
-		Price = 35000 -- $35k
+		Price = 35000,
+		Image = "rbxassetid://0"
 	},
 	["Ironclad"] = {
 		Name = "Toyota Hilux (2021)",
 		CPS = 100,
 		Rarity = "Uncommon",
-		Price = 45000 -- $45k
+		Price = 45000,
+		Image = "rbxassetid://0"
 	},
-	["Vapid"] = { -- FIXED: Name matches your Folder (was Vapid-Sadler)
+	["Vapid"] = { 
 		Name = "Vapid Sadler", 
 		CPS = 120,
 		Rarity = "Uncommon",
-		Price = 55000 -- $55k
+		Price = 55000,
+		Image = "rbxassetid://0"
 	},
 	["Galadriel"] = {
 		Name = "Ford Everest Titanium",
 		CPS = 145,
 		Rarity = "Uncommon",
-		Price = 70000 -- $70k
+		Price = 70000,
+		Image = "rbxassetid://0"
 	},
 	["Kingston"] = {
 		Name = "Ford Expedition Platinum",
 		CPS = 165,
 		Rarity = "Uncommon",
-		Price = 85000 -- $85k
+		Price = 85000,
+		Image = "rbxassetid://0"
 	},
 
-	-- 🟦 RARE TIERS (The Mid-Game)
-	-- Goal: Enthusiast cars.
-	-- Players start feeling "Rich". [FIXED]
+	-- 🟦 RARE TIERS
 	-- ====================================================================
 	["Javelin"] = {
-		Name = "Honda Civic Type R (FK8)",
+		Name = "Honda Civic Type R (FK8)",-- 
 		CPS = 260,
 		Rarity = "Rare",
-		Price = 150000 -- $150k
+		Price = 150000,
+		Image = "rbxassetid://0"
 	},
 	["Stuttgart"] = {
 		Name = "Mercedes-Benz A-Class",
 		CPS = 310,
 		Rarity = "Rare",
-		Price = 210000 -- $190k
+		Price = 210000,
+		Image = "rbxassetid://0"
 	},
 	["Maverick"] = {
-		Name = "Corvette C8 Stingray",
-		CPS = 220, -- Lower CPS than Stuttgart, kept as you requested
+		Name = "Chevrolet Tahoe",--
+		CPS = 220, 
 		Rarity = "Rare",
-		Price = 210000 -- ✅ FIXED: Corrected to $210k to fit Rare tier
+		Price = 210000,
+		Image = "rbxassetid://0"
 	},
 	["Velocity"] = {
 		Name = "Toyota Supra Mk4 (A80)",
 		CPS = 360,
 		Rarity = "Rare",
-		Price = 280000 -- $280k
+		Price = 280000,
+		Image = "rbxassetid://0"
 	},
 
-	-- 🟪 EPIC TIERS (High Performance)
-	-- Goal: The first major grind.
-	-- Robux spending becomes tempting. [FIXED]
+	-- 🟪 EPIC TIERS
 	-- ====================================================================
 	["Sadie"] = {
 		Name = "Nissan GT-R (R35)",
 		CPS = 520,
 		Rarity = "Epic",
-		Price = 500000 -- $500k
+		Price = 500000,
+		Image = "rbxassetid://80923100710731"
 	},
 	["Sirene"] = {
 		Name = "Porsche 911 Turbo S",
 		CPS = 680,
 		Rarity = "Epic",
-		Price = 750000 -- $750k
+		Price = 750000,
+		Image = "rbxassetid://110972581903095"
 	},
 	["Vortex"] = {
 		Name = "BMW i8 Roadster",
 		CPS = 850,
 		Rarity = "Epic",
-		Price = 1200000 -- $1.2 Million (Price increased to match high CPS)
+		Price = 1200000,
+		Image = "rbxassetid://105167548877091"
 	},
 
-	-- 🟧 LEGENDARY TIERS (The Dream Cars)
-	-- Goal: Massive status symbols.
+	-- 🟧 LEGENDARY TIERS
 	-- ====================================================================
 	["Yamura"] = {
 		Name = "McLaren Senna",
 		CPS = 1600,
 		Rarity = "Legendary",
-		Price = 15000000 -- $15 Million (Increased for stability)
+		Price = 15000000,
+		Image = "rbxassetid://77553801737410"
 	},
 	["La Rossa"] = {
 		Name = "Ferrari Daytona SP3",
 		CPS = 2400,
 		Rarity = "Legendary",
-		Price = 35000000 -- $35 Million (Increased for stability)
+		Price = 35000000,
+		Image = "rbxassetid://131128028318430"
 	},
 
-	-- 🟥 MYTHIC TIERS (The Endgame)
-	-- Goal: The "Chase Item."
-	-- Keeps players grinding for days/weeks. [FIXED]
+	-- 🟥 MYTHIC TIERS
 	-- ====================================================================
 	["Centurion"] = {
 		Name = "Bugatti Chiron",
 		CPS = 5500, 
 		Rarity = "Mythic",
-		Price = 150000000 -- $150 MILLION
-		-- Note: At 2400 CPS (previous car), this takes ~17 HOURS of gameplay.
+		Price = 150000000,
+		Image = "rbxassetid://119034017910791"
 	}
 }
 
