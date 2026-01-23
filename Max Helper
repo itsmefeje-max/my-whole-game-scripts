@@ -1,62 +1,50 @@
--- [[ LOCAL SCRIPT: WithdrawMax (DEBUG EDITION) ]]
--- -- Indicating what the script is for: Instantly withdraws ALL available funds with Debugging.
+-- [[ LOCAL SCRIPT: WithdrawMax (UPDATED - INPUT ONLY) ]]
+-- Indicating what the script is for: Updates the AmountInput with the maximum available balance.
+-- NOTE: This button now strictly performs UI updates and DOES NOT trigger a withdrawal.
 
-print("✅ Max Withdraw Script Loaded")
+print("✅ Max Button Script Loaded (Input Only)")
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-local SoundService = game:GetService("SoundService")
 local Players = game:GetService("Players")
+local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
 local button = script.Parent
-local mainWindow = button.Parent 
+local mainWindow = button.Parent -- Assuming the button is inside the main frame
 
-local withdrawEvent = ReplicatedStorage:WaitForChild("WithdrawEvent", 5)
-if not withdrawEvent then warn("❌ CRITICAL: WithdrawEvent not found in ReplicatedStorage!") end
+-- 📂 UI REFERENCES
+-- We look for the sibling input box named "AmountInput"
+local AmountInput = mainWindow:WaitForChild("AmountInput", 5)
 
-local SuccessLabel = mainWindow:WaitForChild("SuccessLabel", 5)
-local ErrorLabel = mainWindow:WaitForChild("ErrorLabel", 5)
-
-local isCoolingDown = false
-
-local function showFeedback(label)
-	if not label then return end
-	label.Visible = true; label.TextTransparency = 0
-	task.wait(2)
-	local tween = TweenService:Create(label, TweenInfo.new(0.5), {TextTransparency = 1})
-	tween:Play()
-	tween.Completed:Wait()
-	label.Visible = false
-end
+-- 🔊 SOUND CONFIG
+local CLICK_SOUND_ID = "rbxassetid://9083627113" 
 
 button.MouseButton1Click:Connect(function()
-	print("🖱️ MAX Withdraw Clicked")
-	if isCoolingDown then return end
-	isCoolingDown = true 
+	print("🖱️ MAX Button Clicked")
 
+	-- 1. Get Current Balance
 	local currentBank = 0
-	if player.leaderstats and player.leaderstats:FindFirstChild("Cash") then
+	if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash") then
 		currentBank = player.leaderstats.Cash.Value
-		print("💰 Found Balance: " .. currentBank)
-	else
-		warn("⚠️ Could not find Cash leaderstat!")
 	end
 
-	if currentBank <= 0 then
-		-- 🔴 NOTHING TO WITHDRAW
-		print("❌ Transaction Cancelled: Balance is 0")
-		local s = Instance.new("Sound", SoundService); s.SoundId = "rbxassetid://3779045779"; s:Play(); game.Debris:AddItem(s,2)
-		task.spawn(function() showFeedback(ErrorLabel) end)
+	-- 2. Play Click Sound (Aesthetic)
+	local s = Instance.new("Sound")
+	s.SoundId = CLICK_SOUND_ID
+	s.Volume = 0.5
+	s.Parent = SoundService
+	s:Play()
+	game.Debris:AddItem(s, 2)
+
+	-- 3. Update Input Field ONLY
+	if AmountInput then
+		if currentBank > 0 then
+			-- Use math.floor to ensure clean integer values
+			AmountInput.Text = tostring(math.floor(currentBank))
+			print("✅ Input auto-filled with: " .. AmountInput.Text)
+		else
+			AmountInput.Text = "0"
+		end
 	else
-		-- 🟢 SUCCESS (ALL)
-		print("📤 Firing Withdraw Event for ALL: " .. currentBank)
-		if withdrawEvent then withdrawEvent:FireServer(currentBank) end
-
-		local s = Instance.new("Sound", SoundService); s.SoundId = "rbxassetid://140072726814802"; s:Play(); game.Debris:AddItem(s,2)
-		task.spawn(function() showFeedback(SuccessLabel) end)
+		warn("⚠️ AmountInput not found in parent frame! Cannot auto-fill.")
 	end
-
-	task.wait(1)
-	isCoolingDown = false
 end)
