@@ -1,13 +1,13 @@
--- [[ SERVER SCRIPT: PadController (Refactored & Secure) ]]
--- [[ FIXES: Transaction Order (Anti-Dupe), Ghost-Lock Auto-Correction, Modular Logic, 1.5s Hold ]]
+-- [[ SERVER SCRIPT: PadController (Refactored & Secure - Audit Fixed) ]]
+-- [[ FIXES: Mismatched Model Names, Tool Lookup, Ghost Locks ]]
 
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 local StarterPack = game:GetService("StarterPack")
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
--- Added to support secure tagging of tools when refunding/giving items
 local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- ⚙️ CONFIGURATION
 local CONSTANTS = {
@@ -17,7 +17,7 @@ local CONSTANTS = {
 	EJECT_HEIGHT = 5,
 	EJECT_DISTANCE = 4,
 	RETRY_DELAY = 0.2,
-	HOLD_DURATION = 1.5 -- ⏳ UPDATED: Interaction takes 1.5 seconds
+	HOLD_DURATION = 1.5 
 }
 
 -- 📂 ASSETS
@@ -25,12 +25,50 @@ local CarModels = ServerStorage:WaitForChild("CarModels")
 local CarTools = ServerStorage:WaitForChild("CarTools")
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
+-- 📚 MODULES
+local CarStats
+pcall(function() CarStats = require(ReplicatedStorage:WaitForChild("CarStats", 5)) end)
+
 -- 🛡️ STATE MANAGEMENT
-local processingTracks = {} -- [PlayerUserId] = true (Prevents spamming multiple pads)
+local processingTracks = {} 
 
 -- ============================================================================
--- 🛠️ HELPER FUNCTIONS
+-- 🛠️ HELPER FUNCTIONS (Audit Fix)
 -- ============================================================================
+
+-- ✅ AUDIT FIX: Reverse lookup to handle "Vapid" (Key) vs "Vapid Sadler" (Display Name)
+local function FindModelNameFromTool(toolName)
+	local clean = toolName:gsub(" Item", ""):gsub("Item", "")
+
+	-- 1. Direct Match
+	if CarModels:FindFirstChild(clean) then return clean end
+
+	-- 2. Stats Lookup (Key -> Display Name)
+	if CarStats and CarStats.Cars and CarStats.Cars[clean] then
+		local stats = CarStats.Cars[clean]
+		if CarModels:FindFirstChild(stats.Name) then return stats.Name end
+	end
+
+	return nil
+end
+
+local function FindToolFromModelName(modelName)
+	-- 1. Direct Match
+	if CarTools:FindFirstChild(modelName) then return CarTools[modelName] end
+	if CarTools:FindFirstChild(modelName.." Item") then return CarTools[modelName.." Item"] end
+
+	-- 2. Reverse Stats Lookup (Display Name -> Key)
+	if CarStats and CarStats.Cars then
+		for key, stats in pairs(CarStats.Cars) do
+			if stats.Name == modelName then
+				-- Check for key-based tool name
+				if CarTools:FindFirstChild(key) then return CarTools[key] end
+				if CarTools:FindFirstChild(key.." Item") then return CarTools[key.." Item"] end
+			end
+		end
+	end
+	return nil
+end
 
 local function getMainPart(obj)
 	if obj:IsA("BasePart") then return obj end
@@ -55,19 +93,14 @@ local function isCloseEnough(player, padPart)
 	return dist <= CONSTANTS.MAX_CHECK_DIST
 end
 
--- 🧹 GHOST LOCK FIX: Resets pad if data is desynced
 local function validatePadState(occupiedVal, linkedCarVal, placePrompt, pickupPrompt)
 	local car = linkedCarVal.Value
-
-	-- Case 1: Pad says occupied, but car is missing/destroyed
 	if occupiedVal.Value == true and (not car or not car.Parent) then
 		warn("👻 Ghost Lock Detected on Pad! Auto-Resetting...")
 		occupiedVal.Value = false
 		linkedCarVal.Value = nil
 		placePrompt.Enabled = true
 		pickupPrompt.Enabled = false
-
-		-- Case 2: Pad says empty, but prompts are wrong
 	elseif occupiedVal.Value == false then
 		if not placePrompt.Enabled or pickupPrompt.Enabled then
 			placePrompt.Enabled = true
@@ -79,37 +112,24 @@ end
 -- ============================================================================
 -- 📦 TRANSACTION FUNCTIONS
 -- ============================================================================
-
--- 🗑️ REMOVE TOOL (Transaction Step 1)
--- Removes a single copy of the specified tool from the player's character or backpack and
--- also removes a matching copy from StarterGear. Returns true if any copy was removed.
 local function removeToolFromPlayer(player, toolName)
 	local found = false
-
-	-- Prefer removing the equipped tool (in character) first
 	local charTool = player.Character and player.Character:FindFirstChild(toolName)
 	if charTool then
 		charTool:Destroy()
 		found = true
 	else
-		-- Otherwise remove a single tool from backpack
 		local backpackTool = player.Backpack:FindFirstChild(toolName)
 		if backpackTool then
 			backpackTool:Destroy()
 			found = true
 		end
 	end
-
-	-- Always remove one copy from StarterGear so it doesn't respawn automatically.
 	local gearTool = player.StarterGear:FindFirstChild(toolName)
-	if gearTool then
-		gearTool:Destroy()
-	end
-
+	if gearTool then gearTool:Destroy() end
 	return found
 end
 
--- 🚗 SPAWN CAR (Transaction Step 2)
 local function spawnCarOnPad(padPart, carModel, plot)
 	local placedCar = carModel:Clone()
 	local padTop = padPart.CFrame * CFrame.new(0, (padPart.Size.Y / 2) + CONSTANTS.VERTICAL_OFFSET + 1, 0)
@@ -122,18 +142,15 @@ local function spawnCarOnPad(padPart, carModel, plot)
 	end
 	placedCar.Parent = carFolder
 
-	-- Physics Lock
 	for _, part in pairs(placedCar:GetDescendants()) do
 		if part:IsA("BasePart") then 
 			part.Anchored = true
 			part.CanCollide = true 
 		end
 	end
-
 	return placedCar
 end
 
--- 🔊 SOUND FX
 local function playSound(name, parent)
 	local sFolder = game.ReplicatedStorage:FindFirstChild("GameSounds")
 	if sFolder and sFolder:FindFirstChild(name) then
@@ -149,65 +166,49 @@ end
 -- ============================================================================
 
 local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVal, placePrompt, pickupPrompt)
-	-- 1. CHECKS
 	if occupiedVal.Value then return end
 	local thisPlot = getPlotFolder(padObject)
 	if not thisPlot or player:GetAttribute("OccupiedPlot") ~= thisPlot.Name then return end
 	if not isCloseEnough(player, padPart) then return end
 
-	-- 2. GET TOOL
 	local tool = player.Character:FindFirstChildWhichIsA("Tool")
 	if not tool then return end
 
-	local cleanName = tool.Name:gsub(" Item", ""):gsub("Item", "")
-	local realCar = CarModels:FindFirstChild(cleanName)
+	-- ✅ AUDIT FIX: Use Robust Lookup
+	local realModelName = FindModelNameFromTool(tool.Name)
+	local realCar = realModelName and CarModels:FindFirstChild(realModelName)
 
 	if realCar then
 		local toolName = tool.Name
-
-		-- 🛑 TRANSACTION START: Remove Item FIRST (Prevents Duplication)
 		local removed = removeToolFromPlayer(player, toolName)
 
 		if removed then
-			-- 3. SPAWN CAR
 			local success, result = pcall(function()
 				return spawnCarOnPad(padPart, realCar, thisPlot)
 			end)
 
 			if success and result then
-				-- ✅ SUCCESS
 				occupiedVal.Value = true
 				linkedCarVal.Value = result
-
-				-- Set ownership metadata so TycoonDataHandler can restore this car later
 				result:SetAttribute("OwnerUserId", player.UserId)
-				-- Generate a unique CarGUID similar to TycoonDataHandler.generateCarGUID
-				result:SetAttribute(
-					"CarGUID",
-					tostring(player.UserId) .. "_" .. tostring(os.time()) .. "_" .. tostring(math.random(1000,9999))
-				)
+				result:SetAttribute("CarGUID", tostring(player.UserId) .. "_" .. tostring(os.time()) .. "_" .. tostring(math.random(1000,9999)))
 
 				placePrompt.Enabled = false
 				pickupPrompt.Enabled = true
 
-				-- Eject Player
 				if player.Character then
 					local edgeOffset = (padPart.Size.Z / 2) + CONSTANTS.EJECT_DISTANCE
 					local safeSpot = padPart.CFrame * CFrame.new(0, CONSTANTS.EJECT_HEIGHT, edgeOffset)
 					local lookAtCar = CFrame.lookAt(safeSpot.Position, padPart.Position)
 					player.Character:PivotTo(lookAtCar)
 				end
-
 				playSound("PlaceSound", padPart)
 			else
-				-- ⚠️ CRITICAL FAILURE (Spawn failed) -> REFUND ITEM
 				warn("⚠️ Spawn Failed! Refunding item to " .. player.Name)
 				local originalTool = CarTools:FindFirstChild(toolName) or StarterPack:FindFirstChild(toolName)
 				if originalTool then
-					-- Clone two copies: one for Backpack and one for StarterGear
 					local backpackClone = originalTool:Clone()
 					local gearClone = originalTool:Clone()
-					-- Tag clones with immutable identity attributes
 					for _, clone in ipairs({backpackClone, gearClone}) do
 						clone:SetAttribute("IssuedByServer", true)
 						clone:SetAttribute("IssuedAt", os.time())
@@ -221,40 +222,29 @@ local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVa
 			end
 		end
 	else
-		warn("⚠️ Invalid Car Tool: " .. tool.Name)
+		warn("⚠️ Invalid Car Tool: " .. tool.Name .. " (No matching model found)")
 	end
 end
 
 local function AttemptPickup(player, padObject, padPart, occupiedVal, linkedCarVal, placePrompt, pickupPrompt)
-	-- 1. CHECKS
 	local thisPlot = getPlotFolder(padObject)
 	if not thisPlot or player:GetAttribute("OccupiedPlot") ~= thisPlot.Name then return end
 	if not isCloseEnough(player, padPart) then return end
 
-	-- 2. IDENTIFY CAR
 	local carToRemove = linkedCarVal.Value
 	if not carToRemove then 
-		-- Ghost lock detected during interaction
 		validatePadState(occupiedVal, linkedCarVal, placePrompt, pickupPrompt) 
 		return 
 	end
 
 	local carName = carToRemove.Name
-	local foundTool = nil
 
-	-- Search for Tool
-	local possibleNames = {carName, carName .. " Item", carName .. "Item"}
-	for _, name in ipairs(possibleNames) do
-		foundTool = CarTools:FindFirstChild(name) or StarterPack:FindFirstChild(name)
-		if foundTool then break end
-	end
+	-- ✅ AUDIT FIX: Robust Lookup (Display Name -> Tool)
+	local foundTool = FindToolFromModelName(carName)
 
 	if foundTool then
-		-- 3. GIVE ITEM
-		-- Clone two copies: one for Backpack and one for StarterGear
 		local backpackClone = foundTool:Clone()
 		local gearClone = foundTool:Clone()
-		-- Tag clones with immutable identity attributes to satisfy TycoonDataHandler.validateTool
 		for _, clone in ipairs({backpackClone, gearClone}) do
 			clone:SetAttribute("IssuedByServer", true)
 			clone:SetAttribute("IssuedAt", os.time())
@@ -263,12 +253,10 @@ local function AttemptPickup(player, padObject, padPart, occupiedVal, linkedCarV
 			clone.CanBeDropped = false
 		end
 		backpackClone.Parent = player.Backpack
-		gearClone.Parent = player.StarterGear -- Persist on death
+		gearClone.Parent = player.StarterGear 
 
-		-- 4. DESTROY CAR
 		carToRemove:Destroy()
 
-		-- 5. RESET PAD
 		occupiedVal.Value = false
 		linkedCarVal.Value = nil
 		placePrompt.Enabled = true
@@ -276,68 +264,55 @@ local function AttemptPickup(player, padObject, padPart, occupiedVal, linkedCarV
 
 		playSound("EquipSound", padPart)
 	else
-		warn("❌ CRITICAL: Tool not found for " .. carName .. ". Pickup aborted to prevent loss.")
+		warn("❌ CRITICAL: Tool not found for " .. carName .. ". Pickup aborted.")
 	end
 end
 
 -- ============================================================================
 -- 🚀 SETUP
 -- ============================================================================
-
 local function setupPad(padObject)
 	local padPart = getMainPart(padObject)
 	if not padPart then return end
 
-	-- Cleanup
 	for _, child in pairs(padPart:GetChildren()) do
 		if child:IsA("ProximityPrompt") then child:Destroy() end
 	end
 
-	-- Objects
 	local occupiedVal = padPart:FindFirstChild("IsOccupied") or Instance.new("BoolValue", padPart)
 	occupiedVal.Name = "IsOccupied"
 	local linkedCarVal = padPart:FindFirstChild("LinkedCar") or Instance.new("ObjectValue", padPart)
 	linkedCarVal.Name = "LinkedCar"
 
-	-- Prompts
 	local placePrompt = Instance.new("ProximityPrompt", padPart)
 	placePrompt.Name = "PlacePrompt"; placePrompt.ActionText = "Place Car"; placePrompt.ObjectText = "Car Pad"
 	placePrompt.MaxActivationDistance = CONSTANTS.PROMPT_RANGE; placePrompt.RequiresLineOfSight = false
-	placePrompt.HoldDuration = CONSTANTS.HOLD_DURATION -- ⏳ 1.5 Seconds
+	placePrompt.HoldDuration = CONSTANTS.HOLD_DURATION
 
 	local pickupPrompt = Instance.new("ProximityPrompt", padPart)
 	pickupPrompt.Name = "PickupPrompt"; pickupPrompt.ActionText = "Pick Up"; pickupPrompt.ObjectText = "Occupied Pad"
 	pickupPrompt.MaxActivationDistance = CONSTANTS.PROMPT_RANGE; pickupPrompt.RequiresLineOfSight = false
-	pickupPrompt.HoldDuration = CONSTANTS.HOLD_DURATION -- ⏳ 1.5 Seconds
-	pickupPrompt.Enabled = false
+	pickupPrompt.HoldDuration = CONSTANTS.HOLD_DURATION; pickupPrompt.Enabled = false
 
-	-- Initial Validate
 	validatePadState(occupiedVal, linkedCarVal, placePrompt, pickupPrompt)
 
-	-- ⚡ CONNECT PLACE
 	placePrompt.Triggered:Connect(function(player)
 		if processingTracks[player.UserId] then return end
 		processingTracks[player.UserId] = true
-
 		AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVal, placePrompt, pickupPrompt)
-
 		task.wait(CONSTANTS.RETRY_DELAY)
 		processingTracks[player.UserId] = nil
 	end)
 
-	-- ⚡ CONNECT PICKUP
 	pickupPrompt.Triggered:Connect(function(player)
 		if processingTracks[player.UserId] then return end
 		processingTracks[player.UserId] = true
-
 		AttemptPickup(player, padObject, padPart, occupiedVal, linkedCarVal, placePrompt, pickupPrompt)
-
 		task.wait(CONSTANTS.RETRY_DELAY)
 		processingTracks[player.UserId] = nil
 	end)
 end
 
--- MAIN LOOP
 for _, plot in pairs(TycoonFolder:GetChildren()) do
 	local padsFolder = plot:FindFirstChild("Pads")
 	if padsFolder then
@@ -345,10 +320,9 @@ for _, plot in pairs(TycoonFolder:GetChildren()) do
 	end
 end
 
--- Auto-fix any pads that glitch out while the server is running
 task.spawn(function()
 	while true do
-		task.wait(10) -- Check every 10 seconds
+		task.wait(10) 
 		for _, plot in pairs(TycoonFolder:GetChildren()) do
 			local padsFolder = plot:FindFirstChild("Pads")
 			if padsFolder then
