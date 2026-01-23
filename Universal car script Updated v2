@@ -1,94 +1,79 @@
--- [[ LOCAL SCRIPT: UniversalNPCGaze (Super Slow Motion) ]]
--- -- Indicating what the script is for: Handles cinematic, heavy-weight head tracking.
--- TUNED FOR: Extremely slow, realistic head turns.
+-- [[ SERVER SCRIPT: Universal Car Tool ]]
+-- Fix: Prevents "Infinite Weld" stacking lag.
 
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
+local Tool = script.Parent
+local Handle = Tool:WaitForChild("Handle")
 
-local player = Players.LocalPlayer
-local npcFolder = Workspace:WaitForChild("NPCS") -- 📁 Ensure your NPCs are in this folder
+-- === SETTINGS ===
+local HEIGHT_OFFSET = 2
+-- =================
 
--- ⚙️ SUPER SLOW TUNING
-local MAX_DISTANCE = 35        -- Studs: Range to start looking
-local RETURN_SPEED = 0.005     -- (Was 0.02) Extremely slow drift back (Heavy feel)
-local TRACK_SPEED = 0.02       -- (Was 0.05) Gentle turn when looking at you
-local SHOULDER_LIMIT = 85      -- Degrees: Angle where they stop looking
-local VERTICAL_LIMIT = 40      -- Degrees: Max Up/Down angle
+local isSetup = false -- 🛑 DEBOUNCE: Ensures we only weld once
 
--- 🛠️ MATH HELPER: Normalize angles
-local function getGoalCFrame(rootPart, lookAtPos)
-	-- Convert global position to local space relative to the NPC
-	local relativePos = rootPart.CFrame:PointToObjectSpace(lookAtPos)
-
-	-- 1. BEHIND CHECK: If Z is positive, the player is behind.
-	if relativePos.Z > 0.5 then
-		return CFrame.new() -- Return straight
-	end
-
-	-- 2. CALCULATE ANGLES
-	local xAngle = math.atan2(relativePos.Y, -relativePos.Z)
-	local yAngle = math.atan2(-relativePos.X, -relativePos.Z)
-
-	-- 3. SHOULDER CHECK: Stop if turning head too far
-	if math.abs(math.deg(yAngle)) > SHOULDER_LIMIT then
-		return CFrame.new() -- Return straight
-	end
-
-	-- 4. CLAMP VERTICAL
-	xAngle = math.clamp(xAngle, math.rad(-VERTICAL_LIMIT), math.rad(VERTICAL_LIMIT))
-
-	-- 5. RETURN GOAL (Dampen X slightly for realism)
-	return CFrame.Angles(xAngle / 1.5, yAngle, 0)
-end
-
--- 🔄 MAIN RENDER LOOP
-RunService.RenderStepped:Connect(function()
-	local myCharacter = player.Character
-	if not myCharacter then return end
-	local myHead = myCharacter:FindFirstChild("Head")
-	if not myHead then return end
-
-	for _, npc in pairs(npcFolder:GetChildren()) do
-		if npc:IsA("Model") and npc:FindFirstChild("Head") and npc:FindFirstChild("UpperTorso") then
-			local head = npc.Head
-			local neck = head:FindFirstChild("Neck")
-			local torso = npc.UpperTorso
-
-			if neck then
-				-- Setup Original Position (Once)
-				if not neck:GetAttribute("OriginalC0") then
-					neck:SetAttribute("OriginalC0", neck.C0)
-				end
-				local originalC0 = neck:GetAttribute("OriginalC0")
-
-				-- Calculate Logic
-				local dist = (head.Position - myHead.Position).Magnitude
-				local targetCFrame = CFrame.new()
-				local currentAlpha = RETURN_SPEED 
-
-				-- Active Tracking
-				if dist < MAX_DISTANCE then
-					local potentialGoal = getGoalCFrame(torso, myHead.Position)
-
-					if potentialGoal == CFrame.new() then
-						-- Player is in range but behind/out of angle -> Slow Return
-						targetCFrame = CFrame.new()
-						currentAlpha = RETURN_SPEED 
-					else
-						-- Player is in valid view -> Smooth Track
-						targetCFrame = potentialGoal
-						currentAlpha = TRACK_SPEED
-					end
-				else
-					-- Player is far away -> Slow Return
-					targetCFrame = CFrame.new()
-					currentAlpha = RETURN_SPEED
-				end
-
-				-- ANIMATE: Soft Lerp
-				neck.C0 = neck.C0:Lerp(originalC0 * targetCFrame, currentAlpha)
+local function weldModel(model, primaryPart)
+	for _, part in pairs(model:GetDescendants()) do
+		if part:IsA("BasePart") and part ~= primaryPart then
+			if not part:FindFirstChildWhichIsA("WeldConstraint") then
+				local weld = Instance.new("WeldConstraint")
+				weld.Part0 = primaryPart
+				weld.Part1 = part
+				weld.Parent = primaryPart
 			end
 		end
 	end
+end
+
+local function makeGhost(model)
+	for _, part in pairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Massless = true
+			part.CanCollide = false
+			part.CanTouch = false
+			part.Anchored = false
+			part.CanQuery = false 
+		end
+	end
+end
+
+Tool.Equipped:Connect(function()
+	-- 🛑 STOP IF ALREADY DONE (The Fix)
+	if isSetup then return end 
+
+	if Handle then
+		Handle.CanCollide = false
+		Handle.CanTouch = false
+		Handle.CanQuery = false 
+		Handle.Transparency = 1 
+	end
+
+	local CarModel = Tool:FindFirstChildWhichIsA("Model")
+
+	if CarModel then
+		if CarModel.PrimaryPart then
+			isSetup = true -- ✅ Mark as done immediately
+
+			-- A. GLUE
+			weldModel(CarModel, CarModel.PrimaryPart)
+
+			-- B. GHOST
+			makeGhost(CarModel)
+
+			-- C. MOVE
+			local targetCFrame = Handle.CFrame * CFrame.new(0, HEIGHT_OFFSET, 0)
+			CarModel:PivotTo(targetCFrame)
+
+			-- D. LOCK
+			local Weld = Instance.new("WeldConstraint")
+			Weld.Part0 = Handle
+			Weld.Part1 = CarModel.PrimaryPart
+			Weld.Parent = Handle
+		else
+			warn("⚠️ Model '" .. CarModel.Name .. "' has no PrimaryPart!")
+		end
+	end
+end)
+
+-- Reset setup if tool is dropped/respawned (Optional but safe)
+Tool.Unequipped:Connect(function()
+	-- We keep isSetup = true because the welds persist in the tool until destroyed.
 end)
