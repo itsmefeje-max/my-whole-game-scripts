@@ -1,6 +1,6 @@
--- [[ LOCAL SCRIPT: FlyClient (Fixed & Clean) ]]
--- FEATURES: Auto-Cleanup, Smooth Banking, Robust No-Clip
--- FIX: Deleting this script now correctly removes flight physics.
+-- [[ LOCAL SCRIPT: FlyClient (Final Polish) ]]
+-- FEATURES: Smart Collision Restore, Modern Physics, Auto-Cleanup
+-- STATUS: Production Ready
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -13,6 +13,10 @@ local character = player.Character or player.CharacterAdded:Wait()
 local rootPart = character:WaitForChild("HumanoidRootPart")
 local humanoid = character:WaitForChild("Humanoid")
 
+-- ✅ PERFORMANCE: Cache Controls ONCE
+local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule"))
+local Controls = PlayerModule:GetControls()
+
 -- ⚙️ SETTINGS
 local SPEED_NORMAL = 100
 local SPEED_BOOST = 150
@@ -23,25 +27,32 @@ local BANK_ANGLE = 15
 local isFlying = true
 local currentSpeed = SPEED_NORMAL
 local noclipConnection = nil 
-local runtimeFolder = nil -- Holds our physics objects
+local affectedParts = {} -- Tracks parts we turned non-collidable
 
--- 🔗 PHYSICS SETUP
--- We create a folder so we can destroy EVERYTHING in one go
+-- 📦 PHYSICS CONTAINERS
+local runtimeFolder = nil 
+local flightAttachment = nil 
+
+-- 1. SETUP FOLDER (For Constraints Only)
 runtimeFolder = Instance.new("Folder")
 runtimeFolder.Name = "FlyRuntime"
-runtimeFolder.Parent = rootPart
+runtimeFolder.Parent = rootPart 
 
-local attachment = Instance.new("Attachment", runtimeFolder)
+-- 2. SETUP ATTACHMENT (Must be in RootPart)
+flightAttachment = Instance.new("Attachment")
+flightAttachment.Name = "FlyAttachment"
+flightAttachment.Parent = rootPart 
 
+-- 3. SETUP CONSTRAINTS
 local alignPos = Instance.new("LinearVelocity")
-alignPos.Attachment0 = attachment
+alignPos.Attachment0 = flightAttachment
 alignPos.MaxForce = math.huge
 alignPos.VectorVelocity = Vector3.zero
 alignPos.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
 alignPos.Parent = runtimeFolder
 
 local alignRot = Instance.new("AlignOrientation")
-alignRot.Attachment0 = attachment
+alignRot.Attachment0 = flightAttachment
 alignRot.Mode = Enum.OrientationAlignmentMode.OneAttachment
 alignRot.RigidityEnabled = false 
 alignRot.Responsiveness = 20
@@ -52,45 +63,54 @@ humanoid.PlatformStand = true
 
 noclipConnection = RunService.Stepped:Connect(function()
 	if not character then return end
+	
+	-- Strict Noclip: Disable collision on all parts
 	for _, part in pairs(character:GetDescendants()) do
 		if part:IsA("BasePart") and part.CanCollide == true then
 			part.CanCollide = false
+			affectedParts[part] = true -- Remember this part so we can restore it later
 		end
 	end
 end)
 
--- 🛑 STOP FUNCTION (The Fix)
+-- 🛑 STOP FUNCTION
 function stopFlying()
 	if not isFlying then return end
 	isFlying = false
 
-	-- 1. Disconnect Loop immediately
+	-- 1. Disconnect Loop
 	if noclipConnection then 
 		noclipConnection:Disconnect() 
 		noclipConnection = nil
 	end
 
-	-- 2. Destroy Physics Folder (Cleans Attachment, Velocity, Orientation at once)
-	if runtimeFolder then 
-		runtimeFolder:Destroy() 
-		runtimeFolder = nil
-	end
+	-- 2. Clean Physics Objects
+	if runtimeFolder then runtimeFolder:Destroy() end
+	if flightAttachment then flightAttachment:Destroy() end
 
-	-- 3. Restore Character
+	-- 3. Restore Humanoid
 	if humanoid and humanoid.Parent then
 		humanoid.PlatformStand = false
 	end
 	
-	-- 4. Restore Collision Safety
-	if character then
-		for _, part in pairs(character:GetDescendants()) do
-			if part:IsA("BasePart") then
-				part.CanCollide = true
-			end
+	-- 4. Restore Collisions (The Fix)
+	-- Only restore parts we actually touched, plus the RootPart for safety
+	if rootPart then rootPart.CanCollide = true end
+	
+	for part, _ in pairs(affectedParts) do
+		if part and part.Parent then -- Check if part still exists
+			part.CanCollide = true
 		end
 	end
+	table.clear(affectedParts)
 
-	-- 5. Self-Destruct if not already destroyed
+	-- 5. Stop Momentum (Modern Physics Fix)
+	if rootPart then
+		rootPart.AssemblyLinearVelocity = Vector3.zero
+		rootPart.AssemblyAngularVelocity = Vector3.zero
+	end
+
+	-- 6. Self-Destruct
 	if script and script.Parent then
 		script:Destroy()
 	end
@@ -100,8 +120,7 @@ end
 local function update(dt)
 	if not isFlying or not rootPart.Parent then return end
 
-	local controlModule = require(player.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
-	local inputMove = controlModule:GetMoveVector()
+	local inputMove = Controls:GetMoveVector()
 
 	local yAxis = 0
 	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then yAxis = 1 end
@@ -124,18 +143,15 @@ local function update(dt)
 	end
 end
 
--- 👂 LISTENERS FOR CLEANUP
--- Case A: Server deletes script
+-- 👂 LISTENERS
 script.AncestryChanged:Connect(function()
 	if not script.Parent then stopFlying() end
 end)
 
--- Case B: Server sets attribute
 character:GetAttributeChangedSignal("ForceStopFly"):Connect(function()
 	if character:GetAttribute("ForceStopFly") then stopFlying() end
 end)
 
--- Case C: User presses X
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
 	if input.KeyCode == Enum.KeyCode.X then stopFlying() end
