@@ -1,6 +1,5 @@
 -- [[ LOCAL SCRIPT: LocalShopController ]]
--- Connects your MANUAL StarterGui UI to the backend shop system.
--- UPDATED: Logic only. You create the "StatusLabel" in Studio, this script updates it.
+-- UPDATED: Fixes double sounds and removes success message.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,20 +8,16 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
+local Kit = require(ReplicatedStorage:WaitForChild("ShopFrontendKit"))
 
 -- ⚙️ CONFIGURATION
-local REROLL_PRODUCT_ID = 3520990584 -- ⚠️ REPLACE with real Reroll DevProduct ID
+local REROLL_PRODUCT_ID = 3520990584 
 local SHOP_CARS = {"Delta", "Iva", "Atom", "Windsor", "Senator", "Riva"}
 local DEFAULT_LIMIT = 2
 
--- ⚠️ REPLACE with real DevProduct IDs
 local ROBUX_PRODUCTS = {
-	Delta = 0000001,
-	Iva = 0000002,
-	Atom = 0000003,
-	Windsor = 0000004,
-	Senator = 0000005,
-	Riva = 0000006
+	Delta = 0000001, Iva = 0000002, Atom = 0000003, 
+	Windsor = 0000004, Senator = 0000005, Riva = 0000006
 }
 
 -- 📡 REMOTES
@@ -32,201 +27,183 @@ local RemoteUpdate = Remotes:WaitForChild("ShopUpdate")
 local FuncGetState = Remotes:WaitForChild("GetShopState")
 local FuncBuyCar = Remotes:WaitForChild("BuyLocalCar")
 
+-- 🛡️ STATE
+local currentState = nil
+local purchaseDebounce = {} 
+
 -- 🛑 UI REFERENCES
 local function getUI()
 	local gui = PlayerGui:WaitForChild("LocalShopUI")
 	local mainFrame = gui:WaitForChild("MainFrame")
-
-	local scrollFrame = mainFrame:WaitForChild("ScrollingFrame")
-	local timerLabel = mainFrame:WaitForChild("TimerLabel")
-	local rerollBtn = mainFrame:WaitForChild("RerollButton")
-	local closeBtn = mainFrame:WaitForChild("CloseButton")
-
-	return gui, mainFrame, scrollFrame, timerLabel, rerollBtn, closeBtn
+	return gui, mainFrame, mainFrame:WaitForChild("ScrollingFrame"), mainFrame:WaitForChild("TimerLabel"), mainFrame:WaitForChild("RerollButton"), mainFrame:WaitForChild("CloseButton")
 end
 
--- 🛠️ HELPERS
-local function getLocalCount(carName)
-	local count = 0
-	local function scan(loc) 
-		if not loc then return end
-		if loc:FindFirstChild(carName) then count += 1 end
-		if loc:FindFirstChild(carName.." Item") then count += 1 end
+-- ============================================================================
+-- 🧠 RENDER LOGIC
+-- ============================================================================
+local function RenderCard(card, carName, state)
+	local buyBtn = card:FindFirstChild("BuyButton")
+	local robuxBtn = card:FindFirstChild("RobuxButton")
+	local carImage = card:FindFirstChild("CarImage")
+	local statusLabel = card:FindFirstChild("StatusLabel")
+
+	if carImage and state.Image then carImage.Image = state.Image end
+
+	if statusLabel then
+		statusLabel.Visible = true
+		statusLabel.Text = state.StatusText
+		statusLabel.TextColor3 = state.StatusColor
 	end
-	scan(player:FindFirstChild("Backpack"))
-	scan(player:FindFirstChild("StarterGear"))
-	return count
+
+	if buyBtn then
+		if state.IsPurchasing then
+			buyBtn.Text = "..."
+			buyBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+			buyBtn.Active = false
+		elseif not state.CanBuy then
+			buyBtn.Text = state.BuyText
+			buyBtn.BackgroundColor3 = state.BuyColor
+			buyBtn.Active = false
+		else
+			buyBtn.Text = "$" .. state.Price
+			buyBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+			buyBtn.Active = true
+		end
+	end
+
+	if robuxBtn then robuxBtn.Visible = state.CanRobux end
 end
 
--- 🧩 STATE & DISPLAY
-local currentState = nil
-
-local function updateDisplay(scrollFrame)
+local function UpdateDisplay(scrollFrame)
 	if not currentState then return end
 	local limit = player:GetAttribute("LocalCarLimit") or DEFAULT_LIMIT
 
 	for _, carName in ipairs(SHOP_CARS) do
 		local card = scrollFrame:FindFirstChild(carName)
-
 		if card then
-			-- UI Elements
-			local buyBtn = card:FindFirstChild("BuyButton")
-			local robuxBtn = card:FindFirstChild("RobuxButton")
-			local carImage = card:FindFirstChild("CarImage")
-
-			-- [[ ME NOT YOU UPDATE ]]
-			-- The script now ONLY looks for an existing label named "StatusLabel"
-			-- It will NOT create one if it's missing.
-			local statusLabel = card:FindFirstChild("StatusLabel")
-
 			local data = CarStats.Cars[carName]
-
-			-- 1. Update Image
-			if carImage and data then
-				carImage.Image = data.Image
-			end
-
-			-- 2. Determine State
-			local myCount = getLocalCount(carName)
+			local myCount = Kit.Inventory:GetCount(carName)
 			local isFeatured = currentState.Featured[carName]
-			local isBoughtThisRoll = currentState.Purchased[carName]
-			local isLimitReached = (myCount >= limit)
+			local isBought = currentState.Purchased[carName]
+			local isPurchasing = purchaseDebounce[carName]
 
-			-- 3. Apply Visuals
-			if not isFeatured or isBoughtThisRoll then
-				-- == STATE: OUT OF STOCK ==
-				-- Only try to update if YOU added the label
-				if statusLabel then
-					statusLabel.Text = "OUT OF STOCK"
-					statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80) -- 🔴 Red
-				end
+			local vm = {
+				Image = data.Image,
+				Price = data.Price,
+				IsPurchasing = isPurchasing,
+				CanBuy = false,
+				CanRobux = true,
+				StatusText = "",
+				StatusColor = Color3.new(1,1,1),
+				BuyText = "",
+				BuyColor = Color3.fromRGB(80, 80, 80)
+			}
 
-				if buyBtn then
-					buyBtn.Text = "OUT OF STOCK"
-					buyBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-					buyBtn.Active = false
-				end
-
-				if robuxBtn then robuxBtn.Visible = (not isBoughtThisRoll) end
-
+			if not isFeatured or isBought then
+				vm.StatusText = "No stock"
+				vm.StatusColor = Color3.fromRGB(150, 150, 150)
+				vm.BuyText = "No stock"
+				vm.CanRobux = not isBought
 			else
-				-- == STATE: ON STOCK ==
-				-- Only try to update if YOU added the label
-				if statusLabel then
-					statusLabel.Text = "ON STOCK"
-					statusLabel.TextColor3 = Color3.fromRGB(80, 255, 120) -- 🟢 Green
-				end
-
-				if isLimitReached then
-					if buyBtn then
-						buyBtn.Text = string.format("LIMIT REACHED (%d/%d)", myCount, limit)
-						buyBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
-						buyBtn.Active = false
-					end
-					if robuxBtn then robuxBtn.Visible = false end 
+				vm.StatusText = "ON STOCK"
+				vm.StatusColor = Color3.fromRGB(80, 255, 120)
+				if myCount >= limit then
+					vm.BuyText = "Limit Reached"
+					vm.BuyColor = Color3.fromRGB(150, 0, 0)
+					vm.CanRobux = false
 				else
-					if buyBtn then
-						buyBtn.Text = "$" .. data.Price
-						buyBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-						buyBtn.Active = true
-					end
-					if robuxBtn then 
-						robuxBtn.Visible = true
-						robuxBtn.Active = true
-					end
+					vm.CanBuy = true
 				end
 			end
+			RenderCard(card, carName, vm)
 		end
 	end
 end
 
--- 🚀 INITIALIZATION
+-- ============================================================================
+-- 🛒 ACTIONS
+-- ============================================================================
+local function AttemptBuy(carName, scrollFrame)
+	if purchaseDebounce[carName] then return end
+	
+	purchaseDebounce[carName] = true
+	UpdateDisplay(scrollFrame)
+	Kit.Sound:Play("Click")
+	
+	task.spawn(function()
+		local success, msg = FuncBuyCar:InvokeServer(carName)
+		purchaseDebounce[carName] = false
+		
+		if success then
+			Kit.Sound:Play("BuySuccess")
+			-- Success message removed per request
+		else
+			Kit.Sound:Play("BuyFail")
+			Kit.Toast:Show(msg, Color3.fromRGB(255, 80, 80))
+			local card = scrollFrame:FindFirstChild(carName)
+			if card then Kit.Tween:Shake(card) end
+		end
+		UpdateDisplay(scrollFrame)
+	end)
+end
+
+-- ============================================================================
+-- 🚀 INIT
+-- ============================================================================
 local function init()
 	local gui, mainFrame, scrollFrame, timerLabel, rerollBtn, closeBtn = getUI()
+	
+	Kit.Inventory:Init(SHOP_CARS)
 
-	-- Scrolling Fix
-	local layout = scrollFrame:FindFirstChildWhichIsA("UIListLayout")
-	if layout then
-		layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-			scrollFrame.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 20)
-		end)
-	else
-		scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	end
-
-	-- Connect Reroll
-	rerollBtn.MouseButton1Click:Connect(function()
+	-- 1. Setup Main Buttons
+	Kit.Tween:SetupButton(rerollBtn, function()
+		Kit.Sound:Play("Reroll")
 		MarketplaceService:PromptProductPurchase(player, REROLL_PRODUCT_ID)
 	end)
 
-	-- Connect Close
-	closeBtn.MouseButton1Click:Connect(function()
+	Kit.Tween:SetupButton(closeBtn, function()
+		-- REMOVED: Kit.Sound:Play("Close") to fix double sound
 		gui.Enabled = false
 	end)
 
-	-- Connect Car Buttons
-	local buttonDebounce = {} 
-
-	-- Give UI a moment to fully construct
-	task.wait(0.1)
-
+	-- 2. Setup Cards
 	for _, carName in ipairs(SHOP_CARS) do
 		local card = scrollFrame:WaitForChild(carName, 5)
-		if not card then
-			warn("❌ ERROR: Missing Car Frame for '"..carName.."' inside ScrollingFrame.")
-			continue
-		end
-
-		local buyBtn = card:FindFirstChild("BuyButton")
-		local robuxBtn = card:FindFirstChild("RobuxButton")
-
-		-- CASH BUY CONNECTION
-		if buyBtn then
-			buyBtn.MouseButton1Click:Connect(function()
-				if buttonDebounce[carName] then return end
-				local text = buyBtn.Text
-				if buyBtn.Active and text ~= "OUT OF STOCK" and not string.find(text, "LIMIT") then
-					buttonDebounce[carName] = true
-					local success, msg = FuncBuyCar:InvokeServer(carName)
-					if not success then
-						warn("Purchase Failed:", msg)
-						buyBtn.Text = msg
-						task.wait(1)
-					end
-					buttonDebounce[carName] = false
-				end
-			end)
-		end
-
-		-- ROBUX BUY CONNECTION
-		if robuxBtn then
-			robuxBtn.MouseButton1Click:Connect(function()
-				local prodId = ROBUX_PRODUCTS[carName]
-				if prodId then
-					MarketplaceService:PromptProductPurchase(player, prodId)
-				else
-					warn("No Product ID configured for", carName)
-				end
-			end)
+		if card then
+			local buyBtn = card:FindFirstChild("BuyButton")
+			if buyBtn then
+				buyBtn.MouseButton1Click:Connect(function()
+					if buyBtn.Active then AttemptBuy(carName, scrollFrame) end
+				end)
+			end
+			
+			local robuxBtn = card:FindFirstChild("RobuxButton")
+			if robuxBtn then
+				Kit.Tween:SetupButton(robuxBtn, function()
+					local pid = ROBUX_PRODUCTS[carName]
+					if pid then MarketplaceService:PromptProductPurchase(player, pid) end
+				end)
+			end
 		end
 	end
 
-	-- Timer Loop
+	-- 3. Timer & Restock
 	local isSyncing = false
 	task.spawn(function()
 		while true do
 			task.wait(1)
 			if gui.Enabled and currentState then
 				local left = math.max(0, currentState.NextRestock - os.time())
-				local m = math.floor(left / 60)
-				local s = left % 60
-				timerLabel.Text = string.format("Restock: %02d:%02d", m, s)
+				timerLabel.Text = string.format("Restock: %02d:%02d", math.floor(left/60), left%60)
 
 				if left == 0 and not isSyncing then
 					isSyncing = true
+					Kit.Sound:Play("Restock")
+					Kit.Toast:Show("SHOP RESTOCKED!", Color3.fromRGB(255, 255, 0))
+					
 					task.delay(1, function() 
 						currentState = FuncGetState:InvokeServer()
-						updateDisplay(scrollFrame)
+						UpdateDisplay(scrollFrame)
 						isSyncing = false
 					end)
 				end
@@ -234,18 +211,18 @@ local function init()
 		end
 	end)
 
-	-- Events
+	-- 4. Remotes
 	RemoteOpen.OnClientEvent:Connect(function()
+		Kit.Sound:Play("Open")
 		gui.Enabled = true
 		currentState = FuncGetState:InvokeServer()
-		updateDisplay(scrollFrame)
+		UpdateDisplay(scrollFrame)
 	end)
 
 	RemoteUpdate.OnClientEvent:Connect(function(newState)
 		currentState = newState
-		updateDisplay(scrollFrame)
+		UpdateDisplay(scrollFrame)
 	end)
 end
 
--- Wait for UI to load
 if player.Character then init() else player.CharacterAdded:Wait(); init() end
