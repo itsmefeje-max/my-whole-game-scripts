@@ -1,0 +1,11 @@
+local Prompt = script.Parent:WaitForChild("ProximityPrompt")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+-- Wait for folder to be created by Service
+local Remotes = ReplicatedStorage:WaitForChild("ShopRemotes", 30) 
+if not Remotes then warn("ShopRemotes not found!") return end
+
+local OpenEvent = Remotes:WaitForChild("OpenLocalShop")
+
+Prompt.Triggered:Connect(function(player)
+	OpenEvent:FireClient(player)
+end)
