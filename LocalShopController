@@ -1,5 +1,5 @@
 -- [[ LOCAL SCRIPT: LocalShopController ]]
--- UPDATED: Fixes double sounds and removes success message.
+-- UPDATED: Removed double sounds and success toast.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -136,7 +136,7 @@ local function AttemptBuy(carName, scrollFrame)
 		
 		if success then
 			Kit.Sound:Play("BuySuccess")
-			-- Success message removed per request
+			-- REMOVED: Success Toast
 		else
 			Kit.Sound:Play("BuyFail")
 			Kit.Toast:Show(msg, Color3.fromRGB(255, 80, 80))
@@ -157,12 +157,12 @@ local function init()
 
 	-- 1. Setup Main Buttons
 	Kit.Tween:SetupButton(rerollBtn, function()
-		Kit.Sound:Play("Reroll")
+		-- REMOVED: Kit.Sound:Play("Reroll") (Fixed Double Sound)
 		MarketplaceService:PromptProductPurchase(player, REROLL_PRODUCT_ID)
 	end)
 
 	Kit.Tween:SetupButton(closeBtn, function()
-		-- REMOVED: Kit.Sound:Play("Close") to fix double sound
+		-- REMOVED: Kit.Sound:Play("Close") (Fixed Double Sound)
 		gui.Enabled = false
 	end)
 
