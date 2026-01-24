@@ -1,7 +1,7 @@
 -- [[ MODULE SCRIPT: ShopFrontendKit ]]
 -- Contains: SoundController, TweenController, ToastController, InventoryCache
 -- LOCATION: ReplicatedStorage > ShopFrontendKit
--- UPDATED: Fixed Tween logic (Buttons no longer disappear/squash)
+-- UPDATED: Buttons no longer disappear/squash (Fixes "Restock Removed" bug)
 
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
@@ -58,14 +58,14 @@ end
 Kit.Sound = SoundCtrl
 
 -- ============================================================================
--- ✨ TWEEN CONTROLLER (FIXED)
+-- ✨ TWEEN CONTROLLER (BUTTON FIX)
 -- ============================================================================
 local TweenCtrl = {}
 local TINFO_HOVER = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local TINFO_PRESS = TweenInfo.new(0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local TINFO_SHAKE = TweenInfo.new(0.05, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 4, true)
 
--- Helper to get accurate UDim2 from attributes
+-- Helper to safely get size from attributes
 local function getOrigSize(btn)
 	return UDim2.new(
 		btn:GetAttribute("OXS"), btn:GetAttribute("OXO"),
@@ -74,8 +74,8 @@ local function getOrigSize(btn)
 end
 
 function TweenCtrl:SetupButton(btn, onClick)
-	-- 1. CAPTURE EXACT SIZE (Scale & Offset)
-	-- We do this only once so repeated hovers don't distort it
+	-- 1. CAPTURE EXACT ORIGINAL SIZE
+	-- We store this in attributes so we never lose the real size
 	if not btn:GetAttribute("OXS") then
 		btn:SetAttribute("OXS", btn.Size.X.Scale)
 		btn:SetAttribute("OXO", btn.Size.X.Offset)
@@ -83,10 +83,11 @@ function TweenCtrl:SetupButton(btn, onClick)
 		btn:SetAttribute("OYO", btn.Size.Y.Offset)
 	end
 
+	-- Hover In
 	btn.MouseEnter:Connect(function()
 		SoundCtrl:Play("Hover", {cooldown = 0.05, volume = 0.2})
 		
-		-- Calculate 5% growth based on ORIGINAL size
+		-- Grow by 5% based on ORIGINAL size
 		local orig = getOrigSize(btn)
 		local goal = UDim2.new(
 			orig.X.Scale * 1.05, orig.X.Offset * 1.05,
@@ -95,14 +96,16 @@ function TweenCtrl:SetupButton(btn, onClick)
 		TweenService:Create(btn, TINFO_HOVER, {Size = goal}):Play()
 	end)
 
+	-- Hover Out
 	btn.MouseLeave:Connect(function()
-		-- Restore to EXACT original size
+		-- Reset to EXACT original size
 		TweenService:Create(btn, TINFO_HOVER, {Size = getOrigSize(btn)}):Play()
 	end)
 
+	-- Click Logic
 	if onClick then
 		btn.MouseButton1Click:Connect(function()
-			SoundCtrl:Play("Click")
+			SoundCtrl:Play("Click") -- Plays the standard click sound
 			
 			local orig = getOrigSize(btn)
 			-- Shrink to 90%
@@ -113,9 +116,9 @@ function TweenCtrl:SetupButton(btn, onClick)
 			
 			local t = TweenService:Create(btn, TINFO_PRESS, {Size = small})
 			t:Play()
-			t.Completed:Wait() -- Wait for shrink
+			t.Completed:Wait()
 			
-			-- Restore
+			-- Restore size immediately
 			TweenService:Create(btn, TINFO_PRESS, {Size = orig}):Play()
 			
 			onClick()
@@ -145,7 +148,7 @@ function ToastCtrl:Show(msg, color)
 		gui.Name = TOAST_GUI_NAME
 		gui.Parent = player.PlayerGui
 		gui.ResetOnSpawn = false
-		gui.DisplayOrder = 100 -- Ensure on top
+		gui.DisplayOrder = 100
 	end
 
 	local label = Instance.new("TextLabel")
@@ -162,10 +165,9 @@ function ToastCtrl:Show(msg, color)
 	local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = label
 	local stroke = Instance.new("UIStroke"); stroke.Thickness = 2; stroke.Parent = label
 
-	-- Animate In
+	-- Animate
 	TweenService:Create(label, TINFO_HOVER, {Position = UDim2.new(0.5, -100, 0.85, 0)}):Play()
 	
-	-- Destroy
 	task.delay(2.5, function()
 		if label and label.Parent then
 			local t = TweenService:Create(label, TINFO_HOVER, {TextTransparency = 1, BackgroundTransparency = 1})
