@@ -4,10 +4,22 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local ServerStorage = game:GetService("ServerStorage")
 
 -- ⚙️ PRODUCT IDs
-local TABLET_2X_ID = 3509697462 -- Your existing Tablet ID
-local SHOP_REROLL_ID = 0000000 -- ⚠️ REPLACE WITH NEW REROLL PRODUCT ID
+local TABLET_2X_ID = 3509697462 -- Your Tablet ID
+local SHOP_REROLL_ID = 3520990584 -- ✅ Your Reroll ID
+
+-- 🚗 CAR PRODUCT IDs (Add these when you create them!)
+-- Format: [Product_ID] = "CarName"
+local CAR_PRODUCT_IDS = {
+	[0000001] = "Delta",   -- ⚠️ REPLACE 0000001 WITH REAL ID
+	[0000002] = "Iva",     -- ⚠️ REPLACE 0000002 WITH REAL ID
+	[0000003] = "Atom",    -- ⚠️ REPLACE 0000003 WITH REAL ID
+	[0000004] = "Windsor", -- ⚠️ REPLACE 0000004 WITH REAL ID
+	[0000005] = "Senator", -- ⚠️ REPLACE 0000005 WITH REAL ID
+	[0000006] = "Riva"     -- ⚠️ REPLACE 0000006 WITH REAL ID
+}
 
 -- 🔗 REFERENCES
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
@@ -52,12 +64,40 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		end
 
 		-- ====================================================
-		-- PRODUCT: SHOP REROLL (49 R$)
+		-- PRODUCT: SHOP REROLL (Restock)
 		-- ====================================================
 	elseif pid == SHOP_REROLL_ID then
 		if ShopRerollFunc then
 			ShopRerollFunc:Invoke(player) -- Call LocalShopService
 			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
+
+		-- ====================================================
+		-- PRODUCT: BUY CAR WITH ROBUX
+		-- ====================================================
+	elseif CAR_PRODUCT_IDS[pid] then
+		local carName = CAR_PRODUCT_IDS[pid]
+		local CarTools = ServerStorage:FindFirstChild("CarTools")
+
+		-- Try finding the tool by exact name or with " Item" suffix
+		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
+
+		if tool then
+			-- Grant the car directly to Backpack and StarterGear
+			local newTool = tool:Clone()
+			newTool:SetAttribute("IssuedByServer", true)
+			newTool:SetAttribute("IssuedAt", os.time())
+			newTool:SetAttribute("ToolId", tool.Name)
+			newTool.Parent = player.Backpack
+
+			local gearClone = newTool:Clone()
+			gearClone.Parent = player.StarterGear
+
+			print("✅ Gave Robux Car: " .. carName .. " to " .. player.Name)
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		else
+			warn("❌ Critical: Player bought " .. carName .. " but the Tool is missing in ServerStorage!")
+			return Enum.ProductPurchaseDecision.NotProcessedYet -- Retry until you fix the tool name
 		end
 	end
 
