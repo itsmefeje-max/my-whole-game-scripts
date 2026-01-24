@@ -1,5 +1,6 @@
 -- [[ LOCAL SCRIPT: LocalShopController ]]
 -- Connects your MANUAL StarterGui UI to the backend shop system.
+-- UPDATED: Logic only. You create the "StatusLabel" in Studio, this script updates it.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -68,11 +69,16 @@ local function updateDisplay(scrollFrame)
 		local card = scrollFrame:FindFirstChild(carName)
 
 		if card then
-			-- Using FindFirstChild safely
+			-- UI Elements
 			local buyBtn = card:FindFirstChild("BuyButton")
 			local robuxBtn = card:FindFirstChild("RobuxButton")
 			local carImage = card:FindFirstChild("CarImage")
+			
+			-- [[ ME NOT YOU UPDATE ]]
+			-- The script now ONLY looks for an existing label named "StatusLabel"
+			-- It will NOT create one if it's missing.
 			local statusLabel = card:FindFirstChild("StatusLabel")
+			
 			local data = CarStats.Cars[carName]
 
 			-- 1. Update Image
@@ -88,8 +94,12 @@ local function updateDisplay(scrollFrame)
 
 			-- 3. Apply Visuals
 			if not isFeatured or isBoughtThisRoll then
-				-- STATE: Out of Stock
-				if statusLabel then statusLabel.Text = "OUT OF STOCK" end
+				-- == STATE: OUT OF STOCK ==
+				-- Only try to update if YOU added the label
+				if statusLabel then
+					statusLabel.Text = "OUT OF STOCK"
+					statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80) -- 🔴 Red
+				end
 
 				if buyBtn then
 					buyBtn.Text = "OUT OF STOCK"
@@ -100,8 +110,12 @@ local function updateDisplay(scrollFrame)
 				if robuxBtn then robuxBtn.Visible = (not isBoughtThisRoll) end
 
 			else
-				-- STATE: Featured
-				if statusLabel then statusLabel.Text = "ON STOCK" end
+				-- == STATE: ON STOCK ==
+				-- Only try to update if YOU added the label
+				if statusLabel then
+					statusLabel.Text = "ON STOCK"
+					statusLabel.TextColor3 = Color3.fromRGB(80, 255, 120) -- 🟢 Green
+				end
 
 				if isLimitReached then
 					if buyBtn then
@@ -153,39 +167,23 @@ local function init()
 	-- Connect Car Buttons
 	local buttonDebounce = {} 
 
-	-- Give UI a moment to fully construct if it was just enabled/cloned
+	-- Give UI a moment to fully construct
 	task.wait(0.1)
 
 	for _, carName in ipairs(SHOP_CARS) do
-		-- 1. Get Frame (Use WaitForChild safely with timeout)
 		local card = scrollFrame:WaitForChild(carName, 5)
 		if not card then
 			warn("❌ ERROR: Missing Car Frame for '"..carName.."' inside ScrollingFrame.")
 			continue
 		end
 
-		-- 2. Find Buttons IMMEDIATE CHECK (No hanging)
 		local buyBtn = card:FindFirstChild("BuyButton")
 		local robuxBtn = card:FindFirstChild("RobuxButton")
-
-		-- DEBUG: If missing, prove it
-		if not buyBtn then
-			warn("⚠️ BuyButton TRULY missing in:", card:GetFullName())
-			warn("   Children found:")
-			for _, c in ipairs(card:GetChildren()) do warn("    -", c.Name, " ("..c.ClassName..")") end
-		end
-
-		if not robuxBtn then
-			warn("⚠️ RobuxButton TRULY missing in:", card:GetFullName())
-			warn("   Children found:")
-			for _, c in ipairs(card:GetChildren()) do warn("    -", c.Name, " ("..c.ClassName..")") end
-		end
 
 		-- CASH BUY CONNECTION
 		if buyBtn then
 			buyBtn.MouseButton1Click:Connect(function()
 				if buttonDebounce[carName] then return end
-				-- Safe Text Check using string.find to catch "LIMIT REACHED" variants
 				local text = buyBtn.Text
 				if buyBtn.Active and text ~= "OUT OF STOCK" and not string.find(text, "LIMIT") then
 					buttonDebounce[carName] = true
@@ -194,7 +192,6 @@ local function init()
 						warn("Purchase Failed:", msg)
 						buyBtn.Text = msg
 						task.wait(1)
-						-- UI Update will revert text
 					end
 					buttonDebounce[carName] = false
 				end
