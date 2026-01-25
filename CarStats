@@ -21,7 +21,7 @@ CarStats.Cars = {
 		Name = "Delta",
 		CPS = 1,
 		Rarity = "Common",
-		Price = 0,
+		Price = 10,
 		Image = "rbxassetid://93382597587705" -- [TODO] Replace with Delta Image ID
 	},
 	["Iva"] = { 
