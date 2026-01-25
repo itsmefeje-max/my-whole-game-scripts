@@ -20,10 +20,8 @@ local SFX_MAP = {
 	Click = "rbxassetid://9083627113",
 	BuySuccess = "rbxassetid://140072726814802",
 	BuyFail = "rbxassetid://3779045779",
-
-	-- ✅ DISTINCT SOUNDS
-	PaidReroll = "rbxassetid://140072726814802", -- Make this a "Cash Register" or "Magic" sound
-	AutoRestock = "rbxassetid://9083627113"      -- Standard notification sound
+	PaidReroll = "rbxassetid://140072726814802", 
+	AutoRestock = "rbxassetid://134952684776633"
 }
 
 function SoundCtrl:Play(name, opts)
@@ -43,37 +41,92 @@ function SoundCtrl:Play(name, opts)
 end
 Kit.Sound = SoundCtrl
 
--- (Tween/Toast/Inventory Code remains the same - minimized for space)
--- [ ... Paste your previous Tween/Toast/Inv code here ... ] 
--- Or just keep the file you have, only the SoundCtrl table above changed.
-
--- TWEEN (Dim Only)
+-- ============================================================================
+-- 🎨 TWEEN CONTROLLER (AAA MOBILE/PC FIX)
+-- ============================================================================
 local TweenCtrl = {}
-local T_DIM = TweenInfo.new(0.15)
 local T_SHAKE = TweenInfo.new(0.05, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 4, true)
+
+-- ✅ THE "WORKS EVERYWHERE" HANDLER
 function TweenCtrl:SetupButton(btn, onClick)
-	if not btn then return end
-	local colorProp = btn:IsA("ImageButton") and "ImageColor3" or "BackgroundColor3"
-	local origColor = btn[colorProp]
-	local h, s, v = origColor:ToHSV(); local dimColor = Color3.fromHSV(h, s, v * 0.7)
-	btn.MouseEnter:Connect(function() Kit.Sound:Play("Hover", {volume=0.3}); TweenService:Create(btn, T_DIM, {[colorProp] = dimColor}):Play() end)
-	btn.MouseLeave:Connect(function() TweenService:Create(btn, T_DIM, {[colorProp] = origColor}):Play() end)
-	btn.MouseButton1Click:Connect(function() Kit.Sound:Play("Click"); onClick() end)
+	if not btn or not btn:IsA("GuiButton") then return end
+
+	btn.AutoButtonColor = false
+	btn.Active = true
+
+	-- Capture original colors
+	local originalBg = btn.BackgroundColor3
+	local originalImg = btn:IsA("ImageButton") and btn.ImageColor3 or nil
+
+	-- Make dim colors (Helper)
+	local function dimColor(c, mult)
+		local h,s,v = c:ToHSV()
+		return Color3.fromHSV(h, s, math.clamp(v * mult, 0, 1))
+	end
+
+	local dimBg = dimColor(originalBg, 0.75)
+	local dimImg = originalImg and dimColor(originalImg, 0.75) or nil
+
+	local T_DIM = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+	local function applyDim(isDim)
+		local goals = { BackgroundColor3 = isDim and dimBg or originalBg }
+		if originalImg then
+			goals.ImageColor3 = isDim and dimImg or originalImg
+		end
+		TweenService:Create(btn, T_DIM, goals):Play()
+	end
+
+	-- Hover (PC only)
+	btn.MouseEnter:Connect(function()
+		Kit.Sound:Play("Hover", {volume = 0.3})
+		applyDim(true)
+	end)
+
+	btn.MouseLeave:Connect(function()
+		applyDim(false)
+	end)
+
+	-- Press feedback (PC + Mobile)
+	btn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			applyDim(true)
+		end
+	end)
+
+	btn.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			applyDim(false)
+		end
+	end)
+
+	-- ✅ Activated works everywhere (Mobile/PC/Console)
+	btn.Activated:Connect(function()
+		Kit.Sound:Play("Click")
+		if onClick then onClick() end
+	end)
 end
+
 function TweenCtrl:Shake(guiObject)
 	local origPos = guiObject.Position
-	local t = TweenService:Create(guiObject, T_SHAKE, {Position = origPos + UDim2.new(0,5,0,0)}); t:Play()
+	local t = TweenService:Create(guiObject, T_SHAKE, {Position = origPos + UDim2.new(0,5,0,0)})
+	t:Play()
 	t.Completed:Connect(function() guiObject.Position = origPos end)
 end
 Kit.Tween = TweenCtrl
 
-local ToastCtrl = {} -- (Standard Toast)
+-- ============================================================================
+-- 🍞 TOAST & INVENTORY (Standard)
+-- ============================================================================
+local ToastCtrl = {} 
 function ToastCtrl:Show(msg, color)
-	-- (Standard Toast Logic)
+	-- (Standard Toast Logic placeholder)
 end
 Kit.Toast = ToastCtrl
 
-local InvCtrl = {} -- (Standard Inv)
+local InvCtrl = {} 
 function InvCtrl:Init(names) end
 function InvCtrl:GetCount(n) return 0 end
 Kit.Inventory = InvCtrl
