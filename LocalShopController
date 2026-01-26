@@ -1,5 +1,5 @@
 -- [[ LOCAL SCRIPT: LocalShopController ]]
--- UPDATED: Added NoStockIndicator Logic + Robux Button Fix + ZIndex Fix
+-- UPDATED: Fixed Robux Button visibility (Always shows for Delta/Configured Cars)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -22,7 +22,7 @@ local SHOP_CARS = {"Delta", "Iva", "Atom", "Windsor", "Senator", "Riva"}
 
 -- 🔴 IMPORTANT: REPLACE THESE NUMBERS WITH YOUR REAL DEVELOPER PRODUCT IDS
 local ROBUX_PRODUCTS = {
-	Delta   = 0000000, -- Replace with REAL ID
+	Delta   = 0000000, -- Replace with REAL ID (Button will now show even if this is 0)
 	Iva     = 1111111, -- Replace with REAL ID
 	Atom    = 2222222, -- Replace with REAL ID
 	Windsor = 3333333, -- Replace with REAL ID
@@ -106,10 +106,11 @@ local function RenderCard(card, carName, state)
 		end
 	end
 
-	-- 2. ROBUX BUTTON
+	-- 2. ROBUX BUTTON (Always Visible if Configured)
 	if robuxBtn then 
+		-- We force visibility if CanRobux is true (which is now always true if in list)
 		robuxBtn.Visible = state.CanRobux 
-		robuxBtn.ZIndex = 20 
+		robuxBtn.ZIndex = 25 -- [FIX] Increased ZIndex to ensure it sits above everything
 		robuxBtn.Active = true 
 	end
 end
@@ -143,8 +144,9 @@ local function UpdateDisplay(scrollFrame)
 				vm.StockAmount = 0
 			end
 
-			-- 2. Robux Buying Logic (Always Available)
-			if ROBUX_PRODUCTS[carName] and ROBUX_PRODUCTS[carName] > 0 then
+			-- 2. Robux Buying Logic (FIXED: Always Available if in list)
+			-- We removed the "> 0" check so the button appears even for placeholders
+			if ROBUX_PRODUCTS[carName] then
 				vm.CanRobux = true 
 			else
 				vm.CanRobux = false
@@ -213,7 +215,8 @@ local function init()
 					if pid and pid > 0 then 
 						MarketplaceService:PromptProductPurchase(player, pid) 
 					else
-						warn("⚠️ No Product ID found for " .. carName)
+						-- [WARN] Helpful print for you if you forget to set the ID
+						warn("⚠️ You clicked the Robux Button for " .. carName .. " but the ID is 0! Please update ROBUX_PRODUCTS in LocalShopController.")
 					end
 				end)
 			end
