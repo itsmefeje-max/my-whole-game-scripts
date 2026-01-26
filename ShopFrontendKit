@@ -132,3 +132,4 @@ function InvCtrl:GetCount(n) return 0 end
 Kit.Inventory = InvCtrl
 
 return Kit
+
