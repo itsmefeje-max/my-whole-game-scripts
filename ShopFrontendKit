@@ -1,7 +1,8 @@
--- [[ MODULE SCRIPT: ShopFrontendKit (Advanced Audio) ]]
+-- [[ MODULE SCRIPT: ShopFrontendKit (Advanced Audio + Wiggle) ]]
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local Debris = game:GetService("Debris")
+local RunService = game:GetService("RunService") 
 local Players = game:GetService("Players")
 
 local Kit = {}
@@ -13,17 +14,11 @@ local player = Players.LocalPlayer
 local SoundCtrl = {}
 SoundCtrl.Enabled = true
 
--- 🎛️ ADVANCED CONFIGURATION
--- Format: { ID, Volume, Pitch, Variance }
--- You can now layer multiple sounds for one action!
 local SFX_MAP = {
-	-- 🟢 THE ADVANCED OPEN SOUND (Layers)
 	Open = {
-		{ Id = "rbxassetid://9083627113", Vol = 0.6, Pitch = 1.0, Var = 0.05 }, -- The Click/Chime
-		{ Id = "rbxassetid://6895079853", Vol = 0.4, Pitch = 0.8, Var = 0.1 },  -- Low Whoosh (Reuse hover sound with low pitch)
+		{ Id = "rbxassetid://9083627113", Vol = 0.6, Pitch = 1.0, Var = 0.05 },
+		{ Id = "rbxassetid://148752521", Vol = 0.4, Pitch = 0.8, Var = 0.1 },
 	},
-	
-	-- Standard Single Sounds
 	Hover = "rbxassetid://6895079853",
 	Click = "rbxassetid://9083627113",
 	BuySuccess = "rbxassetid://140072726814802",
@@ -32,7 +27,6 @@ local SFX_MAP = {
 	AutoRestock = "rbxassetid://134952684776633"
 }
 
--- Helper to play a single sound instance
 local function playInstance(id, vol, pitch, variance)
 	local s = Instance.new("Sound")
 	s.SoundId = id
@@ -49,12 +43,9 @@ function SoundCtrl:Play(name)
 	local data = SFX_MAP[name]
 	if not data then return end
 
-	-- 🧠 LOGIC: Check if it's a simple ID or an Advanced Layer Table
 	if type(data) == "string" then
-		-- Classic Mode (Single Sound)
 		playInstance(data, 0.5, 1, 0.05)
 	elseif type(data) == "table" then
-		-- Advanced Mode (Layered Sounds)
 		for _, layer in ipairs(data) do
 			playInstance(layer.Id, layer.Vol, layer.Pitch, layer.Var)
 		end
@@ -63,10 +54,63 @@ end
 Kit.Sound = SoundCtrl
 
 -- ============================================================================
--- 🎨 TWEEN CONTROLLER (Unchanged)
+-- 🎨 TWEEN CONTROLLER
 -- ============================================================================
 local TweenCtrl = {}
 local T_SHAKE = TweenInfo.new(0.05, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 4, true)
+local T_RESET = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- ✅ NEW: WIGGLE EFFECT (Pure Rotation - No Popout)
+function TweenCtrl:SetupWiggle(guiObject)
+	if not guiObject then return end
+
+	local wiggleConnection = nil
+	local isWiggling = false
+	
+	local SPEED = 12  
+	local ANGLE = 4   
+
+	local function startWiggle()
+		if isWiggling then return end
+		isWiggling = true
+		
+		local t = 0
+		wiggleConnection = RunService.RenderStepped:Connect(function(dt)
+			if not guiObject.Parent then 
+				if wiggleConnection then wiggleConnection:Disconnect() end
+				return 
+			end
+			t = t + dt * SPEED
+			guiObject.Rotation = math.sin(t) * ANGLE
+		end)
+	end
+
+	local function stopWiggle()
+		if not isWiggling then return end
+		isWiggling = false
+		
+		if wiggleConnection then 
+			wiggleConnection:Disconnect() 
+			wiggleConnection = nil
+		end
+		TweenService:Create(guiObject, T_RESET, {Rotation = 0}):Play()
+	end
+
+	guiObject.MouseEnter:Connect(startWiggle)
+	guiObject.MouseLeave:Connect(stopWiggle)
+
+	guiObject.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			startWiggle()
+		end
+	end)
+
+	guiObject.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			stopWiggle()
+		end
+	end)
+end
 
 function TweenCtrl:SetupButton(btn, onClick)
 	if not btn or not btn:IsA("GuiButton") then return end
@@ -76,27 +120,24 @@ function TweenCtrl:SetupButton(btn, onClick)
 
 	local originalBg = btn.BackgroundColor3
 	local originalImg = btn:IsA("ImageButton") and btn.ImageColor3 or nil
-
-	local function dimColor(c, mult)
-		local h,s,v = c:ToHSV()
-		return Color3.fromHSV(h, s, math.clamp(v * mult, 0, 1))
-	end
-
-	local dimBg = dimColor(originalBg, 0.75)
-	local dimImg = originalImg and dimColor(originalImg, 0.75) or nil
 	local T_DIM = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 	local function applyDim(isDim)
+		local h,s,v = originalBg:ToHSV()
+		local dimBg = Color3.fromHSV(h, s, math.clamp(v * 0.75, 0, 1))
+		
 		local goals = { BackgroundColor3 = isDim and dimBg or originalBg }
-		if originalImg then goals.ImageColor3 = isDim and dimImg or originalImg end
+		if originalImg then 
+			local h2,s2,v2 = originalImg:ToHSV()
+			goals.ImageColor3 = isDim and Color3.fromHSV(h2, s2, math.clamp(v2 * 0.75, 0, 1)) or originalImg 
+		end
 		TweenService:Create(btn, T_DIM, goals):Play()
 	end
 
 	btn.MouseEnter:Connect(function()
-		Kit.Sound:Play("Hover") -- Uses simple sound
+		Kit.Sound:Play("Hover")
 		applyDim(true)
 	end)
-
 	btn.MouseLeave:Connect(function() applyDim(false) end)
 
 	btn.InputBegan:Connect(function(input)
@@ -125,9 +166,6 @@ function TweenCtrl:Shake(guiObject)
 end
 Kit.Tween = TweenCtrl
 
--- ============================================================================
--- 🍞 TOAST & INVENTORY (Standard)
--- ============================================================================
 local ToastCtrl = {} 
 function ToastCtrl:Show(msg, color) end
 Kit.Toast = ToastCtrl
