@@ -1,4 +1,4 @@
--- [[ MODULE SCRIPT: ShopFrontendKit ]]
+-- [[ MODULE SCRIPT: ShopFrontendKit (Advanced Audio) ]]
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local Debris = game:GetService("Debris")
@@ -8,14 +8,22 @@ local Kit = {}
 local player = Players.LocalPlayer
 
 -- ============================================================================
--- 🔊 SOUND CONTROLLER
+-- 🔊 ADVANCED SOUND CONTROLLER
 -- ============================================================================
 local SoundCtrl = {}
 SoundCtrl.Enabled = true
-SoundCtrl.LastPlay = {}
 
+-- 🎛️ ADVANCED CONFIGURATION
+-- Format: { ID, Volume, Pitch, Variance }
+-- You can now layer multiple sounds for one action!
 local SFX_MAP = {
-	Open = "rbxassetid://9083627113",
+	-- 🟢 THE ADVANCED OPEN SOUND (Layers)
+	Open = {
+		{ Id = "rbxassetid://9083627113", Vol = 0.6, Pitch = 1.0, Var = 0.05 }, -- The Click/Chime
+		{ Id = "rbxassetid://6895079853", Vol = 0.4, Pitch = 0.8, Var = 0.1 },  -- Low Whoosh (Reuse hover sound with low pitch)
+	},
+	
+	-- Standard Single Sounds
 	Hover = "rbxassetid://6895079853",
 	Click = "rbxassetid://9083627113",
 	BuySuccess = "rbxassetid://140072726814802",
@@ -24,41 +32,51 @@ local SFX_MAP = {
 	AutoRestock = "rbxassetid://134952684776633"
 }
 
-function SoundCtrl:Play(name, opts)
-	if not self.Enabled then return end
-	opts = opts or {}
-	local id = SFX_MAP[name]
-	if not id then return end
-
+-- Helper to play a single sound instance
+local function playInstance(id, vol, pitch, variance)
 	local s = Instance.new("Sound")
 	s.SoundId = id
-	s.Volume = opts.volume or 0.5
-	s.Name = "SFX_" .. name
-	s.PlaybackSpeed = 1 + (math.random() * 2 - 1) * (opts.variance or 0.05)
+	s.Volume = vol or 0.5
+	s.PlaybackSpeed = (pitch or 1) + (math.random() * 2 - 1) * (variance or 0.05)
+	s.Name = "SFX_Advanced"
 	s.Parent = SoundService
 	s:Play()
 	Debris:AddItem(s, 2)
 end
+
+function SoundCtrl:Play(name)
+	if not self.Enabled then return end
+	local data = SFX_MAP[name]
+	if not data then return end
+
+	-- 🧠 LOGIC: Check if it's a simple ID or an Advanced Layer Table
+	if type(data) == "string" then
+		-- Classic Mode (Single Sound)
+		playInstance(data, 0.5, 1, 0.05)
+	elseif type(data) == "table" then
+		-- Advanced Mode (Layered Sounds)
+		for _, layer in ipairs(data) do
+			playInstance(layer.Id, layer.Vol, layer.Pitch, layer.Var)
+		end
+	end
+end
 Kit.Sound = SoundCtrl
 
 -- ============================================================================
--- 🎨 TWEEN CONTROLLER (AAA MOBILE/PC FIX)
+-- 🎨 TWEEN CONTROLLER (Unchanged)
 -- ============================================================================
 local TweenCtrl = {}
 local T_SHAKE = TweenInfo.new(0.05, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 4, true)
 
--- ✅ THE "WORKS EVERYWHERE" HANDLER
 function TweenCtrl:SetupButton(btn, onClick)
 	if not btn or not btn:IsA("GuiButton") then return end
 
 	btn.AutoButtonColor = false
 	btn.Active = true
 
-	-- Capture original colors
 	local originalBg = btn.BackgroundColor3
 	local originalImg = btn:IsA("ImageButton") and btn.ImageColor3 or nil
 
-	-- Make dim colors (Helper)
 	local function dimColor(c, mult)
 		local h,s,v = c:ToHSV()
 		return Color3.fromHSV(h, s, math.clamp(v * mult, 0, 1))
@@ -66,43 +84,33 @@ function TweenCtrl:SetupButton(btn, onClick)
 
 	local dimBg = dimColor(originalBg, 0.75)
 	local dimImg = originalImg and dimColor(originalImg, 0.75) or nil
-
 	local T_DIM = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 	local function applyDim(isDim)
 		local goals = { BackgroundColor3 = isDim and dimBg or originalBg }
-		if originalImg then
-			goals.ImageColor3 = isDim and dimImg or originalImg
-		end
+		if originalImg then goals.ImageColor3 = isDim and dimImg or originalImg end
 		TweenService:Create(btn, T_DIM, goals):Play()
 	end
 
-	-- Hover (PC only)
 	btn.MouseEnter:Connect(function()
-		Kit.Sound:Play("Hover", {volume = 0.3})
+		Kit.Sound:Play("Hover") -- Uses simple sound
 		applyDim(true)
 	end)
 
-	btn.MouseLeave:Connect(function()
-		applyDim(false)
-	end)
+	btn.MouseLeave:Connect(function() applyDim(false) end)
 
-	-- Press feedback (PC + Mobile)
 	btn.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			applyDim(true)
 		end
 	end)
 
 	btn.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			applyDim(false)
 		end
 	end)
 
-	-- ✅ Activated works everywhere (Mobile/PC/Console)
 	btn.Activated:Connect(function()
 		Kit.Sound:Play("Click")
 		if onClick then onClick() end
@@ -121,9 +129,7 @@ Kit.Tween = TweenCtrl
 -- 🍞 TOAST & INVENTORY (Standard)
 -- ============================================================================
 local ToastCtrl = {} 
-function ToastCtrl:Show(msg, color)
-	-- (Standard Toast Logic placeholder)
-end
+function ToastCtrl:Show(msg, color) end
 Kit.Toast = ToastCtrl
 
 local InvCtrl = {} 
@@ -132,4 +138,3 @@ function InvCtrl:GetCount(n) return 0 end
 Kit.Inventory = InvCtrl
 
 return Kit
-
