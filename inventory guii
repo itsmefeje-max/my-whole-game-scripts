@@ -1,6 +1,7 @@
 -- [[ LOCAL SCRIPT: Inventory UI (Final System - Dynamic FOV + Always Count) ]]
 -- TYPE: Client-Side UI Controller
 -- FEATURES: Universal Glow, Dynamic Camera Restore, "x1" Display, Mobile Optimized
+-- FIXED: Solved "no property named ImageColor3" console spam on TextButtons.
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -232,7 +233,15 @@ local function addButtonEffects(btn, scaleOnly)
 			TweenService:Create(scale, TweenInfo.new(0.2), {Scale = 1.1}):Play()
 
 			if not scaleOnly then
-				TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = CONFIG.Colors.Dim, BackgroundColor3 = CONFIG.Colors.Dim}):Play()
+				-- ✅ FIXED: Logic to support both TextButton (Background) and ImageButton (Image)
+				local goals = {BackgroundColor3 = CONFIG.Colors.Dim}
+				
+				-- Only attempt to tween ImageColor3 if the button supports it
+				if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
+					goals.ImageColor3 = CONFIG.Colors.Dim
+				end
+				
+				TweenService:Create(btn, TweenInfo.new(0.2), goals):Play()
 			end
 		end)
 
@@ -241,7 +250,15 @@ local function addButtonEffects(btn, scaleOnly)
 			TweenService:Create(scale, TweenInfo.new(0.2), {Scale = 1}):Play()
 
 			if not scaleOnly then
-				TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = CONFIG.Colors.Normal, BackgroundColor3 = getRarityColor(btn.Name)}):Play()
+				-- ✅ FIXED: Logic to support both TextButton (Background) and ImageButton (Image)
+				local goals = {BackgroundColor3 = getRarityColor(btn.Name)}
+				
+				-- Only attempt to tween ImageColor3 if the button supports it
+				if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
+					goals.ImageColor3 = CONFIG.Colors.Normal
+				end
+
+				TweenService:Create(btn, TweenInfo.new(0.2), goals):Play()
 			end
 		end)
 	end
