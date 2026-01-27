@@ -233,3 +233,11 @@ local function init()
 end
 
 if player.Character then init() else player.CharacterAdded:Wait(); init() end
+
+-- In LocalShopController
+RemoteOpen.OnClientEvent:Connect(function()
+	Kit.Sound:Play("Open") -- ✅ This now triggers the advanced layered sound!
+	gui.Enabled = true 
+	currentState = FuncGetState:InvokeServer()
+	UpdateDisplay(scrollFrame)
+end)
