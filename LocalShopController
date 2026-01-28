@@ -1,8 +1,12 @@
 -- [[ LOCAL SCRIPT: LocalShopController ]]
--- UPDATED: Added SFX and Hover Logic for 'NoStockIndicator'
+-- UPDATED: Added Advanced SFX for Robux Purchases (Game Passes/Products)
+-- STATUS: Production Ready
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
+local SoundService = game:GetService("SoundService") -- ✅ Added for SFX
+local Debris = game:GetService("Debris") -- ✅ Added for Cleanup
 
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
@@ -19,6 +23,7 @@ local Kit = require(ReplicatedStorage:WaitForChild("ShopFrontendKit"))
 -- ⚙️ CONFIGURATION
 local REROLL_PRODUCT_ID = 3520990584 
 local SHOP_CARS = {"Delta", "Iva", "Atom", "Windsor", "Senator", "Riva"}
+local SPECIAL_SFX_ID = "rbxassetid://140072726814802" -- 🔊 [CHANGE THIS] Your Custom Sound ID Here
 
 -- 🔴 ROBUX IDS
 local ROBUX_PRODUCTS = {
@@ -150,7 +155,7 @@ local function AttemptBuy(carName, scrollFrame)
 end
 
 -- ============================================================================
--- 🚀 INIT
+-- 🚀 INIT & EVENTS
 -- ============================================================================
 local function init()
 	local gui, mainFrame, scrollFrame, timerLabel, rerollBtn, closeBtn = getUI()
@@ -195,14 +200,39 @@ local function init()
 				end)
 			end
 
-			-- ✅ [NEW FEATURE] NO STOCK SFX
-			-- This registers the "NoStockIndicator" so it dims and plays sound on hover
+			-- ✅ NO STOCK SFX
 			local noStockBtn = card:FindFirstChild("NoStockIndicator")
 			if noStockBtn then
 				Kit.Tween:SetupButton(noStockBtn)
 			end
 		end
 	end
+
+	-- 🔊 1. ROBUX PURCHASE LISTENER (New Advanced Feature)
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
+		if userId ~= player.UserId or not isPurchased then return end
+
+		-- Check if the product purchased is one of our Shop Cars
+		local isShopCar = false
+		for _, id in pairs(ROBUX_PRODUCTS) do
+			if id == productId then isShopCar = true; break end
+		end
+
+		if isShopCar then
+			print("🎵 Playing Advanced SFX for Car Purchase: " .. tostring(productId))
+			
+			-- Create separate sound instance for maximum quality/overlap
+			local s = Instance.new("Sound")
+			s.Name = "CarPurchaseSFX"
+			s.SoundId = SPECIAL_SFX_ID
+			s.Volume = 1.5 -- Boosted volume for clear feedback
+			s.Pitch = 1.0
+			s.Parent = SoundService
+			s:Play()
+			
+			Debris:AddItem(s, 5) -- Cleanup after 5 seconds
+		end
+	end)
 
 	task.spawn(function()
 		while true do
