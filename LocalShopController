@@ -1,5 +1,5 @@
 -- [[ LOCAL SCRIPT: LocalShopController ]]
--- UPDATED: Fixed Overlay Issue (Forces Clipping & ZIndex)
+-- UPDATED: Respects Studio ZIndex Settings (No longer overrides layout)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -74,7 +74,7 @@ local function RenderCard(card, carName, state)
 
 	-- 1. CASH BUTTON
 	if buyBtn then
-		buyBtn.ZIndex = 20 
+		-- [REMOVED] Forced ZIndex override. Uses Studio setting.
 		if state.CanBuy then
 			buyBtn.Visible = true; buyBtn.Active = true
 			if noStockInd then noStockInd.Visible = false end 
@@ -98,7 +98,7 @@ local function RenderCard(card, carName, state)
 	-- 2. ROBUX BUTTON
 	if robuxBtn then 
 		robuxBtn.Visible = state.CanRobux 
-		robuxBtn.ZIndex = 25 
+		-- [REMOVED] Forced ZIndex override. Uses Studio setting.
 		robuxBtn.Active = true 
 	end
 end
@@ -156,10 +156,9 @@ end
 -- ============================================================================
 local function init()
 	local gui, mainFrame, scrollFrame, timerLabel, rerollBtn, closeBtn = getUI()
-	
-	-- ✅ CRITICAL FIX: FORCE CLIPPING SO CARS DON'T POP OUT
-	scrollFrame.ClipsDescendants = true 
-	
+
+	-- [REMOVED] Forced ClipsDescendants override. Uses Studio setting.
+
 	gui.Enabled = false 
 	Kit.Inventory:Init(SHOP_CARS)
 
@@ -178,8 +177,7 @@ local function init()
 			if not imageButton then imageButton = card:FindFirstChild("CarImage") end 
 
 			if imageButton then
-				-- Force ZIndex low so it stays behind popups
-				imageButton.ZIndex = 5 
+				-- [REMOVED] Forced ZIndex override. Uses Studio setting.
 				Kit.Tween:SetupWiggle(imageButton)
 			end
 
