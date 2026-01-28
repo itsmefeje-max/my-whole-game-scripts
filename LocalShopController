@@ -1,5 +1,5 @@
 -- [[ LOCAL SCRIPT: LocalShopController ]]
--- UPDATED: Respects Studio ZIndex Settings (No longer overrides layout)
+-- UPDATED: Added SFX and Hover Logic for 'NoStockIndicator'
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -27,7 +27,7 @@ local ROBUX_PRODUCTS = {
 	Atom    = 2222222, 
 	Windsor = 3333333, 
 	Senator = 4444444, 
-	Riva    = 5555555  
+	Riva    = 5555555 
 }
 
 -- 📡 REMOTES
@@ -74,7 +74,6 @@ local function RenderCard(card, carName, state)
 
 	-- 1. CASH BUTTON
 	if buyBtn then
-		-- [REMOVED] Forced ZIndex override. Uses Studio setting.
 		if state.CanBuy then
 			buyBtn.Visible = true; buyBtn.Active = true
 			if noStockInd then noStockInd.Visible = false end 
@@ -98,7 +97,6 @@ local function RenderCard(card, carName, state)
 	-- 2. ROBUX BUTTON
 	if robuxBtn then 
 		robuxBtn.Visible = state.CanRobux 
-		-- [REMOVED] Forced ZIndex override. Uses Studio setting.
 		robuxBtn.Active = true 
 	end
 end
@@ -157,8 +155,6 @@ end
 local function init()
 	local gui, mainFrame, scrollFrame, timerLabel, rerollBtn, closeBtn = getUI()
 
-	-- [REMOVED] Forced ClipsDescendants override. Uses Studio setting.
-
 	gui.Enabled = false 
 	Kit.Inventory:Init(SHOP_CARS)
 
@@ -177,7 +173,6 @@ local function init()
 			if not imageButton then imageButton = card:FindFirstChild("CarImage") end 
 
 			if imageButton then
-				-- [REMOVED] Forced ZIndex override. Uses Studio setting.
 				Kit.Tween:SetupWiggle(imageButton)
 			end
 
@@ -198,6 +193,13 @@ local function init()
 						warn("⚠️ Robux ID is 0 for " .. carName)
 					end
 				end)
+			end
+
+			-- ✅ [NEW FEATURE] NO STOCK SFX
+			-- This registers the "NoStockIndicator" so it dims and plays sound on hover
+			local noStockBtn = card:FindFirstChild("NoStockIndicator")
+			if noStockBtn then
+				Kit.Tween:SetupButton(noStockBtn)
 			end
 		end
 	end
