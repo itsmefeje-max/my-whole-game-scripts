@@ -14,7 +14,7 @@ local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
-local openButton = script.Parent 
+local openButton = script.Parent
 
 -- ✅ CRITICAL: GET PLAYER CONTROLS
 local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule"))
@@ -24,8 +24,8 @@ local Controls = PlayerModule:GetControls()
 -- ⚙️ CONFIGURATION
 -- ============================================================================
 local CONFIG = {
-	FOV = { 
-		Open = 50, 
+	FOV = {
+		Open = 50,
 		Default = 70 -- Fallback only, we now use Dynamic Capture
 	},
 	Zoom = { Min = 0.5, Max = 128 },
@@ -57,12 +57,13 @@ local itemsContainer = mainWindow:WaitForChild("ItemContainer", 10)
 local closeButton = mainWindow:WaitForChild("CloseButton", 10)
 
 -- Tier Components
-local tierFrame = myScreenGui:WaitForChild("TierFrame", 10)
+-- ✅ FIX: TierFrame is now a child of InventoryWindow (mainWindow), not the ScreenGui
+local tierFrame = mainWindow:WaitForChild("TierFrame", 10)
 local tierContainer = tierFrame:WaitForChild("TierContainer", 10)
 
 -- ✅ EMPTY INDICATOR (ONLY ADDED FUNCTIONALITY)
-local emptyIndicatorFrame = myScreenGui:FindFirstChild("InventoryWindow", true)
-local emptyIndicatorLabel = emptyIndicatorFrame and emptyIndicatorFrame:FindFirstChild("Indicator-v2", true) or nil
+-- ✅ FIX: Use mainWindow directly (safer now that hierarchy is known)
+local emptyIndicatorLabel = mainWindow:FindFirstChild("Indicator-v2", true)
 
 local function updateEmptyIndicator(tierName, isEmpty)
 	if not emptyIndicatorLabel then return end
@@ -80,33 +81,33 @@ end
 -- 🔒 STARTUP STATE
 if mainWindow then mainWindow.Visible = false end
 if tierFrame then tierFrame.Visible = false end
-openButton.Visible = true 
-openButton.ImageColor3 = CONFIG.Colors.Normal 
+openButton.Visible = true
+openButton.ImageColor3 = CONFIG.Colors.Normal
 
 -- Music & Audio Setup
 local gameThemeSound = SoundService:FindFirstChild(CONFIG.Audio.GameThemeName)
 local shopMusic = Instance.new("Sound")
 shopMusic.Name = "ShopMusic_Internal"
 shopMusic.SoundId = CONFIG.Audio.ShopMusic
-shopMusic.Volume = 0.5 
+shopMusic.Volume = 0.5
 shopMusic.Looped = true
-shopMusic.Parent = SoundService 
+shopMusic.Parent = SoundService
 
 -- State Tracking
-local currentFadeTween = nil      
-local hiddenGuis = {}             
+local currentFadeTween = nil
+local hiddenGuis = {}
 local currentTab = "Common"
 local savedFOV = CONFIG.FOV.Default -- Variable to store user's FOV
 
 -- 🖼️ BACKGROUNDS MAP
 local tierBackgrounds = {}
-local tierNames = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"}
+local tierNames = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic" }
 
 for _, rarity in ipairs(tierNames) do
 	local bgObj = mainWindow:FindFirstChild(rarity .. "BG")
 	if bgObj then
 		tierBackgrounds[rarity] = bgObj
-		bgObj.Visible = false 
+		bgObj.Visible = false
 		if bgObj.ZIndex <= mainWindow.ZIndex then
 			bgObj.ZIndex = mainWindow.ZIndex + 1
 		end
@@ -118,8 +119,8 @@ local CarStats = nil
 local success, err = pcall(function()
 	CarStats = require(ReplicatedStorage:WaitForChild("CarStats", 5))
 end)
-if not success then 
-	warn("❌ CRITICAL: CarStats failed to load. Inventory will not function.") 
+if not success then
+	warn("❌ CRITICAL: CarStats failed to load. Inventory will not function.")
 end
 
 pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false) end)
@@ -131,7 +132,7 @@ local function playSfx(soundId, volume)
 	local s = Instance.new("Sound")
 	s.SoundId = soundId
 	s.Volume = volume or 0.5
-	s.Parent = openButton 
+	s.Parent = openButton
 	s:Play()
 	game.Debris:AddItem(s, 3)
 end
@@ -151,7 +152,7 @@ end
 local function toggleOtherGuis(shouldHide)
 	local playerGui = player:WaitForChild("PlayerGui")
 	if shouldHide then
-		hiddenGuis = {} 
+		hiddenGuis = {}
 		for _, gui in pairs(playerGui:GetChildren()) do
 			if gui:IsA("ScreenGui") and gui ~= myScreenGui and gui.Enabled == true then
 				gui.Enabled = false
@@ -162,7 +163,7 @@ local function toggleOtherGuis(shouldHide)
 		for _, gui in pairs(hiddenGuis) do
 			if gui and gui.Parent then gui.Enabled = true end
 		end
-		hiddenGuis = {} 
+		hiddenGuis = {}
 	end
 end
 
@@ -180,7 +181,7 @@ local function ApplyUniversalGlow(textLabel, rarity)
 	-- Outline
 	local stroke = Instance.new("UIStroke", textLabel)
 	stroke.Thickness = 3
-	stroke.Color = Color3.new(0, 0, 0) 
+	stroke.Color = Color3.new(0, 0, 0)
 
 	local gradient = Instance.new("UIGradient", textLabel)
 
@@ -197,7 +198,7 @@ local function ApplyUniversalGlow(textLabel, rarity)
 	elseif rarity == "Legendary" then
 		gradient.Color = ColorSequence.new({
 			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255, 180, 50)),
-			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 240, 150)), 
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 240, 150)),
 			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255, 180, 50))
 		})
 		stroke.Color = Color3.fromRGB(100, 60, 0)
@@ -230,7 +231,7 @@ local function ApplyUniversalGlow(textLabel, rarity)
 		local speed = 3
 		while textLabel.Parent do
 			local t = tick()
-			local shimmer = 0.2 + 0.2 * math.sin(t * speed) 
+			local shimmer = 0.2 + 0.2 * math.sin(t * speed)
 			gradient.Transparency = NumberSequence.new(shimmer)
 			RunService.Heartbeat:Wait()
 		end
@@ -246,11 +247,11 @@ local function addButtonEffects(btn, scaleOnly)
 	if not UserInputService.TouchEnabled then
 		btn.MouseEnter:Connect(function()
 			playSfx(CONFIG.Audio.Hover, 0.3)
-			btn.ZIndex = 10 
-			TweenService:Create(scale, TweenInfo.new(0.2), {Scale = 1.1}):Play()
+			btn.ZIndex = 10
+			TweenService:Create(scale, TweenInfo.new(0.2), { Scale = 1.1 }):Play()
 
 			if not scaleOnly then
-				local goals = {BackgroundColor3 = CONFIG.Colors.Dim}
+				local goals = { BackgroundColor3 = CONFIG.Colors.Dim }
 
 				if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
 					goals.ImageColor3 = CONFIG.Colors.Dim
@@ -262,10 +263,10 @@ local function addButtonEffects(btn, scaleOnly)
 
 		btn.MouseLeave:Connect(function()
 			btn.ZIndex = 1
-			TweenService:Create(scale, TweenInfo.new(0.2), {Scale = 1}):Play()
+			TweenService:Create(scale, TweenInfo.new(0.2), { Scale = 1 }):Play()
 
 			if not scaleOnly then
-				local goals = {BackgroundColor3 = getRarityColor(btn.Name)}
+				local goals = { BackgroundColor3 = getRarityColor(btn.Name) }
 
 				if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
 					goals.ImageColor3 = CONFIG.Colors.Normal
@@ -281,10 +282,10 @@ local function addOpenButtonHover(btn)
 	if not UserInputService.TouchEnabled then
 		btn.MouseEnter:Connect(function()
 			playSfx(CONFIG.Audio.Hover, 0.3)
-			TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = CONFIG.Colors.Dim}):Play()
+			TweenService:Create(btn, TweenInfo.new(0.2), { ImageColor3 = CONFIG.Colors.Dim }):Play()
 		end)
 		btn.MouseLeave:Connect(function()
-			TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = CONFIG.Colors.Normal}):Play()
+			TweenService:Create(btn, TweenInfo.new(0.2), { ImageColor3 = CONFIG.Colors.Normal }):Play()
 		end)
 	end
 end
@@ -300,12 +301,12 @@ end
 -- ============================================================================
 local function updateInventory()
 	for _, child in pairs(itemsContainer:GetChildren()) do
-		if child:IsA("GuiObject") and not child:IsA("UIListLayout") and not child:IsA("UIGridLayout") then 
-			child:Destroy() 
+		if child:IsA("GuiObject") and not child:IsA("UIListLayout") and not child:IsA("UIGridLayout") then
+			child:Destroy()
 		end
 	end
 
-	local inventoryData = {} 
+	local inventoryData = {}
 
 	local function scan(loc)
 		if not loc then return end
@@ -331,7 +332,7 @@ local function updateInventory()
 		end
 	end
 
-	scan(player:FindFirstChild("Backpack")) 
+	scan(player:FindFirstChild("Backpack"))
 	scan(player.Character)
 
 	local renderedAnyInTab = false
@@ -346,11 +347,11 @@ local function updateInventory()
 
 			local btn = Instance.new("TextButton")
 			btn.Name = stats.Rarity
-			btn.Text = "" 
+			btn.Text = ""
 			btn.Parent = itemsContainer
-			btn.Size = UDim2.new(0, 100, 0, 120) 
+			btn.Size = UDim2.new(0, 100, 0, 120)
 			btn.BackgroundColor3 = getRarityColor(stats.Rarity)
-			btn.AutoButtonColor = false 
+			btn.AutoButtonColor = false
 
 			local corner = Instance.new("UICorner")
 			corner.CornerRadius = UDim.new(0, 8)
@@ -363,8 +364,8 @@ local function updateInventory()
 			icon.Size = UDim2.new(1, 0, 1, 0)
 			icon.Position = UDim2.new(0.5, 0, 0.5, 0)
 			icon.AnchorPoint = Vector2.new(0.5, 0.5)
-			icon.ScaleType = Enum.ScaleType.Fit 
-			icon.ZIndex = 1 
+			icon.ScaleType = Enum.ScaleType.Fit
+			icon.ZIndex = 1
 
 			local imgCorner = Instance.new("UICorner")
 			imgCorner.CornerRadius = UDim.new(0, 8)
@@ -383,12 +384,12 @@ local function updateInventory()
 			nameLabel.Parent = btn
 			nameLabel.BackgroundTransparency = 1
 			nameLabel.Size = UDim2.new(1, -4, 0.25, 0)
-			nameLabel.Position = UDim2.new(0.5, 0, 0.85, 0) 
+			nameLabel.Position = UDim2.new(0.5, 0, 0.85, 0)
 			nameLabel.AnchorPoint = Vector2.new(0.5, 0.5)
-			nameLabel.Text = carName 
+			nameLabel.Text = carName
 			nameLabel.Font = Enum.Font.FredokaOne
 			nameLabel.TextScaled = true
-			nameLabel.ZIndex = 5 
+			nameLabel.ZIndex = 5
 
 			ApplyUniversalGlow(nameLabel, stats.Rarity)
 
@@ -398,14 +399,14 @@ local function updateInventory()
 				countTag.Parent = btn
 				countTag.Text = "x" .. count
 				countTag.Size = UDim2.new(0.35, 0, 0.25, 0)
-				countTag.Position = UDim2.new(0.95, 0, 0.05, 0) 
+				countTag.Position = UDim2.new(0.95, 0, 0.05, 0)
 				countTag.AnchorPoint = Vector2.new(1, 0)
 				countTag.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 				countTag.BackgroundTransparency = 0.4
 				countTag.TextColor3 = CONFIG.Colors.Normal
 				countTag.Font = Enum.Font.FredokaOne
 				countTag.TextScaled = true
-				countTag.ZIndex = 6 
+				countTag.ZIndex = 6
 
 				local countCorner = Instance.new("UICorner")
 				countCorner.CornerRadius = UDim.new(0, 6)
@@ -426,14 +427,16 @@ local function updateInventory()
 				equippedTag.Parent = btn
 				equippedTag.Text = "EQUIPPED"
 				equippedTag.TextColor3 = CONFIG.Colors.Gold
-				equippedTag.Position = UDim2.new(0.5, 0, 0.5, 0) 
+				equippedTag.Position = UDim2.new(0.5, 0, 0.5, 0)
 				equippedTag.Rotation = -15
 				equippedTag.ZIndex = 7
 
-				for _, c in pairs(equippedTag:GetChildren()) do if c:IsA("UIGradient") then c:Destroy() end end
+				for _, c in pairs(equippedTag:GetChildren()) do
+					if c:IsA("UIGradient") then c:Destroy() end
+				end
 			end
 
-			addButtonEffects(btn, false) 
+			addButtonEffects(btn, false)
 
 			btn.MouseButton1Click:Connect(function()
 				playSfx(CONFIG.Audio.Equip, 0.5)
@@ -442,7 +445,7 @@ local function updateInventory()
 
 				local existingTool = char:FindFirstChild(tool.Name)
 				if existingTool then
-					existingTool.Parent = player.Backpack 
+					existingTool.Parent = player.Backpack
 				else
 					if tool.Parent == player.Backpack then
 						for _, object in pairs(char:GetChildren()) do
@@ -464,23 +467,22 @@ end
 -- ============================================================================
 -- 🟢 UI CONTROL LOGIC (FIXED CAMERA RETURN)
 -- ============================================================================
-
 local function performClose()
 	mainWindow.Visible = false
 	tierFrame.Visible = false
 	openButton.Visible = true
 
-	Controls:Enable() 
+	Controls:Enable()
 
 	player.CameraMinZoomDistance = CONFIG.Zoom.Min
 	player.CameraMaxZoomDistance = CONFIG.Zoom.Max
 
 	toggleOtherGuis(false)
 
-	TweenService:Create(camera, CONFIG.Tween, {FieldOfView = savedFOV}):Play()
+	TweenService:Create(camera, CONFIG.Tween, { FieldOfView = savedFOV }):Play()
 
 	if shopMusic.IsPlaying then
-		currentFadeTween = TweenService:Create(shopMusic, TweenInfo.new(1), {Volume = 0})
+		currentFadeTween = TweenService:Create(shopMusic, TweenInfo.new(1), { Volume = 0 })
 		currentFadeTween:Play()
 		currentFadeTween.Completed:Connect(function()
 			shopMusic:Stop()
@@ -489,9 +491,9 @@ local function performClose()
 	end
 end
 
-closeButton.MouseButton1Click:Connect(function() 
+closeButton.MouseButton1Click:Connect(function()
 	playSfx(CONFIG.Audio.Click, 0.5)
-	performClose() 
+	performClose()
 end)
 
 openButton.MouseButton1Click:Connect(function()
@@ -504,11 +506,11 @@ openButton.MouseButton1Click:Connect(function()
 	if not shopMusic.IsPlaying then shopMusic:Play() end
 
 	toggleOtherGuis(true)
-	currentTab = "Common" 
+	currentTab = "Common"
 	updateInventory()
 	updateBackground()
 
-	Controls:Disable() 
+	Controls:Disable()
 	local currentZoom = (camera.CFrame.Position - camera.Focus.Position).Magnitude
 	player.CameraMinZoomDistance = currentZoom
 	player.CameraMaxZoomDistance = currentZoom
@@ -517,7 +519,7 @@ openButton.MouseButton1Click:Connect(function()
 	tierFrame.Visible = true
 	openButton.Visible = false
 
-	TweenService:Create(camera, CONFIG.Tween, {FieldOfView = CONFIG.FOV.Open}):Play()
+	TweenService:Create(camera, CONFIG.Tween, { FieldOfView = CONFIG.FOV.Open }):Play()
 end)
 
 addOpenButtonHover(openButton)
@@ -526,11 +528,15 @@ addButtonEffects(closeButton, false)
 if tierContainer then
 	for _, btn in pairs(tierContainer:GetChildren()) do
 		if btn:IsA("GuiButton") then
-			addButtonEffects(btn, true) 
+			addButtonEffects(btn, true)
 			btn.MouseButton1Click:Connect(function()
-				if btn.Name == "Mythic" then playSfx(CONFIG.Audio.Mythic, 1) else playSfx(CONFIG.Audio.Click, 0.5) end
-				currentTab = btn.Name 
-				updateBackground() 
+				if btn.Name == "Mythic" then
+					playSfx(CONFIG.Audio.Mythic, 1)
+				else
+					playSfx(CONFIG.Audio.Click, 0.5)
+				end
+				currentTab = btn.Name
+				updateBackground()
 				updateInventory()
 			end)
 		end
@@ -566,29 +572,29 @@ do
 	local function tierStyle(tier)
 		local map = {
 			Common = {
-				textGrad = ColorSequence.new(Color3.fromRGB(245,245,245), Color3.fromRGB(165,165,165)),
-				stroke = Color3.fromRGB(10,10,10),
-				glow = Color3.fromRGB(255,255,255),
+				textGrad = ColorSequence.new(Color3.fromRGB(245, 245, 245), Color3.fromRGB(165, 165, 165)),
+				stroke = Color3.fromRGB(10, 10, 10),
+				glow = Color3.fromRGB(255, 255, 255),
 			},
 			Uncommon = {
-				textGrad = ColorSequence.new(Color3.fromRGB(170,255,195), Color3.fromRGB(10,190,75)),
-				stroke = Color3.fromRGB(0,60,20),
-				glow = Color3.fromRGB(160,255,200),
+				textGrad = ColorSequence.new(Color3.fromRGB(170, 255, 195), Color3.fromRGB(10, 190, 75)),
+				stroke = Color3.fromRGB(0, 60, 20),
+				glow = Color3.fromRGB(160, 255, 200),
 			},
 			Rare = {
-				textGrad = ColorSequence.new(Color3.fromRGB(175,225,255), Color3.fromRGB(40,125,255)),
-				stroke = Color3.fromRGB(0,35,85),
-				glow = Color3.fromRGB(170,220,255),
+				textGrad = ColorSequence.new(Color3.fromRGB(175, 225, 255), Color3.fromRGB(40, 125, 255)),
+				stroke = Color3.fromRGB(0, 35, 85),
+				glow = Color3.fromRGB(170, 220, 255),
 			},
 			Epic = {
-				textGrad = ColorSequence.new(Color3.fromRGB(235,180,255), Color3.fromRGB(160,70,255)),
-				stroke = Color3.fromRGB(55,0,90),
-				glow = Color3.fromRGB(235,190,255),
+				textGrad = ColorSequence.new(Color3.fromRGB(235, 180, 255), Color3.fromRGB(160, 70, 255)),
+				stroke = Color3.fromRGB(55, 0, 90),
+				glow = Color3.fromRGB(235, 190, 255),
 			},
 			Legendary = {
-				textGrad = ColorSequence.new(Color3.fromRGB(255,240,165), Color3.fromRGB(255,175,55)),
-				stroke = Color3.fromRGB(90,45,0),
-				glow = Color3.fromRGB(255,235,160),
+				textGrad = ColorSequence.new(Color3.fromRGB(255, 240, 165), Color3.fromRGB(255, 175, 55)),
+				stroke = Color3.fromRGB(90, 45, 0),
+				glow = Color3.fromRGB(255, 235, 160),
 			},
 			Mythic = {
 				textGrad = ColorSequence.new({
@@ -596,8 +602,8 @@ do
 					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 245, 140)),
 					ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255, 90, 255)),
 				}),
-				stroke = Color3.fromRGB(60,0,0),
-				glow = Color3.fromRGB(255,200,255),
+				stroke = Color3.fromRGB(60, 0, 0),
+				glow = Color3.fromRGB(255, 200, 255),
 			},
 		}
 		return map[tier] or map.Common
@@ -626,7 +632,7 @@ do
 
 	-- Glass shine overlay
 	local shine = getOrMake("Frame", indicator, SHINE_NAME)
-	shine.BackgroundColor3 = Color3.fromRGB(255,255,255)
+	shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 	shine.BackgroundTransparency = 1
 	shine.Size = UDim2.new(1, 0, 1, 0)
 	shine.Position = UDim2.new(0, 0, 0, 0)
@@ -640,7 +646,7 @@ do
 
 	local shineGrad = getOrMake("UIGradient", shine, SHINEGRAD_NAME)
 	shineGrad.Rotation = -35
-	shineGrad.Color = ColorSequence.new(Color3.fromRGB(255,255,255), Color3.fromRGB(255,255,255))
+	shineGrad.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 255, 255))
 	shineGrad.Transparency = NumberSequence.new({
 		NumberSequenceKeypoint.new(0.00, 1.00),
 		NumberSequenceKeypoint.new(0.35, 1.00),
@@ -673,8 +679,8 @@ do
 		-- pop-in (scale + fade) - text only, no shadow
 		scale.Scale = 0.92
 		indicator.TextTransparency = 0.35
-		TweenService:Create(scale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
-		TweenService:Create(indicator, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+		TweenService:Create(scale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		TweenService:Create(indicator, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = 0 }):Play()
 
 		-- subtle breathing + moving shine sweep
 		local t0 = tick()
@@ -706,7 +712,6 @@ do
 		local st = tierStyle(tier)
 
 		-- IMPORTANT: do NOT touch BackgroundTransparency/BackgroundColor3 (your request)
-
 		stroke.Color = Color3.fromRGB(
 			math.floor((st.stroke.R * 255 + st.glow.R * 255 * 0.25) / 1.25),
 			math.floor((st.stroke.G * 255 + st.glow.G * 255 * 0.25) / 1.25),
