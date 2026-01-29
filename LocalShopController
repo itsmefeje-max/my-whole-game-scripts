@@ -220,7 +220,7 @@ local function init()
 
 		if isShopCar then
 			print("🎵 Playing Advanced SFX for Car Purchase: " .. tostring(productId))
-			
+
 			-- Create separate sound instance for maximum quality/overlap
 			local s = Instance.new("Sound")
 			s.Name = "CarPurchaseSFX"
@@ -229,7 +229,7 @@ local function init()
 			s.Pitch = 1.0
 			s.Parent = SoundService
 			s:Play()
-			
+
 			Debris:AddItem(s, 5) -- Cleanup after 5 seconds
 		end
 	end)
