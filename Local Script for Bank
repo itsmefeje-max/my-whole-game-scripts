@@ -16,19 +16,24 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 -- 🛠️ HELPER: Debug Finder
 local function debugFind(parent, name)
-	local obj = parent:WaitForChild(name, 5) 
-	if obj then return obj else warn("❌ CRITICAL: Missing " .. name) return nil end
+	local obj = parent:WaitForChild(name, 5)
+	if obj then
+		return obj
+	else
+		warn("❌ CRITICAL: Missing " .. name)
+		return nil
+	end
 end
 
 -- 1. FIND GUI
-local myScreenGui = debugFind(playerGui, "BankGui") 
+local myScreenGui = debugFind(playerGui, "BankGui")
 if not myScreenGui then return end
 
 local mainWindow = debugFind(myScreenGui, "BankFrame")
-local transferFrame = myScreenGui:FindFirstChild("TransferFrame") 
+local transferFrame = myScreenGui:FindFirstChild("TransferFrame")
 local openButton = debugFind(myScreenGui, "OpenButton")
 
-if not mainWindow or not openButton then return end 
+if not mainWindow or not openButton then return end
 
 -- 🛑 FORCE HIDE IMMEDIATELY
 mainWindow.Visible = false
@@ -46,32 +51,34 @@ local greetingLabel = debugFind(headerContainer, "GreetingLabel")
 local avatarImage = debugFind(headerContainer, "AvatarImage")
 
 if not greetingLabel or not avatarImage then return end
-greetingLabel.RichText = true 
+greetingLabel.RichText = true
 
 -- ⚙️ CONFIG
-local OPEN_FOV = 50        
-local NORMAL_FOV = 70        
+local OPEN_FOV = 50
+local NORMAL_FOV = 70
 local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
 local HOVER_TWEEN = TweenInfo.new(0.2)
-local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) 
-local DIM_COLOR = Color3.fromRGB(200, 200, 200)    
+
+-- We will use these for BOTH image buttons and normal buttons (see addHover below)
+local NORMAL_COLOR = Color3.fromRGB(255, 255, 255)
+local DIM_COLOR = Color3.fromRGB(200, 200, 200)
 
 -- 🔊 SOUND IDS (SFX ONLY)
-local SOUND_ID = "rbxassetid://9083627113" 
+local SOUND_ID = "rbxassetid://9083627113"
 
 -- 🛡️ TRACKING VARIABLES
-local hiddenGuis = {}       
+local hiddenGuis = {}
 
 -- 3. SETUP CLICK DETECTOR
 local detector = Instance.new("TextButton")
 detector.Name = "OutsideDetector"
 detector.Parent = myScreenGui
 detector.Size = UDim2.new(1, 0, 1, 0)
-detector.BackgroundTransparency = 1 
+detector.BackgroundTransparency = 1
 detector.Text = ""
-detector.ZIndex = mainWindow.ZIndex - 1 
+detector.ZIndex = mainWindow.ZIndex - 1
 detector.Visible = false
-detector.Active = true 
+detector.Active = true
 
 -- 4. MONEY VARIABLES
 local leaderstats = player:WaitForChild("leaderstats", 10)
@@ -97,7 +104,7 @@ end
 -- ============================================================================
 local function toggleOtherGuis(shouldHide)
 	if shouldHide then
-		hiddenGuis = {} 
+		hiddenGuis = {}
 		for _, gui in pairs(playerGui:GetChildren()) do
 			if gui:IsA("ScreenGui") and gui ~= myScreenGui and gui.Enabled == true then
 				gui.Enabled = false
@@ -106,11 +113,11 @@ local function toggleOtherGuis(shouldHide)
 		end
 	else
 		for _, gui in pairs(hiddenGuis) do
-			if gui and gui.Parent then 
+			if gui and gui.Parent then
 				gui.Enabled = true
 			end
 		end
-		hiddenGuis = {} 
+		hiddenGuis = {}
 	end
 end
 
@@ -143,20 +150,20 @@ end
 
 local function loadAvatar()
 	local content, isReady = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
-	if isReady then 
-		avatarImage.Image = content 
-	else 
-		avatarImage.Image = "" 
+	if isReady then
+		avatarImage.Image = content
+	else
+		avatarImage.Image = ""
 	end
 end
 
 local function getRandomHex()
-	return Color3.fromHSV(math.random(), 0.7, 1):ToHex() 
+	return Color3.fromHSV(math.random(), 0.7, 1):ToHex()
 end
 
 local function setFocusMode(isFocused)
 	detector.Visible = isFocused
-	openButton.Visible = not isFocused 
+	openButton.Visible = not isFocused
 
 	if isFocused then
 		mainWindow.Visible = true
@@ -205,23 +212,55 @@ local function performClose()
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
 end
 
-closeButton.MouseButton1Click:Connect(function() 
+closeButton.MouseButton1Click:Connect(function()
 	playSfx(SOUND_ID, 0.5)
 	performClose()
-end) 
+end)
 
 detector.MouseButton1Click:Connect(function()
 	playSfx(SOUND_ID, 0.5) -- Optional: Click sound when clicking outside
 	performClose()
 end)
 
+-- ============================================================================
+-- ✨ HOVER DIM EFFECT (NOW WORKS FOR MAX BUTTON TOO)
+-- ============================================================================
 local function addHover(btn)
-	btn.MouseEnter:Connect(function() TweenService:Create(btn, HOVER_TWEEN, {ImageColor3 = DIM_COLOR}):Play() end)
-	btn.MouseLeave:Connect(function() TweenService:Create(btn, HOVER_TWEEN, {ImageColor3 = NORMAL_COLOR}):Play() end)
+	-- Supports ImageButton (ImageColor3) and TextButton (BackgroundColor3)
+	local prop = nil
+	if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
+		prop = "ImageColor3"
+	elseif btn:IsA("TextButton") or btn:IsA("TextLabel") or btn:IsA("Frame") then
+		prop = "BackgroundColor3"
+	end
+	if not prop then return end
+
+	btn.MouseEnter:Connect(function()
+		TweenService:Create(btn, HOVER_TWEEN, {[prop] = DIM_COLOR}):Play()
+	end)
+
+	btn.MouseLeave:Connect(function()
+		TweenService:Create(btn, HOVER_TWEEN, {[prop] = NORMAL_COLOR}):Play()
+	end)
 end
 
+-- Apply hover to known buttons
 addHover(openButton)
-if closeButton:IsA("ImageButton") then addHover(closeButton) end
+addHover(closeButton)
 
+-- ✅ Apply hover to Max button too (does NOT touch click behavior)
+local maxButton =
+	mainWindow:FindFirstChild("MaxButton", true)
+	or (transferFrame and transferFrame:FindFirstChild("MaxButton", true))
+
+if maxButton then
+	addHover(maxButton)
+else
+	warn("⚠️ MaxButton not found (expected name: 'MaxButton')")
+end
+
+-- ============================================================================
+-- FINAL UPDATES
+-- ============================================================================
 if cash then cash.Changed:Connect(updateDisplay) end
 task.spawn(loadAvatar)
