@@ -1,20 +1,29 @@
--- ( LOCAL SCRIPT: Force Landscape Mode )
--- Forces mobile players to use Landscape mode so UI fits perfectly.
+-- [[ LOCAL SCRIPT: Force Landscape Mode (Mobile Only Fix) ]]
+-- FEATURES: Forces Landscape ONLY for mobile users. PC/Studio stays normal.
 
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- ⚙️ CONFIGURATION
--- LandscapeSensor = Horizontal (Allows flipping Left/Right)
 local TARGET_ORIENTATION = Enum.ScreenOrientation.LandscapeSensor
 
--- 1. APPLY IMMEDIATELY
-playerGui.ScreenOrientation = TARGET_ORIENTATION
+-- ✅ CRITICAL FIX: Only run if the device has Touchscreen (Mobile/Tablet)
+-- This prevents it from messing up your Studio or PC view.
+if UserInputService.TouchEnabled then
+	
+	-- 1. APPLY IMMEDIATELY
+	playerGui.ScreenOrientation = TARGET_ORIENTATION
 
--- 2. ENFORCE (Prevents them from switching back)
-playerGui:GetPropertyChangedSignal("ScreenOrientation"):Connect(function()
-	if playerGui.ScreenOrientation ~= TARGET_ORIENTATION then
-		playerGui.ScreenOrientation = TARGET_ORIENTATION
-	end
-end)
+	-- 2. ENFORCE (Prevents them from switching back)
+	playerGui:GetPropertyChangedSignal("ScreenOrientation"):Connect(function()
+		if playerGui.ScreenOrientation ~= TARGET_ORIENTATION then
+			playerGui.ScreenOrientation = TARGET_ORIENTATION
+		end
+	end)
+	
+	print("📱 Mobile Device Detected: Forced Landscape Mode.")
+else
+	print("💻 PC/Studio Detected: Screen Orientation Skipped.")
+end
