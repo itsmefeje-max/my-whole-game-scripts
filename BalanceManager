@@ -1,6 +1,6 @@
--- [[ LOCAL SCRIPT: BalanceManager (3s Float + Join Bug Fix) ]]
--- Indicating what the script is for: Tracks Wallet & Spawns Floating "+Cash" Feedback.
--- LOCATION: StarterGui > Balance-Indicator > Balance (TextLabel)
+-- [[ LOCAL SCRIPT: BalanceManager (Gain & Loss FX) ]]
+-- PURPOSE: Tracks Wallet & Spawns Floating "+Cash" (Green) OR "-Cash" (Red) Feedback.
+-- LOCATION: StarterGui > Balance Indicator > Balance > BalanceManager
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -11,20 +11,20 @@ local player = Players.LocalPlayer
 local label = script.Parent
 
 -- 2. WAIT FOR DATA
--- We track "Wallet" (Physical Cash)
 local leaderstats = player:WaitForChild("leaderstats")
 local walletValue = leaderstats:WaitForChild("Wallet") 
 
 -- STATE VARIABLES
 local currentBalance = walletValue.Value 
-local scriptStartTime = os.clock() -- [FIX] We record exactly when the GUI loaded
+local scriptStartTime = os.clock()
 
 -- ============================================================================
 -- ⚙️ SETTINGS
 -- ============================================================================
-local FLOAT_DURATION = 3.0       -- [UPDATED] Reverted to 3 seconds
-local FLOAT_DISTANCE = 0.08      -- How high it floats (Scale 0-1)
-local TEXT_COLOR = Color3.fromRGB(85, 255, 127) -- Green Color
+local FLOAT_DURATION = 3.0       
+local FLOAT_DISTANCE = 0.08      
+local TEXT_COLOR_GAIN = Color3.fromRGB(85, 255, 127)   -- Green (+)
+local TEXT_COLOR_LOSS = Color3.fromRGB(255, 80, 80)    -- Red (-)
 
 -- ============================================================================
 -- 📊 FORMATTING HELPER
@@ -41,31 +41,39 @@ local function formatMoney(n)
 end
 
 -- ============================================================================
--- ☁️ FLOATING TEXT LOGIC (Tablet Style)
+-- ☁️ FLOATING TEXT LOGIC (Pop Up Animation)
 -- ============================================================================
-local function spawnFloatingFeedback(amountAdded)
-	-- 1. Clone the label to match style
+local function spawnFloatingFeedback(amount, isGain)
+	-- 1. Clone the label to match exact font/size style
 	local floatLabel = label:Clone()
 	floatLabel.Name = "FloatingFeedback"
-	floatLabel.Text = "+" .. formatMoney(amountAdded)
-	floatLabel.TextColor3 = TEXT_COLOR
+	
+	-- 2. Apply Text & Color based on Gain vs Loss
+	if isGain then
+		floatLabel.Text = "+" .. formatMoney(amount)
+		floatLabel.TextColor3 = TEXT_COLOR_GAIN
+	else
+		floatLabel.Text = "-" .. formatMoney(amount)
+		floatLabel.TextColor3 = TEXT_COLOR_LOSS
+	end
+
 	floatLabel.BackgroundTransparency = 1
 	floatLabel.Parent = label.Parent 
 	
-	-- 2. Layering
+	-- 3. Layering (Above original text)
 	floatLabel.ZIndex = label.ZIndex + 1
 	
-	-- 3. Cleanup scripts from clone
+	-- 4. Cleanup scripts from clone (Prevent duplicate logic running)
 	for _, child in pairs(floatLabel:GetChildren()) do
 		if child:IsA("LocalScript") or child:IsA("Script") or child:IsA("UIScale") then 
 			child:Destroy() 
 		end
 	end
 
-	-- 4. Start Position (Matches Label)
+	-- 5. Start Position
 	floatLabel.Position = label.Position
 	
-	-- 5. Animate
+	-- 6. Animate (The "Cool Pop Up")
 	local targetPos = floatLabel.Position - UDim2.new(0, 0, FLOAT_DISTANCE, 0)
 	local tweenInfo = TweenInfo.new(FLOAT_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	
@@ -75,7 +83,7 @@ local function spawnFloatingFeedback(amountAdded)
 	moveTween:Play()
 	fadeTween:Play()
 	
-	-- 6. Destroy after 3 seconds
+	-- 7. Destroy after animation
 	Debris:AddItem(floatLabel, FLOAT_DURATION)
 end
 
@@ -91,14 +99,18 @@ updateDisplay()
 
 -- 2. Connect to the .Changed event
 walletValue.Changed:Connect(function(newValue)
-	-- CHECK: Did money go UP?
 	local difference = newValue - currentBalance
 	
-	-- [FIXED LOGIC] 
-	-- We ensure the game has been running for at least 2 seconds.
-	-- This prevents the "Loading Data" jump from triggering the animation on join.
-	if difference > 0 and (os.clock() - scriptStartTime > 2) then
-		spawnFloatingFeedback(difference)
+	-- [LOGIC] Only animate if game has been running for > 2 seconds 
+	-- (Prevents "Loading Data" jump from triggering animations on join)
+	if (os.clock() - scriptStartTime > 2) then
+		if difference > 0 then
+			-- Money went UP (Green +)
+			spawnFloatingFeedback(math.abs(difference), true)
+		elseif difference < 0 then
+			-- Money went DOWN (Red -)
+			spawnFloatingFeedback(math.abs(difference), false)
+		end
 	end
 	
 	-- Update state & text
