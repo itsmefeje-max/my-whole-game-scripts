@@ -1,7 +1,6 @@
 -- [[ SERVER SCRIPT: LocalShopService ]]
--- UPDATED: Rarity-Based Stock, Optimized Rotation, Boolean Featured Flags
--- FIXED: Added Security Tags (IssuedByServer) to prevent TycoonDataHandler deletion.
-
+-- UPDATED: Fixed Currency Target (Now uses 'Wallet' instead of 'Cash')
+-- FIXED: Rarity-Based Stock, Optimized Rotation, Boolean Featured Flags
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
@@ -41,9 +40,8 @@ end
 local PlayerSessions = {} 
 
 -- ============================================================================
--- 🛡️ SECURITY HELPER (THE FIX)
+-- 🛡️ SECURITY HELPER
 -- ============================================================================
--- This applies the "Receipt" so TycoonDataHandler doesn't delete the car.
 local function tagIssued(tool, originalName)
 	if not tool then return end
 	tool:SetAttribute("IssuedByServer", true)
@@ -59,7 +57,6 @@ end
 
 local function getGlobalSeedID() return math.floor(os.time() / RESTOCK_INTERVAL) end
 
--- ✅ NEW: RARITY-BASED STOCK CALCULATOR
 local function calculateStockForCar(carName, rng)
 	local weight = CAR_WEIGHTS[carName] or 0
 	local limit = 1 -- Base stock
@@ -67,9 +64,7 @@ local function calculateStockForCar(carName, rng)
 	-- Roll 1: Chance to get +1 (Based on Rarity %)
 	if rng:NextInteger(1, 100) <= weight then
 		limit = limit + 1
-
 		-- Roll 2: Small chance to get +1 again (Cap at 3)
-		-- We use half the weight for the "crit" roll
 		if limit == 2 and rng:NextInteger(1, 100) <= math.ceil(weight * 0.5) then
 			limit = limit + 1
 		end
@@ -78,20 +73,19 @@ local function calculateStockForCar(carName, rng)
 	return limit
 end
 
--- ✅ UPDATED: CONFIG GENERATION
 local function generateStockConfiguration(seedValue)
 	local rng = Random.new(seedValue)
 
-	local featuredFlags = {} -- {CarName = true}
-	local stockLimits = {}   -- {CarName = MaxAmount}
+	local featuredFlags = {} 
+	local stockLimits = {}   
 
-	-- 1. Process ALWAYS_STOCK (Force Featured, Calc Stock)
+	-- 1. Process ALWAYS_STOCK
 	for name, _ in pairs(ALWAYS_STOCK) do
 		featuredFlags[name] = true
 		stockLimits[name] = calculateStockForCar(name, rng)
 	end
 
-	-- 2. Build Weighted Pool (Excluding Always Stock)
+	-- 2. Build Weighted Pool
 	local poolKeys = {}
 	local poolWeights = {}
 	local totalWeight = 0
@@ -104,7 +98,7 @@ local function generateStockConfiguration(seedValue)
 		end
 	end
 
-	-- 3. Rotation Logic (Rotation Size)
+	-- 3. Rotation Logic
 	local r = rng:NextInteger(1, 100)
 	local targetCount = (r > 90 and 3) or (r > 55 and 2) or 1
 
@@ -133,13 +127,9 @@ local function generateStockConfiguration(seedValue)
 		end
 	end
 
-	return {
-		Featured = featuredFlags, 
-		Limits = stockLimits
-	}
+	return { Featured = featuredFlags, Limits = stockLimits }
 end
 
--- ✅ NEW: Calculate Remaining Stock based on Limit vs Purchased
 local function calculateCurrentStock(limits, purchasedCounts)
 	local current = {}
 	for car, limit in pairs(limits) do
@@ -160,7 +150,7 @@ local function validateSession(player)
 			SeedVersion = currentGlobalID, 
 			LocalSeed = nil, 
 			Purchased = {},
-			Cache = nil -- ✅ Cache container
+			Cache = nil 
 		} 
 	end
 
@@ -171,9 +161,8 @@ local function validateSession(player)
 		session.SeedVersion = currentGlobalID
 		session.LocalSeed = nil
 		session.Purchased = {} 
-		session.Cache = nil -- Clear cache on rotate
+		session.Cache = nil 
 
-		-- Generate new state
 		local seed = session.LocalSeed or session.SeedVersion
 		session.Cache = generateStockConfiguration(seed)
 		local currentStock = calculateCurrentStock(session.Cache.Limits, session.Purchased)
@@ -189,7 +178,6 @@ local function validateSession(player)
 		})
 	end
 
-	-- Generate Cache if missing (First Load)
 	if not session.Cache then
 		local seed = session.LocalSeed or session.SeedVersion
 		session.Cache = generateStockConfiguration(seed)
@@ -200,24 +188,25 @@ end
 
 FuncGetState.OnServerInvoke = function(player)
 	local session = validateSession(player)
-
-	-- Use Cached Config
 	local config = session.Cache
 	local currentStock = calculateCurrentStock(config.Limits, session.Purchased)
 
 	return {
-		Featured = config.Featured,     -- {Delta = true}
-		StockLimit = config.Limits,     -- {Delta = 3}
-		Stock = currentStock,           -- {Delta = 2}
+		Featured = config.Featured,
+		StockLimit = config.Limits,
+		Stock = currentStock,
 		Purchased = session.Purchased,
 		NextRestock = (getGlobalSeedID() + 1) * RESTOCK_INTERVAL,
 		IsGlobal = (session.LocalSeed == nil)
 	}
 end
 
+-- ============================================================================
+-- 🛒 BUY CAR (THE FIX IS HERE)
+-- ============================================================================
 FuncBuyCar.OnServerInvoke = function(player, carName)
 	local session = validateSession(player)
-	local config = session.Cache -- Use Cache
+	local config = session.Cache
 
 	local CarStats = require(ReplicatedStorage.CarStats)
 	local carData = CarStats.Cars[carName]
@@ -232,28 +221,33 @@ FuncBuyCar.OnServerInvoke = function(player, carName)
 		return false, "Out of Stock"
 	end
 
-	local cash = player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash")
-	if not cash or cash.Value < carData.Price then return false, "Insufficient Funds" end
+	-- 🔴 CHANGED HERE: We now check "Wallet" instead of "Cash"
+	local wallet = player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Wallet")
+	
+	-- Validation
+	if not wallet then return false, "Wallet Not Found" end
+	if wallet.Value < carData.Price then return false, "Insufficient Cash (Withdraw from ATM)" end
 
 	-- Transaction
-	cash.Value = cash.Value - carData.Price
+	wallet.Value = wallet.Value - carData.Price
 
-	-- ✅ FIXED: Proper Cloning & Tagging
+	-- 🛠️ Give Item
 	local toolSource = ServerStorage:FindFirstChild("CarTools") and (ServerStorage.CarTools:FindFirstChild(carName) or ServerStorage.CarTools:FindFirstChild(carName.." Item"))
 
 	if toolSource then
 		-- 1. Create Backpack Copy
 		local backpackTool = toolSource:Clone()
-		tagIssued(backpackTool, toolSource.Name) -- 🛡️ Apply Security Tag
+		tagIssued(backpackTool, toolSource.Name)
 		backpackTool.Parent = player.Backpack
 
 		-- 2. Create StarterGear Copy
 		local gearTool = toolSource:Clone()
-		tagIssued(gearTool, toolSource.Name) -- 🛡️ Apply Security Tag
+		tagIssued(gearTool, toolSource.Name)
 		gearTool.Parent = player.StarterGear
 	else
-		cash.Value = cash.Value + carData.Price -- Refund
-		return false, "Tool Missing"
+		-- Refund if tool is missing
+		wallet.Value = wallet.Value + carData.Price 
+		return false, "System Error: Tool Missing"
 	end
 
 	session.Purchased[carName] = boughtAmount + 1
@@ -280,7 +274,6 @@ function RerollBindable.OnInvoke(player)
 	session.LocalSeed = math.random(1, 999999999)
 	session.Purchased = {} 
 
-	-- Regenerate & Cache
 	session.Cache = generateStockConfiguration(session.LocalSeed)
 	local currentStock = calculateCurrentStock(session.Cache.Limits, session.Purchased)
 
