@@ -1,7 +1,6 @@
 -- [[ LOCAL SCRIPT: LocalShopController ]]
--- UPDATED: Correctly excludes "Balance Indicator" so cash stays visible.
+-- UPDATED: Added "BuyFail" SFX to Robux purchase failures (Restock & Car).
 -- PURPOSE: Manages the Car Shop UI, Purchases, and Focus Mode.
-
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -28,6 +27,13 @@ local SHOP_CARS = {"Delta", "Iva", "Atom", "Windsor", "Senator", "Riva"}
 local SPECIAL_SFX_ID = "rbxassetid://140072726814802" 
 local BLUR_SIZE = 24 
 
+-- 🎨 FEEDBACK CONFIGURATION
+local FEEDBACK_COLORS = {
+	Success = Color3.fromRGB(80, 200, 120),   -- Soft Mint Green
+	FailRobux = Color3.fromRGB(255, 95, 95),  -- Soft Coral Red
+	FailCash = Color3.fromRGB(255, 170, 60)   -- Soft Amber
+}
+
 -- 🔴 ROBUX IDS
 local ROBUX_PRODUCTS = {
 	Delta   = 3524326648, 
@@ -51,17 +57,49 @@ local purchaseDebounce = {}
 local isProcessingPurchase = false 
 local hiddenGuis = {} 
 local currentBlur = nil 
+local feedbackTween = nil 
 
 -- 🛑 UI REFERENCES
 local function getUI()
 	return gui, mainFrame, mainFrame:WaitForChild("ScrollingFrame"), mainFrame:WaitForChild("TimerLabel"), 
-	mainFrame:WaitForChild("RerollButton"), mainFrame:WaitForChild("CloseButton")
+	mainFrame:WaitForChild("RerollButton"), mainFrame:WaitForChild("CloseButton"), mainFrame:WaitForChild("Indicator-purchase", 5)
+end
+
+-- ============================================================================
+-- 👁️ FEEDBACK LOGIC
+-- ============================================================================
+local function showFeedback(text, color)
+	local _, _, _, _, _, _, indicator = getUI()
+
+	if not indicator then 
+		warn("⚠️ 'Indicator-purchase' not found in MainFrame!") 
+		return 
+	end
+
+	if feedbackTween then feedbackTween:Cancel() end
+	indicator.Visible = true
+	indicator.TextTransparency = 0
+	indicator.Text = text
+	indicator.TextColor3 = color
+
+	task.delay(1.5, function()
+		if indicator.Text == text and indicator.Visible then
+			local t = TweenService:Create(indicator, TweenInfo.new(0.5), {TextTransparency = 1})
+			t:Play()
+			feedbackTween = t
+
+			t.Completed:Connect(function()
+				if indicator.TextTransparency >= 0.95 then
+					indicator.Visible = false
+				end
+			end)
+		end
+	end)
 end
 
 -- ============================================================================
 -- 👁️ FOCUS MODE (BLUR + HIDE UI)
 -- ============================================================================
-
 local function setBlur(enable)
 	if enable then
 		if not currentBlur then
@@ -85,21 +123,17 @@ end
 local function toggleOtherGuis(shouldHide)
 	if shouldHide then
 		hiddenGuis = {}
-		-- Loop through all GUIs
 		for _, otherGui in pairs(PlayerGui:GetChildren()) do
-			-- Hide everything that is enabled, IS NOT the Shop, and is a ScreenGui
-			-- ✅ THE FIX: We specifically skip "Balance Indicator" (Exact spelling from your image)
 			if otherGui:IsA("ScreenGui") 
 				and otherGui ~= gui 
 				and otherGui.Enabled == true 
 				and otherGui.Name ~= "Balance Indicator" then
-				
+
 				otherGui.Enabled = false
 				table.insert(hiddenGuis, otherGui)
 			end
 		end
 	else
-		-- Restore only what we hid
 		for _, otherGui in pairs(hiddenGuis) do
 			if otherGui and otherGui.Parent then
 				otherGui.Enabled = true
@@ -112,7 +146,7 @@ end
 local function setFocusMode(active)
 	setBlur(active)
 	toggleOtherGuis(active)
-	
+
 	local char = player.Character
 	if char and char:FindFirstChild("Humanoid") then
 		char.Humanoid.WalkSpeed = active and 0 or 16
@@ -208,11 +242,15 @@ local function AttemptBuy(carName, scrollFrame)
 
 		if success then
 			Kit.Sound:Play("BuySuccess")
+			showFeedback("Purchase Success", FEEDBACK_COLORS.Success)
 		else
 			Kit.Sound:Play("BuyFail")
 			Kit.Toast:Show(msg, Color3.fromRGB(255, 80, 80))
 			local card = scrollFrame:FindFirstChild(carName)
 			if card then Kit.Tween:Shake(card) end
+
+			-- ❌ FAIL FEEDBACK (Cash)
+			showFeedback("Insufficient money", FEEDBACK_COLORS.FailCash)
 		end
 		UpdateDisplay(scrollFrame)
 	end)
@@ -222,7 +260,9 @@ end
 -- 🚀 INIT & EVENTS
 -- ============================================================================
 local function init()
-	local gui, mainFrame, scrollFrame, timerLabel, rerollBtn, closeBtn = getUI()
+	local gui, mainFrame, scrollFrame, timerLabel, rerollBtn, closeBtn, indicatorLabel = getUI()
+
+	if indicatorLabel then indicatorLabel.Visible = false end
 
 	gui.Enabled = false 
 	Kit.Inventory:Init(SHOP_CARS)
@@ -274,21 +314,43 @@ local function init()
 	end
 
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
-		if userId ~= player.UserId or not isPurchased then return end
-		local isShopCar = false
+		if userId ~= player.UserId then return end
+
+		local isRelevant = false
+		if productId == REROLL_PRODUCT_ID then isRelevant = true end
 		for _, id in pairs(ROBUX_PRODUCTS) do
-			if id == productId then isShopCar = true; break end
+			if id == productId then isRelevant = true; break end
 		end
 
-		if isShopCar then
-			local s = Instance.new("Sound")
-			s.Name = "CarPurchaseSFX"
-			s.SoundId = SPECIAL_SFX_ID
-			s.Volume = 1.5 
-			s.Pitch = 1.0
-			s.Parent = SoundService
-			s:Play()
-			Debris:AddItem(s, 5)
+		if not isRelevant then return end
+
+		if isPurchased then
+			if productId == REROLL_PRODUCT_ID then
+				-- ✅ REROLL SUCCESS
+				showFeedback("Successfully Restocked", FEEDBACK_COLORS.Success)
+				Kit.Sound:Play("PaidReroll") 
+			else
+				-- ✅ CAR PURCHASE SUCCESS
+				showFeedback("Purchase Success", FEEDBACK_COLORS.Success)
+
+				local s = Instance.new("Sound")
+				s.Name = "CarPurchaseSFX"
+				s.SoundId = SPECIAL_SFX_ID
+				s.Volume = 1.5 
+				s.Pitch = 1.0
+				s.Parent = SoundService
+				s:Play()
+				Debris:AddItem(s, 5)
+			end
+		else
+			-- ❌ ROBUX FAIL/CANCEL (Added SFX here)
+			Kit.Sound:Play("BuyFail") 
+
+			if productId == REROLL_PRODUCT_ID then
+				showFeedback("Restock Failed", FEEDBACK_COLORS.FailRobux)
+			else
+				showFeedback("Purchase Failed", FEEDBACK_COLORS.FailRobux)
+			end
 		end
 	end)
 
