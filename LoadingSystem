@@ -1,3 +1,4 @@
+
 -- FINAL: Simple + Reliable Functional Loading Screen (Client, ReplicatedFirst)
 -- ✅ Camera Part Ready + Real Preload + Fade + Blur + No Movement
 -- ✅ Forces Loading Frame Visible = true at runtime (even if Studio sets it false)
@@ -461,5 +462,4 @@ task.spawn(function()
 		cleanup()
 	end
 end)
-
 
