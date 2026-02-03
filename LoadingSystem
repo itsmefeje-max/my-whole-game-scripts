@@ -1,9 +1,7 @@
--- FINAL: Simple + Reliable Functional Loading Screen (Client, ReplicatedFirst)
--- ✅ Camera Part Ready + Real Preload + Fade + Blur + No Movement
--- ✅ Forces Loading Frame Visible = true at runtime (even if Studio sets it false)
--- ✅ Hides other ScreenGuis while loading, restores them after
--- ✅ Failsafe timeout (never stuck loading)
--- NOTE: Put this LocalScript in ReplicatedFirst. Put your LoadingScreenGui in StarterGui.
+-- Purpose: Functional Loading Screen (Client)
+-- Runs on: Client (ReplicatedFirst)
+-- Location: ReplicatedFirst
+-- Dependencies: StarterGui (for the LoadingScreenGui asset)
 
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local RunService = game:GetService("RunService")
@@ -33,15 +31,22 @@ local BLUR_SIZE = 20
 local BLUR_IN_TIME = 0.4
 local BLUR_OUT_TIME = 0.45
 
-local EXTRA_HOLD_SECONDS = 1.5
-
--- If anything hangs, we force-finish after this many seconds:
+local EXTRA_HOLD_SECONDS = 5
 local FAILSAFE_TOTAL_SECONDS = 35
 
 local LOCK_NAME = "LoadingScreenCameraLock"
 local FREEZE_ACTION = "LoadingScreenFreeze"
 
--- Progress ranges (optional, used if ProgressBar exists)
+-- [[ ✅ NEW: EXCLUSION LIST ]]
+-- Any ScreenGui named here will NOT be re-opened after loading.
+local EXCLUDED_GUIS = {
+	"LocalShopUI",    -- The main culprit you mentioned
+	"InventoryWindow", -- Optional: Add your inventory GUI name here if it pops up too
+	"BankGui",         -- Optional: Add bank if needed
+	"AdminPanel"       -- Optional: Admin GUIs
+}
+
+-- Progress ranges
 local PHASE_GAME_LOADED_TO = 0.15
 local PHASE_VIEWPART_READY_TO = 0.30
 local PHASE_PRELOAD_TO = 0.95
@@ -106,12 +111,12 @@ local function unlockControls()
 end
 
 -- =====================
--- NO MOVEMENT (Humanoid Lock)
+-- NO MOVEMENT
 -- =====================
 local movementLock = {
 	active = false,
 	conn = nil,
-	original = {}, -- [humanoid] = {WalkSpeed, JumpPower, JumpHeight, AutoRotate}
+	original = {}, 
 }
 
 local function applyMovementLock(char)
@@ -139,9 +144,7 @@ local function applyMovementLock(char)
 		root.AssemblyAngularVelocity = Vector3.zero
 	end
 
-	pcall(function()
-		hum:Move(Vector3.zero, true)
-	end)
+	pcall(function() hum:Move(Vector3.zero, true) end)
 end
 
 local function enableMovementLock()
@@ -166,11 +169,10 @@ local function disableMovementLock()
 end
 
 -- =====================
--- CAMERA LOCK TO VIEW PART (optional)
+-- CAMERA LOCK
 -- =====================
 local function lockCameraTo(part)
 	if not (part and part:IsA("BasePart")) then return end
-
 	camera.CameraType = Enum.CameraType.Scriptable
 	camera.CFrame = part.CFrame
 
@@ -186,18 +188,14 @@ end
 
 local function unlockCameraToPlayer()
 	pcall(function() RunService:UnbindFromRenderStep(LOCK_NAME) end)
-
 	local char = player.Character or player.CharacterAdded:Wait()
 	local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 10)
-
 	camera.CameraType = Enum.CameraType.Custom
-	if hum then
-		camera.CameraSubject = hum
-	end
+	if hum then camera.CameraSubject = hum end
 end
 
 -- =====================
--- LOAD + CLONE UI
+-- LOAD UI
 -- =====================
 local sourceGui = StarterGui:WaitForChild("LoadingScreenGui", 10)
 if not sourceGui then
@@ -211,7 +209,6 @@ loadingGui.ResetOnSpawn = false
 loadingGui.Enabled = true
 loadingGui.Parent = playerGui
 
--- Force the main frame visible ALWAYS (even if Studio has Visible=false)
 local bgFrame = loadingGui:WaitForChild("Frame", 5)
 if not bgFrame then
 	warn("❌ Frame missing inside LoadingScreenGui!")
@@ -220,9 +217,8 @@ if not bgFrame then
 end
 bgFrame.Visible = true
 
--- Optional: enforce briefly (helps if other scripts flip it right at spawn)
 task.spawn(function()
-	for _ = 1, 30 do -- ~0.5 seconds at 60fps
+	for _ = 1, 30 do
 		if not loadingGui.Parent then return end
 		if bgFrame and bgFrame.Parent and bgFrame.Visible == false then
 			bgFrame.Visible = true
@@ -231,7 +227,6 @@ task.spawn(function()
 	end
 end)
 
--- Progress bar (optional)
 local barContainer = bgFrame:FindFirstChild("ProgressBarContainer")
 local barFill = barContainer and barContainer:FindFirstChild("ProgressBar")
 local progressText = barContainer and barContainer:FindFirstChild("ProgressText")
@@ -255,10 +250,6 @@ if barFill then
 	end)
 end
 
-local function setProgress(v)
-	progressValue.Value = math.clamp(v, 0, 1)
-end
-
 local function tweenProgress(toValue, duration)
 	return safeTween(progressValue, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
 		Value = math.clamp(toValue, 0, 1),
@@ -266,19 +257,20 @@ local function tweenProgress(toValue, duration)
 end
 
 -- =====================
--- HIDE OTHER UI DURING LOADING
+-- HIDE OTHER UI (UPDATED LOGIC)
 -- =====================
 local guiState = {
 	active = false,
-	enabled = {}, -- [ScreenGui] = wasEnabled
+	enabled = {}, 
 	conn = nil,
 }
 
 local function hideGui(gui)
 	if gui == loadingGui then return end
 	if gui:IsA("ScreenGui") then
+		-- Only record state if we haven't already
 		if guiState.enabled[gui] == nil then
-			guiState.enabled[gui] = gui.Enabled
+			guiState.enabled[gui] = gui.Enabled 
 		end
 		gui.Enabled = false
 	end
@@ -302,18 +294,35 @@ local function restoreOtherUIs()
 		guiState.conn:Disconnect()
 		guiState.conn = nil
 	end
+
 	for gui, wasEnabled in pairs(guiState.enabled) do
 		if gui and gui.Parent and gui:IsA("ScreenGui") then
-			gui.Enabled = wasEnabled
+			-- [[ ✅ EXCLUSION CHECK ]]
+			local isExcluded = false
+			if EXCLUDED_GUIS then
+				for _, name in ipairs(EXCLUDED_GUIS) do
+					if gui.Name == name then
+						isExcluded = true
+						break
+					end
+				end
+			end
+
+			if not isExcluded then
+				gui.Enabled = wasEnabled
+			else
+				-- Force excluded GUIs to stay closed
+				gui.Enabled = false 
+			end
 		end
 	end
 	table.clear(guiState.enabled)
 end
 
 -- =====================
--- FADE SYSTEM (records original transparencies)
+-- FADE SYSTEM
 -- =====================
-local studioProps = {} -- [Instance] = props
+local studioProps = {} 
 
 local function recordProps(inst)
 	local props = {}
@@ -380,27 +389,22 @@ for inst, _ in pairs(studioProps) do
 end
 
 -- =====================
--- PRELOAD LIST BUILDER
+-- PRELOAD LIST
 -- =====================
 local function buildPreloadList(viewPart)
 	local list = { loadingGui }
-
 	local folder = ReplicatedStorage:FindFirstChild(PRELOAD_FOLDER_NAME)
 	if folder then
 		for _, inst in ipairs(folder:GetDescendants()) do
 			table.insert(list, inst)
 		end
 	end
-
-	if viewPart then
-		table.insert(list, viewPart)
-	end
-
+	if viewPart then table.insert(list, viewPart) end
 	return list
 end
 
 -- =====================
--- MAIN SEQUENCE + FAILSAFE
+-- MAIN SEQUENCE
 -- =====================
 local finished = false
 local function cleanup()
@@ -411,21 +415,16 @@ local function cleanup()
 	unlockControls()
 	disableMovementLock()
 	unlockCameraToPlayer()
+
+	-- Restore UIs (Checking Exclusions)
 	restoreOtherUIs()
+
 	pcall(function() playerGui:SetAttribute("LoadingScreenActive", false) end)
-
-	pcall(function()
-		if blur and blur.Parent then
-			blur.Size = 0
-			blur:Destroy()
-		end
-	end)
-
+	pcall(function() if blur and blur.Parent then blur.Size = 0 blur:Destroy() end end)
 	pcall(function() loadingGui:Destroy() end)
 	pcall(function() progressValue:Destroy() end)
 end
 
--- FAILSAFE watchdog (never stuck)
 task.spawn(function()
 	local start = os.clock()
 	while not finished and (os.clock() - start) < FAILSAFE_TOTAL_SECONDS do
@@ -439,49 +438,32 @@ end)
 
 task.spawn(function()
 	local ok, err = xpcall(function()
-		-- Lock player immediately
 		lockControls()
 		enableMovementLock()
 		hideOtherUIs()
-
-		-- Blur immediately
 		blurTo(BLUR_SIZE, BLUR_IN_TIME)
 
-		-- Phase 1: game loaded
 		tweenProgress(PHASE_GAME_LOADED_TO, 0.25)
-		while not game:IsLoaded() do
-			RunService.Heartbeat:Wait()
-		end
+		if not game:IsLoaded() then game.Loaded:Wait() end
 
-		-- Phase 2: wait for view part, preload it, lock camera (optional)
 		local viewPart = waitForNamedChild(Workspace, VIEW_PART_NAME, VIEW_PART_TIMEOUT)
 		if viewPart then
-			pcall(function()
-				ContentProvider:PreloadAsync({ viewPart })
-			end)
+			pcall(function() ContentProvider:PreloadAsync({ viewPart }) end)
 			lockCameraTo(viewPart)
-		else
-			warn(("⚠️ %s not found in Workspace within %ds. Skipping camera lock."):format(VIEW_PART_NAME, VIEW_PART_TIMEOUT))
 		end
 
 		tweenProgress(PHASE_VIEWPART_READY_TO, 0.2)
-
-		-- Fade in UI (and ensure frame stays visible)
 		bgFrame.Visible = true
 		fadeToRecorded(FADE_IN_TIME)
 		task.wait(FADE_IN_TIME)
 
-		-- Phase 3: real preload list
 		local preloadList = buildPreloadList(viewPart)
 		local total = #preloadList
-
 		if total == 0 then
 			tweenProgress(PHASE_PRELOAD_TO, 0.2)
 		else
 			for i, asset in ipairs(preloadList) do
-				pcall(function()
-					ContentProvider:PreloadAsync({ asset })
-				end)
+				pcall(function() ContentProvider:PreloadAsync({ asset }) end)
 				local alpha = i / total
 				local target = PHASE_VIEWPART_READY_TO + (PHASE_PRELOAD_TO - PHASE_VIEWPART_READY_TO) * alpha
 				progressValue.Value = math.max(progressValue.Value, target)
@@ -489,24 +471,18 @@ task.spawn(function()
 			end
 		end
 
-		-- Finish
 		tweenProgress(PHASE_FINISH_TO, 0.3)
 		task.wait(0.25)
-
-		-- Extra hold
 		task.wait(EXTRA_HOLD_SECONDS)
 
-		-- Fade out + blur out
 		fadeToInvisible(FADE_OUT_TIME)
 		blurTo(0, BLUR_OUT_TIME)
 		task.wait(FADE_OUT_TIME)
-
-		-- Done
 		cleanup()
 	end, debug.traceback)
 
 	if not ok then
-		warn("❌ Loading screen crashed:\n" .. tostring(err))
+		warn("❌ Loading screen crashed: " .. tostring(err))
 		cleanup()
 	end
 end)
