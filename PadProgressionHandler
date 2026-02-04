@@ -1,63 +1,75 @@
--- [[ SERVER SCRIPT: PadProgressionHandler ]]
+-- [[ SERVER SCRIPT: PadProgressionHandler (Final Fix) ]]
+-- Purpose: Handles Pad Unlocking, Visibility, and Purchasing
+-- FIXES: 
+-- 1. "Late Load" Bug (Checks if you already own the plot when script starts)
+-- 2. "Empty Pad 1" Safety (Won't error on empty starter pads)
+-- 3. "Falling Button" Fix (Forces Anchored = true)
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
--- 🛠️ UPDATE VISUALS (The "Curtain" Logic)
+print("🟢 PadProgressionHandler: Script Loaded")
+
+-- 🛠️ HELPER: Safely Toggle Visibility & FORCE ANCHOR
+local function toggleVisual(obj, isVisible, canTouch)
+	local transparency = isVisible and 0 or 1
+	local collide = isVisible 
+
+	-- Function to apply settings to a single part
+	local function applyToPart(part)
+		if part:IsA("BasePart") then
+			part.Transparency = transparency
+			part.CanCollide = collide
+			part.CanTouch = canTouch
+			part.CanQuery = canTouch
+			part.Anchored = true -- 🔒 CRITICAL: Keeps button from falling into void
+		elseif part:IsA("BillboardGui") or part:IsA("SurfaceGui") then
+			part.Enabled = isVisible
+		end
+	end
+
+	if obj:IsA("Model") then
+		for _, child in pairs(obj:GetDescendants()) do
+			applyToPart(child)
+		end
+	else
+		applyToPart(obj)
+	end
+end
+
+-- 🛠️ UPDATE VISUALS
 local function updatePadVisuals(plot, unlockedLevel)
 	unlockedLevel = tonumber(unlockedLevel) or 1
+	
 	local padsFolder = plot:FindFirstChild("Pads")
 	if not padsFolder then return end
 
-	-- Loop through ALL pads (Pad1 to Pad14)
+	-- Loop through ALL pads (1 to 14)
 	for i = 1, 14 do
 		local padName = "Pad" .. i
 		local padModel = padsFolder:FindFirstChild(padName)
 
+		-- Only process if the pad actually exists (Safe for empty Pad 1)
 		if padModel then
-			local geometry = padModel:FindFirstChild("Geometry") -- Your actual pad parts
-			local buyButton = padModel:FindFirstChild("BuyButton") -- The button to buy it
+			local geometry = padModel:FindFirstChild("Geometry")
+			local buyButton = padModel:FindFirstChild("BuyButton")
 
 			if i <= unlockedLevel then
-				-- STATE: OWNED
-				if geometry then 
-					-- Make Visible
-					for _, p in pairs(geometry:GetDescendants()) do
-						if p:IsA("BasePart") then p.Transparency = 0; p.CanCollide = true end
-					end
-				end
-				if buyButton then
-					buyButton.Transparency = 1
-					buyButton.CanCollide = false
-					if buyButton:IsA("BasePart") then buyButton.CanTouch = false end
-				end
+				-- STATE: OWNED (Show Geometry, Hide Button)
+				if geometry then toggleVisual(geometry, true, true) end
+				if buyButton then toggleVisual(buyButton, false, false) end
 
 			elseif i == unlockedLevel + 1 then
-				-- STATE: NEXT TO BUY
-				if geometry then 
-					-- Hide Geometry
-					for _, p in pairs(geometry:GetDescendants()) do
-						if p:IsA("BasePart") then p.Transparency = 1; p.CanCollide = false end
-					end
-				end
-				if buyButton then 
-					buyButton.Transparency = 0 
-					buyButton.CanCollide = true 
-					if buyButton:IsA("BasePart") then buyButton.CanTouch = true end
-				end
+				-- STATE: NEXT TO BUY (Hide Geometry, Show Button)
+				-- This is where Pad 2 becomes visible for a new player (Level 1)
+				if geometry then toggleVisual(geometry, false, false) end
+				if buyButton then toggleVisual(buyButton, true, true) end
 
 			else
-				-- STATE: LOCKED (Future)
-				if geometry then 
-					for _, p in pairs(geometry:GetDescendants()) do
-						if p:IsA("BasePart") then p.Transparency = 1; p.CanCollide = false end
-					end
-				end
-				if buyButton then 
-					buyButton.Transparency = 1 
-					buyButton.CanCollide = false 
-					if buyButton:IsA("BasePart") then buyButton.CanTouch = false end
-				end
+				-- STATE: LOCKED (Hide Everything)
+				if geometry then toggleVisual(geometry, false, false) end
+				if buyButton then toggleVisual(buyButton, false, false) end
 			end
 		end
 	end
@@ -66,13 +78,12 @@ end
 -- 💰 PURCHASE LOGIC
 local function setupBuyButton(plot, padModel, padNumber)
 	local buyButton = padModel:FindFirstChild("BuyButton")
-	if not buyButton then return end
+	if not buyButton then return end -- Skip if no button (like Pad 1)
 
-	-- Ensure we don't connect multiple times
 	if buyButton:GetAttribute("Connected") then return end
 	buyButton:SetAttribute("Connected", true)
 
-	buyButton.Touched:Connect(function(hit)
+	local function onTouch(hit)
 		local char = hit.Parent
 		local player = Players:GetPlayerFromCharacter(char)
 		if not player then return end
@@ -85,35 +96,50 @@ local function setupBuyButton(plot, padModel, padNumber)
 		if padNumber ~= (currentLevel + 1) then return end
 
 		-- CHECK 2: Cost
-		local cost = padModel:GetAttribute("Cost") or 500 -- Default cost
-		local cash = player.leaderstats.Cash
+		local cost = padModel:GetAttribute("Cost") or 500 -- Default cost 500
+		
+		local leaderstats = player:FindFirstChild("leaderstats")
+		local cash = leaderstats and leaderstats:FindFirstChild("Cash") -- Ensure Cash exists
 
-		if cash.Value >= cost then
+		if cash and cash.Value >= cost then
 			-- TRANSACTION
 			cash.Value -= cost
 			player:SetAttribute("HighestUnlockedPad", padNumber) -- Update Progress
 
 			-- REFRESH VISUALS
 			updatePadVisuals(plot, padNumber)
-			print("✅ Purchased Pad " .. padNumber)
+			print("✅ " .. player.Name .. " Bought Pad " .. padNumber)
 		end
-	end)
+	end
+
+	-- Connect Touch (Handles both Parts and Models)
+	if buyButton:IsA("BasePart") then
+		buyButton.Touched:Connect(onTouch)
+	elseif buyButton:IsA("Model") then
+		for _, part in pairs(buyButton:GetDescendants()) do
+			if part:IsA("BasePart") then
+				part.Touched:Connect(onTouch)
+			end
+		end
+	end
 end
 
 -- 🚀 INITIALIZE PLOT
 local function setupPlot(plot)
-	local ownerVal = plot:WaitForChild("Owner")
+	local ownerVal = plot:WaitForChild("Owner", 10)
+	if not ownerVal then return end
 
-	ownerVal.Changed:Connect(function(newOwner)
+	-- Handler Function
+	local function onOwnerChange(newOwner)
 		if newOwner == "" then 
 			-- Reset if empty
 			updatePadVisuals(plot, 1) 
 		else
-			-- Load Owner's Level
 			local player = Players:FindFirstChild(newOwner)
 			if player then
-				-- Wait for data to load
+				-- Load Owner's Level (Defaults to 1 for Starter Pad)
 				local level = player:GetAttribute("HighestUnlockedPad") or 1
+				print("👤 Owner Loaded: " .. newOwner .. " | Level: " .. level)
 				updatePadVisuals(plot, level)
 
 				-- Listen for upgrades (Live updates)
@@ -122,16 +148,25 @@ local function setupPlot(plot)
 				end)
 			end
 		end
-	end)
+	end
 
-	-- Setup Buttons once
+	ownerVal.Changed:Connect(onOwnerChange)
+
+	-- Setup Buttons
 	local pads = plot:WaitForChild("Pads")
-	for i = 2, 14 do -- Start at 2 (1 is free)
+	for i = 2, 14 do -- Start at 2 because Pad 1 is free/starter
 		local p = pads:FindFirstChild("Pad"..i)
 		if p then setupBuyButton(plot, p, i) end
+	end
+    
+	-- ✅ CRITICAL FIX: Run immediately if owner is already set!
+	-- This catches the "Late Load" issue.
+	if ownerVal.Value ~= "" then
+		onOwnerChange(ownerVal.Value)
+	else
+		updatePadVisuals(plot, 1) -- Ensure clean state
 	end
 end
 
 for _, p in pairs(TycoonFolder:GetChildren()) do setupPlot(p) end
 TycoonFolder.ChildAdded:Connect(setupPlot)
-
