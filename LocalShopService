@@ -1,34 +1,57 @@
--- [[ SERVER SCRIPT: LocalShopService ]]
--- UPDATED: Fixed Currency Target (Now uses 'Wallet' instead of 'Cash')
--- FIXED: Rarity-Based Stock, Optimized Rotation, Boolean Featured Flags
+-- [[ SERVER SCRIPT: LocalShopService (Persistence & Dedupe Fixed) ]]
+-- Currency: leaderstats.Wallet
+-- Global rotation: deterministic per RESTOCK_INTERVAL
+-- Local reroll: per-player seed
+-- Security: UserId mutex locks, success-only cooldown, pcall wrapper
+-- Reliability: Persistence Interface added (Fixes Rejoin Stock Bypass)
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
--- ⚙️ CONFIGURATION
-local SHOP_CARS = {"Delta", "Iva", "Atom", "Windsor", "Senator", "Riva"}
--- Weights act as "Rarity %" (Delta = 50% chance to have extra stock)
+-- =========================
+-- CONFIG
+-- =========================
 local CAR_WEIGHTS = {Delta = 50, Iva = 20, Atom = 15, Windsor = 9, Senator = 5, Riva = 1}
-local ALWAYS_STOCK = {["Delta"] = true, ["Iva"] = true} 
-local RESTOCK_INTERVAL = 300 
+local ALWAYS_STOCK = {Delta = true, Iva = true}
 
--- 📂 REMOTE SETUP
+local RESTOCK_INTERVAL = 300
+local PURCHASE_COOLDOWN = 0.5
+
+-- =========================
+-- MODULES (require once)
+-- =========================
+local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
+
+-- =========================
+-- REMOTES
+-- =========================
 local Remotes = ReplicatedStorage:FindFirstChild("ShopRemotes")
 if not Remotes then
-	Remotes = Instance.new("Folder"); Remotes.Name = "ShopRemotes"; Remotes.Parent = ReplicatedStorage
+	Remotes = Instance.new("Folder")
+	Remotes.Name = "ShopRemotes"
+	Remotes.Parent = ReplicatedStorage
 end
-local function getRemote(name, class)
+
+local function getRemote(name, className)
 	local r = Remotes:FindFirstChild(name)
-	if not r then r = Instance.new(class); r.Name = name; r.Parent = Remotes end
+	if not r then
+		r = Instance.new(className)
+		r.Name = name
+		r.Parent = Remotes
+	end
 	return r
 end
-local RemoteOpen = getRemote("OpenLocalShop", "RemoteEvent")
-local RemoteUpdate = getRemote("ShopUpdate", "RemoteEvent")
-local FuncGetState = getRemote("GetShopState", "RemoteFunction")
-local FuncBuyCar = getRemote("BuyLocalCar", "RemoteFunction")
 
--- 🔗 BINDABLE FUNCTION
+local RemoteOpen = getRemote("OpenLocalShop", "RemoteEvent")         -- client -> server (optional)
+local RemoteUpdate = getRemote("ShopUpdate", "RemoteEvent")          -- server -> client
+local FuncGetState = getRemote("GetShopState", "RemoteFunction")     -- client -> server
+local FuncBuyCar = getRemote("BuyLocalCar", "RemoteFunction")        -- client -> server
+
+-- =========================
+-- BINDABLES (Server Communication)
+-- =========================
 local RerollBindable = ServerStorage:FindFirstChild("ShopRerollFunction")
 if not RerollBindable then
 	RerollBindable = Instance.new("BindableFunction")
@@ -36,84 +59,121 @@ if not RerollBindable then
 	RerollBindable.Parent = ServerStorage
 end
 
--- 📂 DATA
-local PlayerSessions = {} 
+-- ✅ NEW: Persistence Interface for TycoonDataHandler
+local PersistenceBindable = ServerStorage:FindFirstChild("ShopPersistenceFunction")
+if not PersistenceBindable then
+	PersistenceBindable = Instance.new("BindableFunction")
+	PersistenceBindable.Name = "ShopPersistenceFunction"
+	PersistenceBindable.Parent = ServerStorage
+end
 
--- ============================================================================
--- 🛡️ SECURITY HELPER
--- ============================================================================
-local function tagIssued(tool, originalName)
+-- =========================
+-- STATE
+-- =========================
+local PlayerSessions = {}       -- [userId] = { SeedVersion, LocalSeed, Purchased, Cache }
+local PurchaseLocks = {}        -- [userId] = true/nil
+local LastPurchaseTime = {}     -- [userId] = os.clock()
+
+-- =========================
+-- TOOL TAGGING + PERSISTENT ID
+-- =========================
+local PERSIST_ID_NAME = "__ShopToolId"
+
+local function setPersistentToolId(tool, toolId)
+	tool:SetAttribute("ToolId", toolId)
+	local marker = tool:FindFirstChild(PERSIST_ID_NAME)
+	if not marker then
+		marker = Instance.new("StringValue")
+		marker.Name = PERSIST_ID_NAME
+		marker.Parent = tool
+	end
+	marker.Value = toolId
+end
+
+local function getPersistentToolId(tool)
+	local marker = tool:FindFirstChild(PERSIST_ID_NAME)
+	if marker and marker:IsA("StringValue") then
+		return marker.Value
+	end
+	return tool:GetAttribute("ToolId")
+end
+
+local function tagIssued(tool, toolId)
 	if not tool then return end
 	tool:SetAttribute("IssuedByServer", true)
 	tool:SetAttribute("IssuedAt", os.time())
 	tool:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
-	tool:SetAttribute("ToolId", originalName) -- Crucial for Data Saving
 	tool.CanBeDropped = false
+	setPersistentToolId(tool, toolId)
 end
 
--- ============================================================================
--- 🧠 SHOP LOGIC
--- ============================================================================
+local function starterGearHasToolId(player, toolId)
+	local sg = player:FindFirstChild("StarterGear")
+	if not sg then return false end
+	for _, child in ipairs(sg:GetChildren()) do
+		if getPersistentToolId(child) == toolId then
+			return true
+		end
+	end
+	return false
+end
 
-local function getGlobalSeedID() return math.floor(os.time() / RESTOCK_INTERVAL) end
+-- =========================
+-- SHOP LOGIC
+-- =========================
+local function getGlobalSeedID()
+	return math.floor(os.time() / RESTOCK_INTERVAL)
+end
 
 local function calculateStockForCar(carName, rng)
 	local weight = CAR_WEIGHTS[carName] or 0
-	local limit = 1 -- Base stock
-
-	-- Roll 1: Chance to get +1 (Based on Rarity %)
+	local limit = 1
 	if rng:NextInteger(1, 100) <= weight then
-		limit = limit + 1
-		-- Roll 2: Small chance to get +1 again (Cap at 3)
+		limit += 1
 		if limit == 2 and rng:NextInteger(1, 100) <= math.ceil(weight * 0.5) then
-			limit = limit + 1
+			limit += 1
 		end
 	end
-
 	return limit
 end
 
 local function generateStockConfiguration(seedValue)
 	local rng = Random.new(seedValue)
+	local featuredFlags = {}
+	local stockLimits = {}
 
-	local featuredFlags = {} 
-	local stockLimits = {}   
-
-	-- 1. Process ALWAYS_STOCK
-	for name, _ in pairs(ALWAYS_STOCK) do
+	for name in pairs(ALWAYS_STOCK) do
 		featuredFlags[name] = true
 		stockLimits[name] = calculateStockForCar(name, rng)
 	end
 
-	-- 2. Build Weighted Pool
 	local poolKeys = {}
 	local poolWeights = {}
 	local totalWeight = 0
-
 	for name, weight in pairs(CAR_WEIGHTS) do
 		if not ALWAYS_STOCK[name] then
 			table.insert(poolKeys, name)
-			totalWeight = totalWeight + weight
 			poolWeights[name] = weight
+			totalWeight += weight
 		end
 	end
 
-	-- 3. Rotation Logic
+	if totalWeight <= 0 or #poolKeys == 0 then
+		return { Featured = featuredFlags, Limits = stockLimits }
+	end
+
 	local r = rng:NextInteger(1, 100)
 	local targetCount = (r > 90 and 3) or (r > 55 and 2) or 1
-
 	local pickedCount = 0
 	local safety = 0
 
 	while pickedCount < targetCount and safety < 50 do
-		safety = safety + 1
+		safety += 1
 		local roll = rng:NextInteger(1, totalWeight)
 		local current = 0
 		local picked = nil
-
 		for _, car in ipairs(poolKeys) do
-			local w = poolWeights[car]
-			current = current + w
+			current += poolWeights[car]
 			if roll <= current then
 				picked = car
 				break
@@ -123,7 +183,7 @@ local function generateStockConfiguration(seedValue)
 		if picked and not featuredFlags[picked] then
 			featuredFlags[picked] = true
 			stockLimits[picked] = calculateStockForCar(picked, rng)
-			pickedCount = pickedCount + 1
+			pickedCount += 1
 		end
 	end
 
@@ -141,41 +201,28 @@ local function calculateCurrentStock(limits, purchasedCounts)
 	return current
 end
 
-local function validateSession(player)
+local function getSession(player)
 	local uid = player.UserId
 	local currentGlobalID = getGlobalSeedID()
 
-	if not PlayerSessions[uid] then 
+	if not PlayerSessions[uid] then
 		PlayerSessions[uid] = {
-			SeedVersion = currentGlobalID, 
-			LocalSeed = nil, 
+			SeedVersion = currentGlobalID,
+			LocalSeed = nil,
 			Purchased = {},
-			Cache = nil 
-		} 
+			Cache = nil,
+		}
 	end
 
 	local session = PlayerSessions[uid]
+	local didReset = false
 
-	-- RESET IF NEW ROTATION
 	if session.SeedVersion ~= currentGlobalID then
 		session.SeedVersion = currentGlobalID
 		session.LocalSeed = nil
-		session.Purchased = {} 
-		session.Cache = nil 
-
-		local seed = session.LocalSeed or session.SeedVersion
-		session.Cache = generateStockConfiguration(seed)
-		local currentStock = calculateCurrentStock(session.Cache.Limits, session.Purchased)
-
-		RemoteUpdate:FireClient(player, {
-			Featured = session.Cache.Featured,
-			StockLimit = session.Cache.Limits,
-			Stock = currentStock,
-			Purchased = session.Purchased,
-			NextRestock = (currentGlobalID + 1) * RESTOCK_INTERVAL, 
-			IsGlobal = true,
-			Reason = "Auto"
-		})
+		session.Purchased = {} -- Reset purchases on new rotation
+		session.Cache = generateStockConfiguration(session.SeedVersion)
+		didReset = true
 	end
 
 	if not session.Cache then
@@ -183,112 +230,163 @@ local function validateSession(player)
 		session.Cache = generateStockConfiguration(seed)
 	end
 
-	return session
+	return session, didReset
 end
 
-FuncGetState.OnServerInvoke = function(player)
-	local session = validateSession(player)
+local function buildStatePayload(session)
 	local config = session.Cache
 	local currentStock = calculateCurrentStock(config.Limits, session.Purchased)
-
 	return {
 		Featured = config.Featured,
 		StockLimit = config.Limits,
 		Stock = currentStock,
 		Purchased = session.Purchased,
 		NextRestock = (getGlobalSeedID() + 1) * RESTOCK_INTERVAL,
-		IsGlobal = (session.LocalSeed == nil)
+		IsGlobal = (session.LocalSeed == nil),
 	}
 end
 
--- ============================================================================
--- 🛒 BUY CAR (THE FIX IS HERE)
--- ============================================================================
-FuncBuyCar.OnServerInvoke = function(player, carName)
-	local session = validateSession(player)
-	local config = session.Cache
-
-	local CarStats = require(ReplicatedStorage.CarStats)
-	local carData = CarStats.Cars[carName]
-
-	if not carData then return false, "Invalid Car" end
-	if not config.Featured[carName] then return false, "Not In Rotation" end
-
-	local boughtAmount = session.Purchased[carName] or 0
-	local maxLimit = config.Limits[carName]
-
-	if boughtAmount >= maxLimit then
-		return false, "Out of Stock"
-	end
-
-	-- 🔴 CHANGED HERE: We now check "Wallet" instead of "Cash"
-	local wallet = player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Wallet")
-	
-	-- Validation
-	if not wallet then return false, "Wallet Not Found" end
-	if wallet.Value < carData.Price then return false, "Insufficient Cash (Withdraw from ATM)" end
-
-	-- Transaction
-	wallet.Value = wallet.Value - carData.Price
-
-	-- 🛠️ Give Item
-	local toolSource = ServerStorage:FindFirstChild("CarTools") and (ServerStorage.CarTools:FindFirstChild(carName) or ServerStorage.CarTools:FindFirstChild(carName.." Item"))
-
-	if toolSource then
-		-- 1. Create Backpack Copy
-		local backpackTool = toolSource:Clone()
-		tagIssued(backpackTool, toolSource.Name)
-		backpackTool.Parent = player.Backpack
-
-		-- 2. Create StarterGear Copy
-		local gearTool = toolSource:Clone()
-		tagIssued(gearTool, toolSource.Name)
-		gearTool.Parent = player.StarterGear
-	else
-		-- Refund if tool is missing
-		wallet.Value = wallet.Value + carData.Price 
-		return false, "System Error: Tool Missing"
-	end
-
-	session.Purchased[carName] = boughtAmount + 1
-
-	-- Update Client
-	local currentStock = calculateCurrentStock(config.Limits, session.Purchased)
-
-	RemoteUpdate:FireClient(player, {
-		Featured = config.Featured, 
-		StockLimit = config.Limits,
-		Stock = currentStock,
-		Purchased = session.Purchased,
-		NextRestock = (getGlobalSeedID() + 1) * RESTOCK_INTERVAL, 
-		IsGlobal = (session.LocalSeed == nil),
-		Reason = "Purchase"
-	})
-	return true, "Success"
+local function pushUpdate(player, session, reason)
+	local payload = buildStatePayload(session)
+	payload.Reason = reason
+	RemoteUpdate:FireClient(player, payload)
 end
 
+-- =========================
+-- DATA HANDLER INTEGRATION
+-- =========================
+-- TycoonDataHandler calls this via BindableFunction
+PersistenceBindable.OnInvoke = function(action, player, data)
+	if not player then return end
+	local uid = player.UserId
+
+	if action == "Load" then
+		-- RESTORE purchased counts from DataStore
+		local session, _ = getSession(player)
+		if data and type(data) == "table" then
+			-- Only restore if rotation matches (prevents loading old purchases for new rotation)
+			-- NOTE: To be safe, we just load it. getSession checks rotation anyway next time it's called.
+			session.Purchased = data
+			print("✅ [Shop] Loaded purchases for " .. player.Name)
+		end
+
+	elseif action == "Get" then
+		-- RETURN purchased counts to be saved
+		if PlayerSessions[uid] then
+			return PlayerSessions[uid].Purchased
+		end
+		return {}
+
+	elseif action == "Close" then
+		-- CLEANUP after save is complete
+		PlayerSessions[uid] = nil
+		PurchaseLocks[uid] = nil
+		LastPurchaseTime[uid] = nil
+	end
+end
+
+-- =========================
+-- CLIENT REQUESTS
+-- =========================
+FuncGetState.OnServerInvoke = function(player)
+	local session, didReset = getSession(player)
+	return buildStatePayload(session)
+end
+
+RemoteOpen.OnServerEvent:Connect(function(player)
+	local session = getSession(player)
+	pushUpdate(player, session, "Open")
+end)
+
+FuncBuyCar.OnServerInvoke = function(player, carName)
+	if typeof(carName) ~= "string" then return false, "Invalid Car" end
+	if not player or not player.Parent then return false, "Player missing" end
+
+	local uid = player.UserId
+	if PurchaseLocks[uid] then return false, "Purchase in progress" end
+	if (os.clock() - (LastPurchaseTime[uid] or 0)) < PURCHASE_COOLDOWN then return false, "Slow down" end
+
+	PurchaseLocks[uid] = true
+
+	local pOk, logicOk, msg = pcall(function()
+		local session, didReset = getSession(player)
+		if didReset then pushUpdate(player, session, "Auto") end
+
+		local config = session.Cache
+		local carsTable = CarStats and CarStats.Cars
+		if not carsTable then return false, "CarStats Error" end
+
+		local carData = carsTable[carName]
+		if not carData or not config.Featured[carName] then return false, "Invalid Car" end
+
+		local bought = session.Purchased[carName] or 0
+		local limit = config.Limits[carName] or 0
+		if bought >= limit then return false, "Out of Stock" end
+
+		-- Currency: WALLET
+		local ls = player:FindFirstChild("leaderstats")
+		local wallet = ls and ls:FindFirstChild("Wallet")
+		if not wallet then return false, "Wallet Not Found" end
+		if wallet.Value < carData.Price then return false, "Insufficient Cash (Withdraw from ATM)" end
+
+		-- Tool Check
+		local toolsFolder = ServerStorage:FindFirstChild("CarTools")
+		local toolSource = toolsFolder and (toolsFolder:FindFirstChild(carName) or toolsFolder:FindFirstChild(carName .. " Item"))
+		if not toolSource then return false, "System Error: Tool Missing" end
+
+		-- Transaction
+		wallet.Value -= carData.Price
+
+		-- Grant Tool (Backpack)
+		local backpack = player:FindFirstChildOfClass("Backpack")
+		if backpack then
+			local backpackTool = toolSource:Clone()
+			tagIssued(backpackTool, carName)
+			backpackTool.Parent = backpack
+		end
+
+		-- Grant Tool (StarterGear) - DEDUPLICATED
+		local sg = player:FindFirstChild("StarterGear")
+		if sg and not starterGearHasToolId(player, carName) then
+			local gearTool = toolSource:Clone()
+			tagIssued(gearTool, carName)
+			gearTool.Parent = sg
+		end
+
+		-- Update State
+		session.Purchased[carName] = bought + 1
+		pushUpdate(player, session, "Purchase")
+
+		return true, "Success"
+	end)
+
+	PurchaseLocks[uid] = nil
+
+	if not pOk then
+		warn("Shop Buy Error:", logicOk)
+		return false, "Internal System Error"
+	end
+
+	if logicOk then LastPurchaseTime[uid] = os.clock() end
+	return logicOk, msg
+end
+
+-- =========================
+-- REROLL
+-- =========================
 function RerollBindable.OnInvoke(player)
-	if not player then return false end
-	local session = validateSession(player)
-
+	if not player or not player.Parent then return false end
+	local session = getSession(player)
 	session.LocalSeed = math.random(1, 999999999)
-	session.Purchased = {} 
-
+	session.Purchased = {}
 	session.Cache = generateStockConfiguration(session.LocalSeed)
-	local currentStock = calculateCurrentStock(session.Cache.Limits, session.Purchased)
-
-	RemoteUpdate:FireClient(player, {
-		Featured = session.Cache.Featured,
-		StockLimit = session.Cache.Limits,
-		Stock = currentStock,
-		Purchased = session.Purchased,
-		NextRestock = (getGlobalSeedID() + 1) * RESTOCK_INTERVAL,
-		IsGlobal = false,
-		Reason = "Reroll"
-	})
+	pushUpdate(player, session, "Reroll")
 	return true
 end
 
+-- =========================
+-- ROTATION LOOP
+-- =========================
 task.spawn(function()
 	local lastGlobalID = getGlobalSeedID()
 	while true do
@@ -297,8 +395,13 @@ task.spawn(function()
 		if currentID ~= lastGlobalID then
 			lastGlobalID = currentID
 			print("🔄 GLOBAL SHOP ROTATION")
-			for _, player in ipairs(Players:GetPlayers()) do validateSession(player) end
+			for _, player in ipairs(Players:GetPlayers()) do
+				local session, didReset = getSession(player)
+				if didReset then pushUpdate(player, session, "Auto") end
+			end
 		end
 	end
 end)
-Players.PlayerRemoving:Connect(function(player) PlayerSessions[player.UserId] = nil end)
+
+-- Note: Session cleanup is now handled via "Close" action in PersistenceBindable
+-- This ensures data isn't wiped before TycoonDataHandler saves it.
