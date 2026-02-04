@@ -1,0 +1,129 @@
+-- [[ SERVER SCRIPT: PadProgressionHandler ]]
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local TycoonFolder = Workspace:WaitForChild("Tycoons")
+
+-- 🛠️ UPDATE VISUALS (The "Curtain" Logic)
+local function updatePadVisuals(plot, unlockedLevel)
+	local padsFolder = plot:FindFirstChild("Pads")
+	if not padsFolder then return end
+
+	-- Loop through ALL pads (Pad1 to Pad14)
+	for i = 1, 14 do
+		local padName = "Pad" .. i
+		local padModel = padsFolder:FindFirstChild(padName)
+
+		if padModel then
+			local geometry = padModel:FindFirstChild("Geometry") -- Your actual pad parts
+			local buyButton = padModel:FindFirstChild("BuyButton") -- The button to buy it
+
+			if i <= unlockedLevel then
+				-- STATE: OWNED
+				if geometry then 
+					-- Make Visible
+					for _, p in pairs(geometry:GetDescendants()) do
+						if p:IsA("BasePart") then p.Transparency = 0; p.CanCollide = true end
+					end
+				end
+				if buyButton then buyButton.Parent = nil end -- Destroy button if owned
+
+			elseif i == unlockedLevel + 1 then
+				-- STATE: NEXT TO BUY
+				if geometry then 
+					-- Hide Geometry
+					for _, p in pairs(geometry:GetDescendants()) do
+						if p:IsA("BasePart") then p.Transparency = 1; p.CanCollide = false end
+					end
+				end
+				if buyButton then 
+					buyButton.Transparency = 0 
+					buyButton.CanCollide = true 
+				end
+
+			else
+				-- STATE: LOCKED (Future)
+				if geometry then 
+					for _, p in pairs(geometry:GetDescendants()) do
+						if p:IsA("BasePart") then p.Transparency = 1; p.CanCollide = false end
+					end
+				end
+				if buyButton then 
+					buyButton.Transparency = 1 
+					buyButton.CanCollide = false 
+				end
+			end
+		end
+	end
+end
+
+-- 💰 PURCHASE LOGIC
+local function setupBuyButton(plot, padModel, padNumber)
+	local buyButton = padModel:FindFirstChild("BuyButton")
+	if not buyButton then return end
+
+	-- Ensure we don't connect multiple times
+	if buyButton:GetAttribute("Connected") then return end
+	buyButton:SetAttribute("Connected", true)
+
+	buyButton.Touched:Connect(function(hit)
+		local char = hit.Parent
+		local player = Players:GetPlayerFromCharacter(char)
+		if not player then return end
+
+		-- Check if this is the owner
+		if plot.Owner.Value ~= player.Name then return end
+
+		-- CHECK 1: Is this the correct next pad?
+		local currentLevel = player:GetAttribute("HighestUnlockedPad")
+		if padNumber ~= (currentLevel + 1) then return end
+
+		-- CHECK 2: Cost
+		local cost = padModel:GetAttribute("Cost") or 500 -- Default cost
+		local cash = player.leaderstats.Cash
+
+		if cash.Value >= cost then
+			-- TRANSACTION
+			cash.Value -= cost
+			player:SetAttribute("HighestUnlockedPad", padNumber) -- Update Progress
+
+			-- REFRESH VISUALS
+			updatePadVisuals(plot, padNumber)
+			print("✅ Purchased Pad " .. padNumber)
+		end
+	end)
+end
+
+-- 🚀 INITIALIZE PLOT
+local function setupPlot(plot)
+	local ownerVal = plot:WaitForChild("Owner")
+
+	ownerVal.Changed:Connect(function(newOwner)
+		if newOwner == "" then 
+			-- Reset if empty
+			updatePadVisuals(plot, 1) 
+		else
+			-- Load Owner's Level
+			local player = Players:FindFirstChild(newOwner)
+			if player then
+				-- Wait for data to load
+				local level = player:GetAttribute("HighestUnlockedPad") or 1
+				updatePadVisuals(plot, level)
+
+				-- Listen for upgrades (Live updates)
+				player:GetAttributeChangedSignal("HighestUnlockedPad"):Connect(function()
+					updatePadVisuals(plot, player:GetAttribute("HighestUnlockedPad"))
+				end)
+			end
+		end
+	end)
+
+	-- Setup Buttons once
+	local pads = plot:WaitForChild("Pads")
+	for i = 2, 14 do -- Start at 2 (1 is free)
+		local p = pads:FindFirstChild("Pad"..i)
+		if p then setupBuyButton(plot, p, i) end
+	end
+end
+
+for _, p in pairs(TycoonFolder:GetChildren()) do setupPlot(p) end
+TycoonFolder.ChildAdded:Connect(setupPlot)
