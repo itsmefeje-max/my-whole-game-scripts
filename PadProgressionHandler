@@ -1,10 +1,11 @@
--- Purpose: Handles Pad Unlocking, Visibility, and Purchasing
--- Runs on: Server
--- Location: ServerScriptService.PadProgressionHandler
+-- -- Purpose: Handles Pad Unlocking, Visibility, and Purchasing
+-- -- Runs on: Server
+-- -- Location: ServerScriptService.PadProgressionHandler
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
+local Debris = game:GetService("Debris") -- Added for sound cleanup
 
 print("🟢 PadProgressionHandler: Loaded & Ready")
 
@@ -89,15 +90,27 @@ local function setupBuyButton(plot, padModel, padNumber)
 		-- 3. Check Money
 		-- ✅ FIX: Force tonumber() to prevent "string <= number" errors if Attribute is wrong type
 		local cost = tonumber(padModel:GetAttribute("Cost")) or 500
-		
-		local leaderstats = player:FindFirstChild("leaderstats")
-		local cash = leaderstats and leaderstats:FindFirstChild("Cash")
 
-		if cash and cash.Value >= cost then
-			cash.Value -= cost
+		local leaderstats = player:FindFirstChild("leaderstats")
+		
+		-- ✅ CHANGED: We now look for 'Wallet' instead of 'Cash'
+		-- This ensures the BalanceManager detects the change and plays the floating text animation.
+		local wallet = leaderstats and leaderstats:FindFirstChild("Wallet")
+
+		if wallet and wallet.Value >= cost then
+			wallet.Value -= cost -- Deduct from Wallet (Physical Cash)
+			
 			player:SetAttribute("HighestUnlockedPad", padNumber) -- Update Data
 			updatePadVisuals(plot, padNumber) -- Update Visuals
 			print("✅ " .. player.Name .. " Purchased Pad " .. padNumber)
+
+			-- ✅ OPTIONAL: Play Sound (Matches Shop Feel)
+			local s = Instance.new("Sound")
+			s.SoundId = "rbxassetid://9083627113" -- Click/Purchase Sound
+			s.Volume = 0.5
+			s.Parent = buyButton:IsA("BasePart") and buyButton or buyButton.PrimaryPart
+			s:Play()
+			Debris:AddItem(s, 2)
 		end
 	end
 
@@ -130,7 +143,7 @@ local function setupPlot(plot)
 				-- 🛡️ RACE CONDITION FIX: Retry loop to find player
 				local player = Players:FindFirstChild(newOwner)
 				local retries = 0
-				
+
 				-- If player is nil, wait and try again (up to 5 seconds)
 				while not player and retries < 20 do
 					task.wait(0.25)
@@ -142,7 +155,7 @@ local function setupPlot(plot)
 					-- Found you! Now we can safely check your level
 					local savedLevel = tonumber(player:GetAttribute("HighestUnlockedPad")) or 1
 					print("🔎 Player Found: " .. newOwner .. " | Loading Pads Level: " .. savedLevel)
-					
+
 					updatePadVisuals(plot, savedLevel)
 
 					-- Listen for future upgrades
