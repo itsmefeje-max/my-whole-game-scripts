@@ -1,8 +1,6 @@
--- [[ SERVER SCRIPT: PadProgressionHandler (Fixed & Debugged) ]]
 -- Purpose: Handles Pad Unlocking, Visibility, and Purchasing
--- FIXES: 
--- 1. "Player Nil" Race Condition (Retries finding player until they exist)
--- 2. "Ghost Buttons" (Forces visual update immediately)
+-- Runs on: Server
+-- Location: ServerScriptService.PadProgressionHandler
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -85,11 +83,13 @@ local function setupBuyButton(plot, padModel, padNumber)
 		if plot.Owner.Value ~= player.Name then return end
 
 		-- 2. Check Sequence
-		local currentLevel = player:GetAttribute("HighestUnlockedPad") or 1
+		local currentLevel = tonumber(player:GetAttribute("HighestUnlockedPad")) or 1
 		if padNumber ~= (currentLevel + 1) then return end
 
 		-- 3. Check Money
-		local cost = padModel:GetAttribute("Cost") or 500
+		-- ✅ FIX: Force tonumber() to prevent "string <= number" errors if Attribute is wrong type
+		local cost = tonumber(padModel:GetAttribute("Cost")) or 500
+		
 		local leaderstats = player:FindFirstChild("leaderstats")
 		local cash = leaderstats and leaderstats:FindFirstChild("Cash")
 
@@ -116,7 +116,7 @@ local function setupBuyButton(plot, padModel, padNumber)
 end
 
 -- ============================================================================
--- 3. PLOT SETUP (THE FIX)
+-- 3. PLOT SETUP
 -- ============================================================================
 local function setupPlot(plot)
 	task.spawn(function()
@@ -140,14 +140,14 @@ local function setupPlot(plot)
 
 				if player then
 					-- Found you! Now we can safely check your level
-					local savedLevel = player:GetAttribute("HighestUnlockedPad") or 1
+					local savedLevel = tonumber(player:GetAttribute("HighestUnlockedPad")) or 1
 					print("🔎 Player Found: " .. newOwner .. " | Loading Pads Level: " .. savedLevel)
 					
 					updatePadVisuals(plot, savedLevel)
 
 					-- Listen for future upgrades
 					player:GetAttributeChangedSignal("HighestUnlockedPad"):Connect(function()
-						local newLevel = player:GetAttribute("HighestUnlockedPad") or 1
+						local newLevel = tonumber(player:GetAttribute("HighestUnlockedPad")) or 1
 						updatePadVisuals(plot, newLevel)
 					end)
 				else
