@@ -1,124 +1,209 @@
--- [[ LOCAL SCRIPT: PadEffectsClient ]]
--- -- Purpose: Handles FOV Punch, UIStroke Animation, and Success/Fail Messages.
--- -- Runs on: Client
--- -- Location: StarterPlayerScripts
+-- [[ SERVER SCRIPT: PadProgressionHandler (Visual Fix + Success/Fail Logic) ]]
+-- -- Purpose: Handles Pad Unlocking, Visibility, Purchasing, and triggers Client Effects.
+-- -- Runs on: Server
+-- -- Location: ServerScriptService
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
 
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-local camera = Workspace.CurrentCamera
-
--- 📡 REMOTE EVENT
-local PadUnlockEvent = ReplicatedStorage:WaitForChild("PadUnlockEvent")
-
--- ⚙️ CONFIGURATION
-local FOV_PUNCH_AMOUNT = 10      
-local FOV_TIME_IN = 0.15         
-local FOV_TIME_OUT = 0.5         
-local NOTIFICATION_DURATION = 3.5 
-
--- 🎨 COLORS
-local COLOR_SUCCESS = Color3.fromRGB(85, 255, 127) -- Bright Green
-local COLOR_FAIL    = Color3.fromRGB(255, 85, 85)  -- Bright Red
+local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
 -- ============================================================================
--- 1. GET YOUR EXISTING GUI
+-- 📡 REMOTE EVENT SETUP (Communication to Client)
 -- ============================================================================
-local notificationsGui = playerGui:WaitForChild("Notifications")
-local padLabel = notificationsGui:WaitForChild("PadNotification")
-
--- Ensure invisible at start
-padLabel.TextTransparency = 1
-padLabel.Visible = true 
-
--- Handle initial UIStroke visibility
-local initialStroke = padLabel:FindFirstChildOfClass("UIStroke")
-if initialStroke then initialStroke.Transparency = 1 end
+-- We create this event so we can tell the Client to play the FOV/UI effects
+local PadUnlockEvent = ReplicatedStorage:FindFirstChild("PadUnlockEvent")
+if not PadUnlockEvent then
+	PadUnlockEvent = Instance.new("RemoteEvent")
+	PadUnlockEvent.Name = "PadUnlockEvent"
+	PadUnlockEvent.Parent = ReplicatedStorage
+end
 
 -- ============================================================================
--- 2. ANIMATION FUNCTIONS
+-- 🔊 SOUND CONFIGURATION
 -- ============================================================================
-local function playNotification(isSuccess, data)
-	local uiStroke = padLabel:FindFirstChildOfClass("UIStroke")
+local PURCHASE_SOUND_ID = "rbxassetid://14810387808" 
+local PURCHASE_VOLUME = 0.5
+local ERROR_SOUND_ID = "rbxassetid://4612375233" -- Sound for being broke (Optional)
 
-	-- 1. Set Text & Color based on Result
-	if isSuccess then
-		padLabel.TextColor3 = COLOR_SUCCESS
-		padLabel.Text = "Purchase Completed! You now own Pad " .. tostring(data)
-	else
-		padLabel.TextColor3 = COLOR_FAIL
-		-- Format number with commas (e.g. 1,000)
-		local formattedMoney = tostring(data):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
-		padLabel.Text = "Insufficient Funds! You need $" .. formattedMoney .. " more."
+print("🟢 PadProgressionHandler: Loaded & Ready")
+
+-- ============================================================================
+-- 1. VISUAL HANDLER (Recursive Fix Preserved)
+-- ============================================================================
+local function toggleVisual(obj, isVisible, canTouch)
+	local transparency = isVisible and 0 or 1
+	local collide = isVisible 
+
+	local function applyToPart(part)
+		if part:IsA("BasePart") then
+			part.Transparency = transparency
+			part.CanCollide = collide
+			part.CanTouch = canTouch
+			part.CanQuery = canTouch
+			part.Anchored = true 
+			-- ✅ FIX: Handles BillboardGui (BuyInfo/LockedLabel) and SurfaceGui
+		elseif part:IsA("BillboardGui") or part:IsA("SurfaceGui") then
+			part.Enabled = isVisible
+		end
 	end
 
-	-- 2. Tween Info
-	local tInfoIn = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-	local tInfoOut = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	-- 1. Apply to the main object itself
+	applyToPart(obj)
 
-	-- 3. Fade In (Text + Stroke)
-	local fadeTextIn = TweenService:Create(padLabel, tInfoIn, {TextTransparency = 0})
-	fadeTextIn:Play()
-
-	if uiStroke then
-		local fadeStrokeIn = TweenService:Create(uiStroke, tInfoIn, {Transparency = 0})
-		fadeStrokeIn:Play()
-	end
-
-	-- 4. Wait
-	task.wait(NOTIFICATION_DURATION)
-
-	-- 5. Fade Out (Text + Stroke)
-	local fadeTextOut = TweenService:Create(padLabel, tInfoOut, {TextTransparency = 1})
-	fadeTextOut:Play()
-
-	if uiStroke then
-		local fadeStrokeOut = TweenService:Create(uiStroke, tInfoOut, {Transparency = 1})
-		fadeStrokeOut:Play()
+	-- 2. Apply to ALL descendants (Finds BuyInfo/LockedLabel inside the Part)
+	for _, child in pairs(obj:GetDescendants()) do 
+		applyToPart(child) 
 	end
 end
 
-local function punchFOV()
-	local originalFOV = 70 
+local function updatePadVisuals(plot, unlockedLevel)
+	unlockedLevel = tonumber(unlockedLevel) or 1
+	local padsFolder = plot:FindFirstChild("Pads")
+	if not padsFolder then return end 
 
-	local tPunch = TweenService:Create(camera, TweenInfo.new(FOV_TIME_IN, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-		FieldOfView = originalFOV + FOV_PUNCH_AMOUNT
-	})
+	for i = 1, 14 do
+		local padName = "Pad" .. i
+		local padModel = padsFolder:FindFirstChild(padName)
 
-	local tReturn = TweenService:Create(camera, TweenInfo.new(FOV_TIME_OUT, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
-		FieldOfView = originalFOV
-	})
+		if padModel then
+			local geometry = padModel:FindFirstChild("Geometry")
+			local buyButton = padModel:FindFirstChild("BuyButton")
 
-	tPunch:Play()
-	tPunch.Completed:Connect(function()
-		tReturn:Play()
+			if i <= unlockedLevel then
+				-- STATE: OWNED
+				if geometry then toggleVisual(geometry, true, true) end
+				if buyButton then toggleVisual(buyButton, false, false) end
+			elseif i == unlockedLevel + 1 then
+				-- STATE: NEXT TO BUY
+				if geometry then toggleVisual(geometry, false, false) end
+				if buyButton then toggleVisual(buyButton, true, true) end
+			else
+				-- STATE: LOCKED
+				if geometry then toggleVisual(geometry, false, false) end
+				if buyButton then toggleVisual(buyButton, false, false) end
+			end
+		end
+	end
+end
+
+-- ============================================================================
+-- 2. BUY FUNCTION (Updated with Success/Fail Logic)
+-- ============================================================================
+local function setupBuyButton(plot, padModel, padNumber)
+	local buyButton = padModel:FindFirstChild("BuyButton")
+	if not buyButton then return end 
+
+	if buyButton:GetAttribute("Connected") then return end
+	buyButton:SetAttribute("Connected", true)
+
+	local function attemptBuy(player)
+		if plot.Owner.Value ~= player.Name then return end
+
+		local currentLevel = tonumber(player:GetAttribute("HighestUnlockedPad")) or 1
+		if padNumber ~= (currentLevel + 1) then return end
+
+		local cost = tonumber(padModel:GetAttribute("Cost")) or 500
+		local leaderstats = player:FindFirstChild("leaderstats")
+		local wallet = leaderstats and leaderstats:FindFirstChild("Wallet")
+
+		if wallet then
+			if wallet.Value >= cost then
+				-- ✅ SUCCESS: Rich enough!
+				wallet.Value -= cost 
+				player:SetAttribute("HighestUnlockedPad", padNumber)
+				updatePadVisuals(plot, padNumber)
+				print("✅ " .. player.Name .. " Purchased Pad " .. padNumber)
+
+				-- 🔊 Play Ca-ching!
+				local s = Instance.new("Sound")
+				s.SoundId = PURCHASE_SOUND_ID 
+				s.Volume = PURCHASE_VOLUME
+				s.Parent = buyButton:IsA("BasePart") and buyButton or buyButton.PrimaryPart
+				s:Play()
+				Debris:AddItem(s, 2)
+
+				-- ✨ TRIGGER CLIENT: SUCCESS (Green Text + FX)
+				PadUnlockEvent:FireClient(player, true, padNumber)
+			else
+				-- ❌ FAIL: Broke!
+				local missing = cost - wallet.Value
+
+				-- 🔊 Play Error Noise (Optional)
+				local s = Instance.new("Sound")
+				s.SoundId = ERROR_SOUND_ID 
+				s.Volume = 0.5
+				s.Parent = buyButton:IsA("BasePart") and buyButton or buyButton.PrimaryPart
+				s:Play()
+				Debris:AddItem(s, 1)
+
+				-- ✨ TRIGGER CLIENT: FAIL (Red Text + Missing Amount)
+				PadUnlockEvent:FireClient(player, false, missing)
+			end
+		end
+	end
+
+	local function onTouch(hit)
+		local player = Players:GetPlayerFromCharacter(hit.Parent)
+		if player then attemptBuy(player) end
+	end
+
+	if buyButton:IsA("BasePart") then
+		buyButton.Touched:Connect(onTouch)
+	elseif buyButton:IsA("Model") then
+		for _, part in pairs(buyButton:GetDescendants()) do
+			if part:IsA("BasePart") then part.Touched:Connect(onTouch) end
+		end
+	end
+end
+
+-- ============================================================================
+-- 3. PLOT SETUP
+-- ============================================================================
+local function setupPlot(plot)
+	task.spawn(function()
+		local ownerVal = plot:WaitForChild("Owner", 10)
+		if not ownerVal then return end
+
+		local function onOwnerChange(newOwner)
+			if newOwner == "" then 
+				updatePadVisuals(plot, 1) 
+			else
+				local player = Players:FindFirstChild(newOwner)
+				local retries = 0
+				while not player and retries < 20 do
+					task.wait(0.25)
+					player = Players:FindFirstChild(newOwner)
+					retries += 1
+				end
+
+				if player then
+					local savedLevel = tonumber(player:GetAttribute("HighestUnlockedPad")) or 1
+					updatePadVisuals(plot, savedLevel)
+
+					player:GetAttributeChangedSignal("HighestUnlockedPad"):Connect(function()
+						local newLevel = tonumber(player:GetAttribute("HighestUnlockedPad")) or 1
+						updatePadVisuals(plot, newLevel)
+					end)
+				end
+			end
+		end
+
+		ownerVal.Changed:Connect(onOwnerChange)
+
+		local pads = plot:WaitForChild("Pads", 30)
+		if pads then
+			for i = 2, 14 do 
+				local p = pads:WaitForChild("Pad"..i, 5)
+				if p then setupBuyButton(plot, p, i) end
+			end
+		end
+
+		if ownerVal.Value ~= "" then onOwnerChange(ownerVal.Value) else updatePadVisuals(plot, 1) end
 	end)
 end
 
--- ============================================================================
--- 3. LISTENER
--- ============================================================================
-PadUnlockEvent.OnClientEvent:Connect(function(isSuccess, data)
-	-- data is either 'padNumber' (if success) or 'neededMoney' (if fail)
-
-	if isSuccess then
-		punchFOV() -- Only punch FOV on success
-		playNotification(true, data)
-
-		-- Success Sound
-		local s = Instance.new("Sound")
-		s.SoundId = "rbxassetid://6042054006"
-		s.Volume = 0.6
-		s.Parent = playerGui
-		s:Play()
-		Debris:AddItem(s, 2)
-	else
-		-- Just show the red text, no FOV punch
-		playNotification(false, data)
-	end
-end)
+for _, p in pairs(TycoonFolder:GetChildren()) do setupPlot(p) end
+TycoonFolder.ChildAdded:Connect(setupPlot)
