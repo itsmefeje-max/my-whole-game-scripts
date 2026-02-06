@@ -1,5 +1,5 @@
 -- [[ LOCAL SCRIPT: PadEffectsClient ]]
--- -- Purpose: Handles FOV Punch and Celebration UI when buying a pad.
+-- -- Purpose: Handles FOV Punch, UIStroke Animation, and Success/Fail Messages.
 -- -- Runs on: Client
 -- -- Location: StarterPlayerScripts
 
@@ -17,89 +17,79 @@ local camera = Workspace.CurrentCamera
 local PadUnlockEvent = ReplicatedStorage:WaitForChild("PadUnlockEvent")
 
 -- ⚙️ CONFIGURATION
-local FOV_PUNCH_AMOUNT = 10      -- How much the screen zooms OUT
-local FOV_TIME_IN = 0.15         -- How fast the punch happens
-local FOV_TIME_OUT = 0.5         -- How fast it settles back
-local NOTIFICATION_DURATION = 4  -- How long the text stays
+local FOV_PUNCH_AMOUNT = 10      
+local FOV_TIME_IN = 0.15         
+local FOV_TIME_OUT = 0.5         
+local NOTIFICATION_DURATION = 3.5 
+
+-- 🎨 COLORS
+local COLOR_SUCCESS = Color3.fromRGB(85, 255, 127) -- Bright Green
+local COLOR_FAIL    = Color3.fromRGB(255, 85, 85)  -- Bright Red
 
 -- ============================================================================
--- 🎨 UI CREATION (Creates the notification dynamically)
+-- 1. GET YOUR EXISTING GUI
 -- ============================================================================
-local function showNotification(padNumber)
-	-- 1. Create ScreenGui
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "CelebrationUI"
-	screenGui.IgnoreGuiInset = true
-	screenGui.ResetOnSpawn = false
-	screenGui.Parent = playerGui
+local notificationsGui = playerGui:WaitForChild("Notifications")
+local padLabel = notificationsGui:WaitForChild("PadNotification")
 
-	-- 2. Main Frame (Centered Near Top)
-	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(1, 0, 0.2, 0)
-	frame.Position = UDim2.new(0, 0, 0.15, 0) 
-	frame.BackgroundTransparency = 1
-	frame.Parent = screenGui
+-- Ensure invisible at start
+padLabel.TextTransparency = 1
+padLabel.Visible = true 
 
-	-- 3. Header Text ("PURCHASE COMPLETED")
-	local header = Instance.new("TextLabel")
-	header.Text = "PURCHASE COMPLETED"
-	header.Font = Enum.Font.FredokaOne
-	header.TextScaled = true
-	header.TextColor3 = Color3.fromRGB(85, 255, 127) -- Bright Green
-	header.BackgroundTransparency = 1
-	header.Size = UDim2.new(1, 0, 0.45, 0)
-	header.Position = UDim2.new(0, 0, 0, 0)
-	header.TextTransparency = 1 -- Start invisible
-	header.TextStrokeTransparency = 1
-	header.TextStrokeColor3 = Color3.new(0,0,0)
-	header.Parent = frame
+-- Handle initial UIStroke visibility
+local initialStroke = padLabel:FindFirstChildOfClass("UIStroke")
+if initialStroke then initialStroke.Transparency = 1 end
 
-	-- 4. Sub Text ("Congratulations...")
-	local subText = Instance.new("TextLabel")
-	subText.Text = "You now own Pad " .. padNumber
-	subText.Font = Enum.Font.GothamBold
-	subText.TextScaled = true
-	subText.TextColor3 = Color3.fromRGB(255, 255, 255) -- White
-	subText.BackgroundTransparency = 1
-	subText.Size = UDim2.new(0.6, 0, 0.25, 0)
-	subText.Position = UDim2.new(0.2, 0, 0.5, 0)
-	subText.TextTransparency = 1 -- Start invisible
-	subText.TextStrokeTransparency = 1
-	subText.TextStrokeColor3 = Color3.new(0,0,0)
-	subText.Parent = frame
+-- ============================================================================
+-- 2. ANIMATION FUNCTIONS
+-- ============================================================================
+local function playNotification(isSuccess, data)
+	local uiStroke = padLabel:FindFirstChildOfClass("UIStroke")
 
-	-- 5. ANIMATION SEQUENCE
-	local tInfoIn = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-	local tInfoOut = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	-- 1. Set Text & Color based on Result
+	if isSuccess then
+		padLabel.TextColor3 = COLOR_SUCCESS
+		padLabel.Text = "Purchase Completed! You now own Pad " .. tostring(data)
+	else
+		padLabel.TextColor3 = COLOR_FAIL
+		-- Format number with commas (e.g. 1,000)
+		local formattedMoney = tostring(data):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
+		padLabel.Text = "Insufficient Funds! You need $" .. formattedMoney .. " more."
+	end
 
-	-- Fade In + Pop
-	TweenService:Create(header, tInfoIn, {TextTransparency = 0, TextStrokeTransparency = 0.5}):Play()
-	task.wait(0.15)
-	TweenService:Create(subText, tInfoIn, {TextTransparency = 0, TextStrokeTransparency = 0.5}):Play()
+	-- 2. Tween Info
+	local tInfoIn = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	local tInfoOut = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
-	-- Wait
+	-- 3. Fade In (Text + Stroke)
+	local fadeTextIn = TweenService:Create(padLabel, tInfoIn, {TextTransparency = 0})
+	fadeTextIn:Play()
+
+	if uiStroke then
+		local fadeStrokeIn = TweenService:Create(uiStroke, tInfoIn, {Transparency = 0})
+		fadeStrokeIn:Play()
+	end
+
+	-- 4. Wait
 	task.wait(NOTIFICATION_DURATION)
 
-	-- Fade Out
-	TweenService:Create(header, tInfoOut, {TextTransparency = 1, TextStrokeTransparency = 1}):Play()
-	TweenService:Create(subText, tInfoOut, {TextTransparency = 1, TextStrokeTransparency = 1}):Play()
+	-- 5. Fade Out (Text + Stroke)
+	local fadeTextOut = TweenService:Create(padLabel, tInfoOut, {TextTransparency = 1})
+	fadeTextOut:Play()
 
-	-- Cleanup
-	Debris:AddItem(screenGui, 2)
+	if uiStroke then
+		local fadeStrokeOut = TweenService:Create(uiStroke, tInfoOut, {Transparency = 1})
+		fadeStrokeOut:Play()
+	end
 end
 
--- ============================================================================
--- 🎥 CAMERA EFFECT
--- ============================================================================
 local function punchFOV()
-	local originalFOV = 70 -- Standard Default
+	local originalFOV = 70 
 
-	-- Punch OUT (Zoom out fast)
 	local tPunch = TweenService:Create(camera, TweenInfo.new(FOV_TIME_IN, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
 		FieldOfView = originalFOV + FOV_PUNCH_AMOUNT
 	})
 
-	-- Settle Back (Zoom in smooth)
 	local tReturn = TweenService:Create(camera, TweenInfo.new(FOV_TIME_OUT, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
 		FieldOfView = originalFOV
 	})
@@ -111,20 +101,24 @@ local function punchFOV()
 end
 
 -- ============================================================================
--- ⚡ LISTENER
+-- 3. LISTENER
 -- ============================================================================
-PadUnlockEvent.OnClientEvent:Connect(function(padNumber)
-	-- 1. Play Camera Effect
-	punchFOV()
+PadUnlockEvent.OnClientEvent:Connect(function(isSuccess, data)
+	-- data is either 'padNumber' (if success) or 'neededMoney' (if fail)
 
-	-- 2. Show UI
-	showNotification(padNumber)
+	if isSuccess then
+		punchFOV() -- Only punch FOV on success
+		playNotification(true, data)
 
-	-- 3. Optional: Add a client-side celebratory sound here if you want extra "juice"
-	local s = Instance.new("Sound")
-	s.SoundId = "rbxassetid://6042054006" -- Success Sparkle Sound
-	s.Volume = 0.6
-	s.Parent = playerGui
-	s:Play()
-	Debris:AddItem(s, 2)
+		-- Success Sound
+		local s = Instance.new("Sound")
+		s.SoundId = "rbxassetid://6042054006"
+		s.Volume = 0.6
+		s.Parent = playerGui
+		s:Play()
+		Debris:AddItem(s, 2)
+	else
+		-- Just show the red text, no FOV punch
+		playNotification(false, data)
+	end
 end)
