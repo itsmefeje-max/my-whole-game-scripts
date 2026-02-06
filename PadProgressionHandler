@@ -17,7 +17,7 @@ local PURCHASE_VOLUME = 0.5
 print("🟢 PadProgressionHandler: Loaded & Ready")
 
 -- ============================================================================
--- 1. VISUAL HANDLER (Hides/Shows Buttons)
+-- 1. VISUAL HANDLER (UPDATED FIX)
 -- ============================================================================
 local function toggleVisual(obj, isVisible, canTouch)
 	local transparency = isVisible and 0 or 1
@@ -30,15 +30,19 @@ local function toggleVisual(obj, isVisible, canTouch)
 			part.CanTouch = canTouch
 			part.CanQuery = canTouch
 			part.Anchored = true -- Prevents falling buttons
+			-- ✅ FIX: Handles BillboardGui (BuyInfo/LockedLabel) and SurfaceGui
 		elseif part:IsA("BillboardGui") or part:IsA("SurfaceGui") then
 			part.Enabled = isVisible
 		end
 	end
 
-	if obj:IsA("Model") then
-		for _, child in pairs(obj:GetDescendants()) do applyToPart(child) end
-	else
-		applyToPart(obj)
+	-- 1. Apply to the main object itself (The BuyButton Part)
+	applyToPart(obj)
+
+	-- 2. Apply to ALL descendants (Finds BuyInfo/LockedLabel inside the Part)
+	-- This runs regardless of whether 'obj' is a Model or a BasePart
+	for _, child in pairs(obj:GetDescendants()) do 
+		applyToPart(child) 
 	end
 end
 
