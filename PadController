@@ -211,6 +211,8 @@ local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVa
 
 	local tool = player.Character:FindFirstChildWhichIsA("Tool")
 	if not tool then return end
+	if not tool:GetAttribute("IssuedByServer") then return end
+	if not tool:GetAttribute("ToolId") then return end
 
 	local realModelName = FindModelNameFromTool(tool.Name)
 	local realCar = realModelName and CarModels:FindFirstChild(realModelName)

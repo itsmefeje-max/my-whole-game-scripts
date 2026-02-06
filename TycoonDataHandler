@@ -91,16 +91,17 @@ local function sanitizeInventory(player)
 		if container then
 			for _, tool in ipairs(container:GetChildren()) do
 				if tool:IsA("Tool") then
-					if tool:GetAttribute("ToolId") then
-						if not validateTool(tool) then
-							logAdmin("Destroyed unauthorized tool: " .. tool.Name, "WARN")
-							tool:Destroy()
-						else
-							if tool.CanBeDropped then tool.CanBeDropped = false end
-							local realId = tool:GetAttribute("ToolId")
-							if realId and tool.Name ~= realId then
-								tool.Name = realId 
-							end
+					if not tool:GetAttribute("ToolId") then
+						logAdmin("Destroyed unauthorized tool (missing ToolId): " .. tool.Name, "WARN")
+						tool:Destroy()
+					elseif not validateTool(tool) then
+						logAdmin("Destroyed unauthorized tool: " .. tool.Name, "WARN")
+						tool:Destroy()
+					else
+						if tool.CanBeDropped then tool.CanBeDropped = false end
+						local realId = tool:GetAttribute("ToolId")
+						if realId and tool.Name ~= realId then
+							tool.Name = realId 
 						end
 					end
 				end
@@ -476,6 +477,8 @@ local function save(player, isClosing)
 	if not ok then warn("❌ Save Failed " .. player.Name .. ": " .. tostring(err)) 
 	else if isClosing then print("✅ Saved: " .. player.Name) end end
 
+	session.IsDirty = false
+	session.LastSave = os.time()
 	-- [[ SHOP SYNC ]] Cleanup session if player is leaving
 	if isClosing then
 		local shopBindable = ServerStorage:FindFirstChild("ShopPersistenceFunction")
