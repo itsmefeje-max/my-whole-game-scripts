@@ -1,0 +1,130 @@
+-- [[ LOCAL SCRIPT: PadEffectsClient ]]
+-- -- Purpose: Handles FOV Punch and Celebration UI when buying a pad.
+-- -- Runs on: Client
+-- -- Location: StarterPlayerScripts
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local Debris = game:GetService("Debris")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local camera = Workspace.CurrentCamera
+
+-- 📡 REMOTE EVENT
+local PadUnlockEvent = ReplicatedStorage:WaitForChild("PadUnlockEvent")
+
+-- ⚙️ CONFIGURATION
+local FOV_PUNCH_AMOUNT = 10      -- How much the screen zooms OUT
+local FOV_TIME_IN = 0.15         -- How fast the punch happens
+local FOV_TIME_OUT = 0.5         -- How fast it settles back
+local NOTIFICATION_DURATION = 4  -- How long the text stays
+
+-- ============================================================================
+-- 🎨 UI CREATION (Creates the notification dynamically)
+-- ============================================================================
+local function showNotification(padNumber)
+	-- 1. Create ScreenGui
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "CelebrationUI"
+	screenGui.IgnoreGuiInset = true
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = playerGui
+
+	-- 2. Main Frame (Centered Near Top)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0.2, 0)
+	frame.Position = UDim2.new(0, 0, 0.15, 0) 
+	frame.BackgroundTransparency = 1
+	frame.Parent = screenGui
+
+	-- 3. Header Text ("PURCHASE COMPLETED")
+	local header = Instance.new("TextLabel")
+	header.Text = "PURCHASE COMPLETED"
+	header.Font = Enum.Font.FredokaOne
+	header.TextScaled = true
+	header.TextColor3 = Color3.fromRGB(85, 255, 127) -- Bright Green
+	header.BackgroundTransparency = 1
+	header.Size = UDim2.new(1, 0, 0.45, 0)
+	header.Position = UDim2.new(0, 0, 0, 0)
+	header.TextTransparency = 1 -- Start invisible
+	header.TextStrokeTransparency = 1
+	header.TextStrokeColor3 = Color3.new(0,0,0)
+	header.Parent = frame
+
+	-- 4. Sub Text ("Congratulations...")
+	local subText = Instance.new("TextLabel")
+	subText.Text = "You now own Pad " .. padNumber
+	subText.Font = Enum.Font.GothamBold
+	subText.TextScaled = true
+	subText.TextColor3 = Color3.fromRGB(255, 255, 255) -- White
+	subText.BackgroundTransparency = 1
+	subText.Size = UDim2.new(0.6, 0, 0.25, 0)
+	subText.Position = UDim2.new(0.2, 0, 0.5, 0)
+	subText.TextTransparency = 1 -- Start invisible
+	subText.TextStrokeTransparency = 1
+	subText.TextStrokeColor3 = Color3.new(0,0,0)
+	subText.Parent = frame
+
+	-- 5. ANIMATION SEQUENCE
+	local tInfoIn = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	local tInfoOut = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+	-- Fade In + Pop
+	TweenService:Create(header, tInfoIn, {TextTransparency = 0, TextStrokeTransparency = 0.5}):Play()
+	task.wait(0.15)
+	TweenService:Create(subText, tInfoIn, {TextTransparency = 0, TextStrokeTransparency = 0.5}):Play()
+
+	-- Wait
+	task.wait(NOTIFICATION_DURATION)
+
+	-- Fade Out
+	TweenService:Create(header, tInfoOut, {TextTransparency = 1, TextStrokeTransparency = 1}):Play()
+	TweenService:Create(subText, tInfoOut, {TextTransparency = 1, TextStrokeTransparency = 1}):Play()
+
+	-- Cleanup
+	Debris:AddItem(screenGui, 2)
+end
+
+-- ============================================================================
+-- 🎥 CAMERA EFFECT
+-- ============================================================================
+local function punchFOV()
+	local originalFOV = 70 -- Standard Default
+
+	-- Punch OUT (Zoom out fast)
+	local tPunch = TweenService:Create(camera, TweenInfo.new(FOV_TIME_IN, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		FieldOfView = originalFOV + FOV_PUNCH_AMOUNT
+	})
+
+	-- Settle Back (Zoom in smooth)
+	local tReturn = TweenService:Create(camera, TweenInfo.new(FOV_TIME_OUT, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+		FieldOfView = originalFOV
+	})
+
+	tPunch:Play()
+	tPunch.Completed:Connect(function()
+		tReturn:Play()
+	end)
+end
+
+-- ============================================================================
+-- ⚡ LISTENER
+-- ============================================================================
+PadUnlockEvent.OnClientEvent:Connect(function(padNumber)
+	-- 1. Play Camera Effect
+	punchFOV()
+
+	-- 2. Show UI
+	showNotification(padNumber)
+
+	-- 3. Optional: Add a client-side celebratory sound here if you want extra "juice"
+	local s = Instance.new("Sound")
+	s.SoundId = "rbxassetid://6042054006" -- Success Sparkle Sound
+	s.Volume = 0.6
+	s.Parent = playerGui
+	s:Play()
+	Debris:AddItem(s, 2)
+end)
