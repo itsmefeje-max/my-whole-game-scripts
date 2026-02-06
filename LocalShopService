@@ -74,6 +74,17 @@ local PlayerSessions = {}       -- [userId] = { SeedVersion, LocalSeed, Purchase
 local PurchaseLocks = {}        -- [userId] = true/nil
 local LastPurchaseTime = {}     -- [userId] = os.clock()
 
+local function normalizePurchased(raw)
+	if type(raw) ~= "table" then return {} end
+	local normalized = {}
+	for car, count in pairs(raw) do
+		if type(count) == "number" and count > 0 then
+			normalized[car] = math.floor(count)
+		end
+	end
+	return normalized
+end
+
 -- =========================
 -- TOOL TAGGING + PERSISTENT ID
 -- =========================
@@ -262,18 +273,27 @@ PersistenceBindable.OnInvoke = function(action, player, data)
 
 	if action == "Load" then
 		-- RESTORE purchased counts from DataStore
-		local session, _ = getSession(player)
-		if data and type(data) == "table" then
-			-- Only restore if rotation matches (prevents loading old purchases for new rotation)
-			-- NOTE: To be safe, we just load it. getSession checks rotation anyway next time it's called.
-			session.Purchased = data
+		local session, didReset = getSession(player)
+		if type(data) == "table" then
+			if data.SeedVersion and data.SeedVersion ~= session.SeedVersion then
+				session.Purchased = {}
+			elseif type(data.Purchased) == "table" then
+				session.Purchased = normalizePurchased(data.Purchased)
+			else
+				session.Purchased = normalizePurchased(data)
+			end
 			print("✅ [Shop] Loaded purchases for " .. player.Name)
+		elseif didReset then
+			session.Purchased = {}
 		end
 
 	elseif action == "Get" then
 		-- RETURN purchased counts to be saved
 		if PlayerSessions[uid] then
-			return PlayerSessions[uid].Purchased
+			return {
+				SeedVersion = PlayerSessions[uid].SeedVersion,
+				Purchased = PlayerSessions[uid].Purchased,
+			}
 		end
 		return {}
 
