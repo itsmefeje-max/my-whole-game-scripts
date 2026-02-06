@@ -7,6 +7,13 @@ local Workspace = game:GetService("Workspace")
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 local Debris = game:GetService("Debris") -- Added for sound cleanup
 
+-- ============================================================================
+-- 🔊 SOUND CONFIGURATION (Edit Here)
+-- ============================================================================
+-- Change this ID to whatever Sound Effect you want for buying a pad
+local PURCHASE_SOUND_ID = "rbxassetid://14810387808" 
+local PURCHASE_VOLUME = 0.5
+
 print("🟢 PadProgressionHandler: Loaded & Ready")
 
 -- ============================================================================
@@ -92,22 +99,23 @@ local function setupBuyButton(plot, padModel, padNumber)
 		local cost = tonumber(padModel:GetAttribute("Cost")) or 500
 
 		local leaderstats = player:FindFirstChild("leaderstats")
-		
+
 		-- ✅ CHANGED: We now look for 'Wallet' instead of 'Cash'
 		-- This ensures the BalanceManager detects the change and plays the floating text animation.
 		local wallet = leaderstats and leaderstats:FindFirstChild("Wallet")
 
 		if wallet and wallet.Value >= cost then
 			wallet.Value -= cost -- Deduct from Wallet (Physical Cash)
-			
+
 			player:SetAttribute("HighestUnlockedPad", padNumber) -- Update Data
 			updatePadVisuals(plot, padNumber) -- Update Visuals
 			print("✅ " .. player.Name .. " Purchased Pad " .. padNumber)
 
 			-- ✅ OPTIONAL: Play Sound (Matches Shop Feel)
+			-- MODIFIED: Now uses the Configuration Variables from the top
 			local s = Instance.new("Sound")
-			s.SoundId = "rbxassetid://9083627113" -- Click/Purchase Sound
-			s.Volume = 0.5
+			s.SoundId = PURCHASE_SOUND_ID 
+			s.Volume = PURCHASE_VOLUME
 			s.Parent = buyButton:IsA("BasePart") and buyButton or buyButton.PrimaryPart
 			s:Play()
 			Debris:AddItem(s, 2)
