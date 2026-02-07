@@ -1,7 +1,7 @@
 -- [[ LOCAL SCRIPT: PadEffectsClient ]]
--- -- Purpose: Handles FOV Punch, UIStroke Animation, and Success/Fail Messages.
--- -- Runs on: Client
--- -- Location: StarterPlayerScripts
+-- Purpose: FOV Punch, Success Messages, and "Multi-Template" Confetti Mix.
+-- Runs on: Client
+-- Location: StarterPlayerScripts
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -22,6 +22,11 @@ local FOV_TIME_IN = 0.15
 local FOV_TIME_OUT = 0.5         
 local NOTIFICATION_DURATION = 3.5 
 
+-- 🎉 CONFETTI CONFIG
+local CONFETTI_COUNT = 25       -- How many total stars to spawn (The "Multiply" amount)
+local EXPLOSION_RADIUS = 300    -- How far they fly
+local ANIMATION_DURATION = 2.0  -- How long they float
+
 -- 🎨 COLORS
 local COLOR_SUCCESS = Color3.fromRGB(85, 255, 127) -- Bright Green
 local COLOR_FAIL    = Color3.fromRGB(255, 85, 85)  -- Bright Red
@@ -31,8 +36,9 @@ local COLOR_FAIL    = Color3.fromRGB(255, 85, 85)  -- Bright Red
 -- ============================================================================
 local notificationsGui = playerGui:WaitForChild("Notifications")
 local padLabel = notificationsGui:WaitForChild("PadNotification")
+local templatesFolder = notificationsGui:WaitForChild("ConfettiAssets") -- ✅ The Folder with 5 stars
 
--- Ensure invisible at start
+-- Ensure text is hidden at start
 padLabel.TextTransparency = 1
 padLabel.Visible = true 
 
@@ -43,6 +49,72 @@ if initialStroke then initialStroke.Transparency = 1 end
 -- ============================================================================
 -- 2. ANIMATION FUNCTIONS
 -- ============================================================================
+
+-- (New) Multi-Template Explosion
+local function explodeConfetti()
+	-- 1. Get all your 5 stars from the folder
+	local templates = templatesFolder:GetChildren()
+	
+	if #templates == 0 then
+		warn("No templates found in ConfettiAssets folder!")
+		return
+	end
+
+	-- 2. Spawn the copies
+	for i = 1, CONFETTI_COUNT do
+		task.spawn(function()
+			-- A. PICK A RANDOM STAR FROM YOUR 5
+			local randomTemplate = templates[math.random(1, #templates)]
+			
+			if randomTemplate:IsA("ImageLabel") then
+				-- B. CLONE IT
+				local clone = randomTemplate:Clone()
+				clone.Name = "Confetti_Particle"
+				clone.Visible = true
+				clone.Parent = notificationsGui -- Put inside the GUI
+				
+				-- C. START POSITION (Uses exactly where you put the template in Studio)
+				-- We add a tiny offset so they don't look perfectly stacked like a pancake
+				clone.Position = randomTemplate.Position
+				clone.Size = UDim2.new(0, 0, 0, 0) -- Start tiny
+				clone.Rotation = math.random(0, 360)
+				
+				-- D. CALCULATE RANDOM DIRECTION
+				local angle = math.rad(math.random(0, 360))
+				local distance = math.random(50, EXPLOSION_RADIUS)
+				
+				local endX = (math.cos(angle) * distance)
+				local endY = (math.sin(angle) * distance)
+				
+				-- Add gravity (fall down a bit)
+				local targetPos = randomTemplate.Position + UDim2.new(0, endX, 0, endY + math.random(50, 150))
+
+				-- E. TWEEN ANIMATION
+				local tweenInfo = TweenInfo.new(
+					math.random(ANIMATION_DURATION * 0.8, ANIMATION_DURATION * 1.2), 
+					Enum.EasingStyle.Quad, 
+					Enum.EasingDirection.Out
+				)
+				
+				local goal = {
+					Position = targetPos,
+					Size = randomTemplate.Size, -- Grow to the size you set in Studio
+					Rotation = clone.Rotation + math.random(-180, 180),
+					ImageTransparency = 1 -- Fade out
+				}
+				
+				local tween = TweenService:Create(clone, tweenInfo, goal)
+				tween:Play()
+				
+				-- F. CLEANUP
+				tween.Completed:Connect(function()
+					clone:Destroy()
+				end)
+			end
+		end)
+	end
+end
+
 local function playNotification(isSuccess, data)
 	local uiStroke = padLabel:FindFirstChildOfClass("UIStroke")
 
@@ -52,16 +124,12 @@ local function playNotification(isSuccess, data)
 		padLabel.Text = "Purchase Completed! You now own Pad " .. tostring(data)
 	else
 		padLabel.TextColor3 = COLOR_FAIL
-		-- Format number with commas (e.g. 1,000)
 		local formattedMoney = tostring(data):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
 		padLabel.Text = "Insufficient Funds! You need $" .. formattedMoney .. " more."
 	end
 
-	-- 2. Tween Info
+	-- 2. Fade In
 	local tInfoIn = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-	local tInfoOut = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-
-	-- 3. Fade In (Text + Stroke)
 	local fadeTextIn = TweenService:Create(padLabel, tInfoIn, {TextTransparency = 0})
 	fadeTextIn:Play()
 
@@ -70,10 +138,9 @@ local function playNotification(isSuccess, data)
 		fadeStrokeIn:Play()
 	end
 
-	-- 4. Wait
+	-- 3. Wait & Fade Out
 	task.wait(NOTIFICATION_DURATION)
-
-	-- 5. Fade Out (Text + Stroke)
+	local tInfoOut = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	local fadeTextOut = TweenService:Create(padLabel, tInfoOut, {TextTransparency = 1})
 	fadeTextOut:Play()
 
@@ -85,32 +152,25 @@ end
 
 local function punchFOV()
 	local originalFOV = 70 
-
 	local tPunch = TweenService:Create(camera, TweenInfo.new(FOV_TIME_IN, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
 		FieldOfView = originalFOV + FOV_PUNCH_AMOUNT
 	})
-
 	local tReturn = TweenService:Create(camera, TweenInfo.new(FOV_TIME_OUT, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
 		FieldOfView = originalFOV
 	})
-
 	tPunch:Play()
-	tPunch.Completed:Connect(function()
-		tReturn:Play()
-	end)
+	tPunch.Completed:Connect(function() tReturn:Play() end)
 end
 
 -- ============================================================================
 -- 3. LISTENER
 -- ============================================================================
 PadUnlockEvent.OnClientEvent:Connect(function(isSuccess, data)
-	-- data is either 'padNumber' (if success) or 'neededMoney' (if fail)
-
 	if isSuccess then
-		punchFOV() -- Only punch FOV on success
+		punchFOV() 
+		explodeConfetti() -- ✅ Triggers the mix of 5 stars
 		playNotification(true, data)
 
-		-- Success Sound
 		local s = Instance.new("Sound")
 		s.SoundId = "rbxassetid://6042054006"
 		s.Volume = 0.6
@@ -118,7 +178,6 @@ PadUnlockEvent.OnClientEvent:Connect(function(isSuccess, data)
 		s:Play()
 		Debris:AddItem(s, 2)
 	else
-		-- Just show the red text, no FOV punch
 		playNotification(false, data)
 	end
 end)
