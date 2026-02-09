@@ -1,12 +1,7 @@
--- Purpose: Server-side Admin Commands with secure currency/inventory management
+-- Purpose: Advanced Minecraft-Style Admin Commands
 -- Runs on: Server (ServerScriptService)
--- Location: ServerScriptService > AdminCommands
--- Dependencies: TycoonAdminAPI (for clearing data), CarTools, FlyClient
--- Public API: Chat commands (/give, /fly, /clearwallet, etc.)
--- Networking: Uses RemoteFunctions via TycoonAdminAPI for data wipes
--- Security: UserID whitelist, debounces, server-side validation, nil-safe checks
--- Performance: Caches tools, minimal loop usage
--- Notes: Assumes leaderstats names are "Cash" (Bank) and "Wallet"
+-- Public API: /give, /remove, /clear, /fly, /tp, /wallet, /bank
+-- Security: Strict ID Whitelist, Anti-Duplicate logic, Secure Data Wiping
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
@@ -23,8 +18,7 @@ local ADMIN_USER_IDS = {
 }
 
 local IS_STUDIO = RunService:IsStudio()
-local MAX_INVENTORY_SIZE = 500
-local CMD_DEBOUNCE = 0.5 
+local CMD_DEBOUNCE = 0.3
 
 -- 🛡️ STATE
 local AdminDebounces = {}
@@ -34,20 +28,8 @@ math.randomseed(os.time())
 -- 🔗 API CONNECTION
 local TycoonAdminAPI = ServerStorage:WaitForChild("TycoonAdminAPI", 10)
 
-if IS_STUDIO then
-	print("⚠️ [AdminCommands]: Studio Mode - Everyone is Admin!")
-end
-
-if not FlyScriptTemplate then
-	warn("❌ CRITICAL: 'FlyClient' missing in ServerStorage!")
-end
-
-if not TycoonAdminAPI then
-	warn("❌ CRITICAL: 'TycoonAdminAPI' missing! /clear command will fail.")
-end
-
 -- ============================================================================
--- 🛡️ HELPERS
+-- 🧠 INTELLIGENT PARSING (Minecraft Style)
 -- ============================================================================
 
 local function getCleanID(rawName)
@@ -67,7 +49,28 @@ local function getAllTools()
 	return tools
 end
 CarTools.ChildAdded:Connect(function() ToolCache = nil end)
-CarTools.ChildRemoved:Connect(function() ToolCache = nil end)
+
+-- Finds a tool by partial name (e.g. "civ" finds "Honda Civic")
+local function matchTool(query)
+	local target = getCleanID(query)
+	local bestMatch = nil
+	local exactMatch = false
+
+	for _, tool in pairs(getAllTools()) do
+		local id = getCleanID(tool.Name)
+		
+		-- 1. Exact Match (Highest Priority)
+		if id == target then 
+			return tool 
+		end
+		
+		-- 2. Partial Match
+		if id:find(target, 1, true) then
+			bestMatch = tool
+		end
+	end
+	return bestMatch
+end
 
 local function getOwnedSet(player)
 	local set = {}
@@ -75,7 +78,6 @@ local function getOwnedSet(player)
 		if not container then return end
 		for _, t in pairs(container:GetChildren()) do
 			if t:IsA("Tool") then 
-				-- Use the Attribute ID if available, otherwise name
 				local id = t:GetAttribute("ToolId") or t.Name
 				set[getCleanID(id)] = true 
 			end
@@ -96,49 +98,99 @@ local function tagIssued(tool, realID)
 	tool.CanBeDropped = false
 end
 
-local function findTool(itemName)
-	local target = getCleanID(itemName)
-	for _, tool in pairs(CarTools:GetChildren()) do
-		if tool:IsA("Tool") then
-			local tID = getCleanID(tool.Name)
-			if tID == target then return tool end
-		end
-	end
-	return nil
-end
-
-local function getAmount(amountText)
-	local amount = tonumber(amountText)
-	if not amount or amount <= 0 or amount ~= amount then return nil end
-	return math.floor(amount)
-end
-
+-- ============================================================================
+-- 🎯 TARGET SELECTORS
+-- ============================================================================
 local function getTargets(speaker, selector)
 	if not selector then return {} end
 	selector = selector:lower()
-	if selector == "@s" or selector == "me" then return {speaker} end
-	if selector == "@a" or selector == "all" then return Players:GetPlayers() end
-	if selector == "@r" or selector == "random" then
-		local plrs = Players:GetPlayers()
-		return #plrs > 0 and {plrs[math.random(1, #plrs)]} or {}
+	
+	local allPlrs = Players:GetPlayers()
+	
+	if selector == "@s" or selector == "me" then 
+		return {speaker} 
+	elseif selector == "@a" or selector == "all" then 
+		return allPlrs 
+	elseif selector == "@r" or selector == "random" then
+		return #allPlrs > 0 and {allPlrs[math.random(1, #allPlrs)]} or {}
+	elseif selector == "@others" then
+		local others = {}
+		for _, p in pairs(allPlrs) do
+			if p ~= speaker then table.insert(others, p) end
+		end
+		return others
 	end
-	local candidates = Players:GetPlayers()
-	for _, p in pairs(candidates) do 
+
+	-- Partial Name Match
+	for _, p in pairs(allPlrs) do 
 		if p.Name:lower() == selector or p.DisplayName:lower() == selector then return {p} end
 	end
-	for _, p in pairs(candidates) do 
+	for _, p in pairs(allPlrs) do 
 		if p.Name:lower():sub(1, #selector) == selector then return {p} end
 	end
+	
 	return {}
 end
 
 -- ============================================================================
--- ⚡ ACTIONS
+-- ⚡ COMMAND ACTIONS
 -- ============================================================================
 
-local function setFlight(player, shouldFly)
+local function Action_Give(player, tool, force)
+	local backpack = player:WaitForChild("Backpack", 5)
+	if not backpack then return false, "No Backpack" end
+	local cleanID = getCleanID(tool.Name)
+	local owned = getOwnedSet(player)
+
+	-- If they already have it, warn the admin (unless forced)
+	if owned[cleanID] and not force then 
+		return false, "Already Owns Item" 
+	end
+
+	-- Give to Backpack
+	local bpTool = tool:Clone()
+	tagIssued(bpTool, tool.Name) 
+	bpTool.Parent = backpack
+
+	-- Give to StarterGear (Persistence)
+	local sg = player:FindFirstChild("StarterGear")
+	if sg then
+		local sgTool = tool:Clone()
+		tagIssued(sgTool, tool.Name)
+		sgTool.Parent = sg
+	end
+
+	return true, "Given"
+end
+
+local function Action_Remove(player, toolName)
+	local targetID = getCleanID(toolName)
+	local count = 0
+
+	local function scanAndDestroy(container)
+		if not container then return end
+		for _, t in pairs(container:GetChildren()) do
+			if t:IsA("Tool") then
+				local id = getCleanID(t:GetAttribute("ToolId") or t.Name)
+				if id == targetID or (targetID == "all" or targetID == "*") then
+					t:Destroy()
+					count = count + 1
+				end
+			end
+		end
+	end
+
+	scanAndDestroy(player:FindFirstChild("Backpack"))
+	scanAndDestroy(player:FindFirstChild("StarterGear"))
+	if player.Character then scanAndDestroy(player.Character) end
+
+	return count > 0, count
+end
+
+local function Action_SetFlight(player, shouldFly)
 	if not player.Character then return end
 	local old = player.Character:FindFirstChild("FlyClient")
+	
 	if old then
 		player.Character:SetAttribute("ForceStopFly", true)
 		task.wait(0.1)
@@ -154,40 +206,6 @@ local function setFlight(player, shouldFly)
 	end
 end
 
-local function giveItem(player, tool, cleanID, optionalOwnedSet)
-	local backpack = player:WaitForChild("Backpack", 5)
-	if not backpack then return false end
-
-	-- Check duplicates
-	if optionalOwnedSet then
-		if optionalOwnedSet[cleanID] then return false end
-	else
-		local currentSet = getOwnedSet(player)
-		if currentSet[cleanID] then return false end
-	end
-
-	local bpTool = tool:Clone()
-	tagIssued(bpTool, tool.Name) 
-	bpTool.Parent = backpack
-
-	local sg = player:FindFirstChild("StarterGear")
-	if sg then
-		local sgTool = tool:Clone()
-		tagIssued(sgTool, tool.Name)
-		sgTool.Parent = sg
-	end
-	return true
-end
-
-local function addCurrency(player, statName, amount)
-	local leaderstats = player:FindFirstChild("leaderstats")
-	if not leaderstats then return false end
-	local stat = leaderstats:FindFirstChild(statName)
-	if not stat then return false end
-	stat.Value = stat.Value + amount
-	return true
-end
-
 -- ============================================================================
 -- 💬 CHAT HANDLER
 -- ============================================================================
@@ -196,6 +214,7 @@ Players.PlayerAdded:Connect(function(player)
 	player.Chatted:Connect(function(message)
 		if not (IS_STUDIO or ADMIN_USER_IDS[player.UserId]) then return end
 
+		-- Debounce
 		local lastCmd = AdminDebounces[player.UserId] or 0
 		if (os.clock() - lastCmd) < CMD_DEBOUNCE then return end
 		AdminDebounces[player.UserId] = os.clock()
@@ -205,115 +224,104 @@ Players.PlayerAdded:Connect(function(player)
 		local args = message:split(" ")
 		local command = args[1]:lower()
 
-		-- [[ /give ]]
+		-- 🟢 /give [player] [item]
 		if command == "/give" then
 			local selector = args[2]
 			local itemName = table.concat(args, " ", 3)
 			if not selector or itemName == "" then return end
 
 			local targets = getTargets(player, selector)
-			if #targets == 0 then return end
+			local tool = matchTool(itemName)
 
-			if itemName:lower() == "all" or itemName:lower() == "everything" then
-				local allTools = getAllTools()
-				for _, t in pairs(targets) do
-					local ownedSet = getOwnedSet(t)
-					for _, tool in pairs(allTools) do
-						local id = getCleanID(tool.Name)
-						if not ownedSet[id] then
-							giveItem(t, tool, id, ownedSet)
-							ownedSet[id] = true
-						end
-					end
-					print("✅ [Admin] Given ALL to " .. t.Name)
-				end
-				return
+			if not tool then
+				print("❌ [Admin] Unknown Item: " .. itemName)
+				return 
 			end
 
-			local tool = findTool(itemName)
-			if tool then
-				local cleanID = getCleanID(tool.Name)
-				for _, t in pairs(targets) do
-					if giveItem(t, tool, cleanID) then
-						print("✅ [Admin] Given " .. tool.Name .. " to " .. t.Name)
-					else
-						warn("⚠️ " .. t.Name .. " already has " .. tool.Name)
-					end
+			for _, t in pairs(targets) do
+				local success, reason = Action_Give(t, tool, false)
+				if success then
+					print(string.format("✅ Given [%s] to %s", tool.Name, t.Name))
+				else
+					print(string.format("⚠️ Failed to give [%s] to %s: %s", tool.Name, t.Name, reason))
 				end
 			end
 
-		-- [[ /fly & /unfly ]]
+		-- 🔴 /remove [player] [item] (NEW)
+		elseif command == "/remove" or command == "/take" then
+			local selector = args[2]
+			local itemName = table.concat(args, " ", 3)
+			if not selector or itemName == "" then return end
+
+			local targets = getTargets(player, selector)
+			
+			for _, t in pairs(targets) do
+				local success, count = Action_Remove(t, itemName)
+				if success then
+					print(string.format("🗑️ Removed %d instance(s) of '%s' from %s", count, itemName, t.Name))
+				else
+					print(string.format("⚠️ %s does not have item: %s", t.Name, itemName))
+				end
+			end
+
+		-- 🟢 /clearinventory [player] (Keeps Money/Data, Wipes Tools)
+		elseif command == "/clearinventory" or command == "/ci" then
+			local selector = args[2]
+			local targets = getTargets(player, selector)
+			for _, t in pairs(targets) do
+				Action_Remove(t, "all")
+				print("🗑️ Cleared inventory of " .. t.Name)
+			end
+
+		-- ✈️ /fly & /unfly
 		elseif command == "/fly" then
 			local targets = getTargets(player, args[2])
-			for _, t in pairs(targets) do setFlight(t, true) end
+			for _, t in pairs(targets) do Action_SetFlight(t, true) end
+			print("✈️ Flight Enabled")
 
 		elseif command == "/unfly" then
 			local targets = getTargets(player, args[2])
-			for _, t in pairs(targets) do setFlight(t, false) end
+			for _, t in pairs(targets) do Action_SetFlight(t, false) end
+			print("✈️ Flight Disabled")
 
-		-- [[ /givebank & /givewallet ]]
-		elseif command == "/givebank" or command == "/givewallet" then
+		-- 💰 /wallet & /bank [player] [amount]
+		elseif command == "/wallet" or command == "/bank" then
 			local selector = args[2]
-			local amount = getAmount(args[3])
+			local amount = tonumber(args[3])
 			if not selector or not amount then return end
-
+			
+			local statName = (command == "/bank") and "Cash" or "Wallet"
 			local targets = getTargets(player, selector)
-			if #targets == 0 then return end
 
-			local statName = command == "/givebank" and "Cash" or "Wallet"
 			for _, t in pairs(targets) do
-				if addCurrency(t, statName, amount) then
-					print(("💰 [Admin] Added %s to %s (%s)"):format(amount, t.Name, statName))
-				else
-					warn("⚠️ [Admin] Missing leaderstats for " .. t.Name)
+				local ls = t:FindFirstChild("leaderstats")
+				local stat = ls and ls:FindFirstChild(statName)
+				if stat then
+					stat.Value = stat.Value + amount
+					print(string.format("💰 Added $%d to %s's %s", amount, t.Name, statName))
 				end
 			end
 
-		-- [[ /clearwallet & /clearbank ]]
-		elseif command == "/clearwallet" or command == "/clearbank" then
+		-- 💣 /clear [player] (FULL WIPE)
+		elseif command == "/clear" or command == "/wipe" then
 			local selector = args[2]
-			local amountArg = args[3] -- Can be "all" or a number
-			
 			if not selector then return end
 			local targets = getTargets(player, selector)
 			
-			-- Map command to stat name: clearbank -> Cash, clearwallet -> Wallet
-			local statName = command == "/clearbank" and "Cash" or "Wallet"
-			
-			for _, t in pairs(targets) do
-				local leaderstats = t:FindFirstChild("leaderstats")
-				if leaderstats then
-					local stat = leaderstats:FindFirstChild(statName)
-					if stat then
-						-- If arg is empty or "all", clear entirely
-						if not amountArg or amountArg:lower() == "all" or amountArg == "*" then
-							stat.Value = 0
-							print(("💸 [Admin] Cleared %s for %s"):format(statName, t.Name))
-						else
-							-- If arg is a number, subtract it safely
-							local amt = tonumber(amountArg)
-							if amt then
-								local old = stat.Value
-								stat.Value = math.max(0, stat.Value - amt)
-								print(("💸 [Admin] Removed %s from %s's %s (New: %s)"):format(amt, t.Name, statName, stat.Value))
-							else
-								warn("⚠️ Invalid amount format. Use number or 'all'")
-							end
-						end
-					end
-				end
-			end
-
-		-- [[ /clear & /clearall - ITEM WIPE ]]
-		elseif command == "/clear" or command == "/clearall" then
-			local targets = getTargets(player, args[2])
 			if TycoonAdminAPI then
 				for _, t in pairs(targets) do
 					TycoonAdminAPI:Invoke("ForceWipe", t)
-					print("🗑️ SECURE CLEAR: " .. t.Name)
+					print("💀 FULL WIPE EXECUTED: " .. t.Name)
 				end
 			else
-				warn("❌ Cannot clear: API Missing")
+				warn("❌ TycoonAdminAPI missing")
+			end
+			
+		-- 📋 /list (See available cars)
+		elseif command == "/list" then
+			print("🚗 Available Cars:")
+			for _, t in pairs(getAllTools()) do
+				print(" - " .. getCleanID(t.Name))
 			end
 		end
 	end)
