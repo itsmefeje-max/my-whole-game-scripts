@@ -59,6 +59,7 @@ local currentState = nil
 local purchaseDebounce = {} 
 local isProcessingPurchase = false 
 local hiddenGuis = {} 
+local hiddenObjects = {} -- Tracks GuiObjects (e.g. FriendBoost labels) hidden during shop focus
 local currentBlur = nil 
 local feedbackTween = nil 
 
@@ -123,6 +124,24 @@ local function setBlur(enable)
 	end
 end
 
+local function toggleNamedGuiObjects(shouldHide, objectName)
+	if shouldHide then
+		for _, obj in pairs(PlayerGui:GetDescendants()) do
+			if obj:IsA("GuiObject") and obj.Name == objectName and obj.Visible then
+				obj.Visible = false
+				table.insert(hiddenObjects, obj)
+			end
+		end
+	else
+		for _, obj in pairs(hiddenObjects) do
+			if obj and obj.Parent and obj:IsA("GuiObject") then
+				obj.Visible = true
+			end
+		end
+		hiddenObjects = {}
+	end
+end
+
 local function toggleOtherGuis(shouldHide)
 	if shouldHide then
 		hiddenGuis = {}
@@ -149,6 +168,7 @@ end
 local function setFocusMode(active)
 	setBlur(active)
 	toggleOtherGuis(active)
+	toggleNamedGuiObjects(active, "FriendBoost")
 
 	local char = player.Character
 	if char and char:FindFirstChild("Humanoid") then
