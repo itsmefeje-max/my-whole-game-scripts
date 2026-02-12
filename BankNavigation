@@ -155,7 +155,9 @@ withdrawBtn.MouseButton1Click:Connect(function()
 
 	-- 4. PREPARE DATA
 	local amount = parseAmount(amountInput.Text) -- ✅ Uses new parser
-	local currentBank = player.leaderstats.Cash.Value
+	local leaderstats = player:FindFirstChild("leaderstats")
+	local cashValue = leaderstats and leaderstats:FindFirstChild("Cash")
+	local currentBank = cashValue and cashValue.Value or 0
 
 	-- 5. VALIDATION
 	if (amount <= 0) or (amount > currentBank) then

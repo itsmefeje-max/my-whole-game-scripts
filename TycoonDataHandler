@@ -473,8 +473,11 @@ local function save(player, isClosing)
 	end
 
 	local ok, err = pcall(executeSave)
-	if not ok then warn("❌ Save Failed " .. player.Name .. ": " .. tostring(err)) 
-	else if isClosing then print("✅ Saved: " .. player.Name) end end
+	if not ok then
+		warn("❌ Save Failed " .. player.Name .. ": " .. tostring(err))
+	elseif isClosing then
+		print("✅ Saved: " .. player.Name)
+	end
 
 	session.IsDirty = false
 	session.LastSave = os.time()
