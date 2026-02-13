@@ -19,6 +19,7 @@ local amountInput = mainWindow:WaitForChild("AmountInput", 5)
 local VerifyLabel = mainWindow:WaitForChild("VerifyLabel", 5) 
 local SuccessLabel = mainWindow:WaitForChild("SuccessLabel", 5)
 local ErrorLabel = mainWindow:WaitForChild("ErrorLabel", 5)
+local balanceLabelV2 = mainWindow:FindFirstChild("BalanceLabelv2", true)
 
 -- 🆕 MAX BUTTON REFERENCE
 local maxBtn = mainWindow:FindFirstChild("MaxButton") 
@@ -61,6 +62,14 @@ local function parseAmount(text)
 		return math.floor(cleanNum * multiplier) 
 	end
 	return 0
+end
+
+
+local function updateTransferBalance()
+	if not balanceLabelV2 then return end
+	local leaderstats = player:FindFirstChild("leaderstats")
+	local cashValue = leaderstats and leaderstats:FindFirstChild("Cash")
+	balanceLabelV2.Text = "$ " .. tostring(cashValue and cashValue.Value or 0)
 end
 
 local function animateResult(uiObject)
@@ -154,6 +163,8 @@ end
 -- ============================================================================
 -- 🆕 MAX BUTTON LOGIC
 -- ============================================================================
+updateTransferBalance()
+
 if maxBtn then
 	maxBtn.MouseButton1Click:Connect(function()
 		local currentBank = 0
@@ -210,7 +221,7 @@ withdrawBtn.MouseButton1Click:Connect(function()
 		return
 	end
 
-	-- 6. SERVER REQUEST (Transfer Bank -> ATM)
+	-- 6. SERVER REQUEST (Transfer Bank -> Wallet)
 	local success, msg = withdrawFunc:InvokeServer(amount, "Transfer")
 
 	-- 7. FINISH
@@ -239,6 +250,12 @@ if VerifyLabel then VerifyLabel.Visible = false end
 if SuccessLabel then SuccessLabel.Visible = false end
 if ErrorLabel then ErrorLabel.Visible = false end
 
+local leaderstats = player:FindFirstChild("leaderstats")
+local cashValue = leaderstats and leaderstats:FindFirstChild("Cash")
+if cashValue then
+	cashValue.Changed:Connect(updateTransferBalance)
+end
+
 if VerifyLabel then
 	for _, child in ipairs(VerifyLabel:GetDescendants()) do
 		if child:IsA("UIStroke") then
@@ -246,3 +263,4 @@ if VerifyLabel then
 		end
 	end
 end
+
