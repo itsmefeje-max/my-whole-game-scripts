@@ -30,7 +30,7 @@ local myScreenGui = debugFind(playerGui, "BankGui")
 if not myScreenGui then return end
 
 local mainWindow = debugFind(myScreenGui, "BankFrame")
-local transferFrame = myScreenGui:FindFirstChild("TransferFrame")
+local transferFrame = myScreenGui:FindFirstChild("TransferFrame", true)
 local openButton = debugFind(myScreenGui, "OpenButton")
 
 if not mainWindow or not openButton then return end
@@ -44,6 +44,8 @@ openButton.Visible = true
 local closeButton = debugFind(mainWindow, "CloseButton")
 local balanceLabel = debugFind(mainWindow, "BalanceLabel")
 local headerContainer = debugFind(mainWindow, "HeaderContainer")
+local transferButton = mainWindow:FindFirstChild("TransferButton", true)
+local backButton = transferFrame and transferFrame:FindFirstChild("BackButton", true)
 
 if not headerContainer then return end
 
@@ -212,10 +214,46 @@ local function performClose()
 	TweenService:Create(camera, CAM_TWEEN_INFO, {FieldOfView = NORMAL_FOV}):Play()
 end
 
+local function openTransferFrame()
+	if not transferFrame then
+		warn("⚠️ TransferFrame not found. Make sure it exists inside BankGui.")
+		return
+	end
+
+	mainWindow.Visible = false
+	transferFrame.Visible = true
+	detector.Visible = true
+	openButton.Visible = false
+end
+
+local function returnToMainFrame()
+	if not transferFrame then return end
+	transferFrame.Visible = false
+	mainWindow.Visible = true
+	detector.Visible = true
+	openButton.Visible = false
+end
+
 closeButton.MouseButton1Click:Connect(function()
 	playSfx(SOUND_ID, 0.5)
 	performClose()
 end)
+
+if transferButton then
+	transferButton.MouseButton1Click:Connect(function()
+		playSfx(SOUND_ID, 0.5)
+		openTransferFrame()
+	end)
+else
+	warn("⚠️ TransferButton not found in BankFrame. Transfer navigation disabled.")
+end
+
+if backButton then
+	backButton.MouseButton1Click:Connect(function()
+		playSfx(SOUND_ID, 0.5)
+		returnToMainFrame()
+	end)
+end
 
 detector.MouseButton1Click:Connect(function()
 	playSfx(SOUND_ID, 0.5) -- Optional: Click sound when clicking outside
