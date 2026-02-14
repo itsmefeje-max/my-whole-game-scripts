@@ -1,0 +1,111 @@
+-- [[ LOCAL SCRIPT: SettingsClient ]]
+-- Purpose: Handles Settings UI visibility and sounds.
+-- Note: NO animations, NO position changes. Uses Studio layout exactly.
+
+local Players = game:GetService("Players")
+local SoundService = game:GetService("SoundService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService") -- Used ONLY for color hover
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 🛠️ REFERENCES
+local screenGui = script.Parent
+local openButton = screenGui:WaitForChild("OpenButton")
+local window = screenGui:WaitForChild("SettingsWindow")
+local closeButton = window:WaitForChild("CloseButton")
+
+-- ⚙️ CONFIG
+local CONFIG = {
+	Colors = {
+		Hover = Color3.fromRGB(200, 200, 200), -- Simple dim on hover
+		Normal = Color3.fromRGB(255, 255, 255)
+	},
+	Sounds = {
+		Open = "rbxassetid://4676738150",
+		Click = "rbxassetid://9083627113",
+		Hover = "rbxassetid://6895079853"
+	}
+}
+
+-- 🔊 AUDIO SYSTEM
+local function playSound(name)
+	local id = CONFIG.Sounds[name]
+	if not id then return end
+
+	local s = Instance.new("Sound")
+	s.SoundId = id
+	s.Volume = 0.5
+	s.Parent = SoundService
+	s:Play()
+	game.Debris:AddItem(s, 2)
+end
+
+-- 🟢 VISIBILITY LOGIC (Instant, No Animation)
+local function setWindowVisible(isOpen)
+	window.Visible = isOpen
+
+	-- Toggle Open Button Visibility
+	openButton.Visible = not isOpen 
+
+	if isOpen then
+		playSound("Open")
+
+		-- HIDE OTHER GUIS (Prevents overlap, affects Visibility only)
+		for _, gui in pairs(playerGui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui ~= screenGui and gui.Name ~= "TouchGui" then
+				if gui:GetAttribute("WasEnabled") == nil then
+					gui:SetAttribute("WasEnabled", gui.Enabled)
+				end
+				gui.Enabled = false
+			end
+		end
+	else
+		playSound("Click")
+
+		-- RESTORE OTHER GUIS
+		for _, gui in pairs(playerGui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui:GetAttribute("WasEnabled") then
+				gui.Enabled = true
+				gui:SetAttribute("WasEnabled", nil)
+			end
+		end
+	end
+end
+
+-- 🖱️ BUTTON INPUT
+local function setupButton(btn)
+	if not btn:IsA("GuiButton") then return end
+
+	-- Hover Effect (Color Only - PC Only)
+	if not UserInputService.TouchEnabled then
+		btn.MouseEnter:Connect(function()
+			playSound("Hover")
+			TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = CONFIG.Colors.Hover}):Play()
+		end)
+
+		btn.MouseLeave:Connect(function()
+			TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = CONFIG.Colors.Normal}):Play()
+		end)
+	end
+
+	-- Click (Instant Action)
+	btn.MouseButton1Click:Connect(function()
+		if btn == openButton then
+			setWindowVisible(true)
+		elseif btn == closeButton then
+			setWindowVisible(false)
+		else
+			playSound("Click")
+		end
+	end)
+end
+
+-- 🚀 INIT
+setupButton(openButton)
+setupButton(closeButton)
+
+-- Default State
+window.Visible = false
+openButton.Visible = true
