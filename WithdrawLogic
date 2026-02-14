@@ -1,245 +1,99 @@
--- [[ LOCAL SCRIPT: WithdrawLogic (Synced + Max Button Feature) ]]
--- VERSION: Pulse Animation + RemoteFunction Sync + Logic Fixes + MAX BUTTON
--- LOCATION: Inside the "Withdraw" Button (Child of the Frame)
+-- [[ SERVER SCRIPT: TransactionHandler (Secure Edition) ]]
+-- [[ FIXES: ATM Security Bypass (Fail-Safe Implemented) ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-local SoundService = game:GetService("SoundService")
-local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
-local player = Players.LocalPlayer
-local leaderstats = player:WaitForChild("leaderstats", 10)
-local withdrawBtn = script.Parent
-local mainWindow = withdrawBtn.Parent -- The Frame holding the buttons
-
--- 🔄 REMOTE FUNCTION
+-- ⚠️ Ensure "WithdrawFunction" exists in ReplicatedStorage (RemoteFunction)
 local withdrawFunc = ReplicatedStorage:WaitForChild("WithdrawFunction")
 
--- 📂 UI REFERENCES
--- The script looks for these siblings inside 'mainWindow'
-local amountInput = mainWindow:WaitForChild("AmountInput", 5)
-local VerifyLabel = mainWindow:WaitForChild("VerifyLabel", 5) 
-local SuccessLabel = mainWindow:WaitForChild("SuccessLabel", 5)
-local ErrorLabel = mainWindow:WaitForChild("ErrorLabel", 5)
+-- CONFIG
+local NPC_FOLDER_NAME = "NPCS"
+local MANAGER_NAME = "AfraiC4t"
+local MAX_DISTANCE = 20 -- Studs (For Physical Withdraw only)
 
--- 🆕 MAX BUTTON REFERENCE
--- MUST be a direct child of 'mainWindow' (Same folder as AmountInput)
-local maxBtn = mainWindow:WaitForChild("MaxButton", 5) 
+-- [[ 1. TRANSFER: BANK -> ATM (Remote / App) ]]
+local function TransferToATM(player, amount)
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if not leaderstats then return false, "Data Error" end
 
--- 🔊 SOUND CONFIG
-local CASH_SOUND_ID = "rbxassetid://140072726814802"
-local ERROR_SOUND_ID = "rbxassetid://3779045779"
-local CLICK_SOUND_ID = "rbxassetid://9083627113" 
+	local bank = leaderstats:FindFirstChild("Cash")
+	local atm = leaderstats:FindFirstChild("ATMBalance")
 
--- ⚙️ STATE VARIABLES
-local currentVerifyTween = nil 
-local currentVerifyStrokeTweens = {}
-local isCoolingDown = false 
+	if not bank or not atm then return false, "Missing Values" end
 
--- ============================================================================
--- 🛠️ ANIMATION FUNCTIONS (Unchanged)
--- ============================================================================
-
-local function playSound(soundId)
-	local sound = Instance.new("Sound")
-	sound.SoundId = soundId
-	sound.Volume = 1
-	sound.Parent = SoundService 
-	sound:Play()
-	game.Debris:AddItem(sound, 3)
-end
-
-local function animateResult(uiObject)
-	if not uiObject then return end
-	local strokes = uiObject:GetDescendants()
-
-	-- 1. FORCE VISIBLE
-	uiObject.Visible = true
-	uiObject.ZIndex = 20 
-
-	if uiObject:IsA("ImageLabel") then uiObject.ImageTransparency = 0 end
-	if uiObject:IsA("TextLabel") then uiObject.TextTransparency = 0 end
-	for _, child in ipairs(strokes) do
-		if child:IsA("UIStroke") then
-			child.Transparency = 0
-		end
-	end
-
-	-- 2. Wait
-	task.wait(2)
-
-	-- 3. Fade Out
-	local goals = {}
-	if uiObject:IsA("ImageLabel") then goals.ImageTransparency = 1 end
-	if uiObject:IsA("TextLabel") then goals.TextTransparency = 1 end
-	for _, child in ipairs(strokes) do
-		if child:IsA("UIStroke") then
-			TweenService:Create(child, TweenInfo.new(0.5), {Transparency = 1}):Play()
-		end
-	end
-
-	local tweenOut = TweenService:Create(uiObject, TweenInfo.new(0.5), goals)
-	tweenOut:Play()
-	tweenOut.Completed:Wait()
-
-	uiObject.Visible = false
-end
-
-local function startVerifying()
-	if not VerifyLabel then return end
-
-	VerifyLabel.Visible = true
-	VerifyLabel.ZIndex = 20
-	VerifyLabel.Rotation = 0 
-	for _, tween in ipairs(currentVerifyStrokeTweens) do
-		tween:Cancel()
-	end
-	currentVerifyStrokeTweens = {}
-
-	if VerifyLabel:IsA("ImageLabel") then VerifyLabel.ImageTransparency = 1 end
-	if VerifyLabel:IsA("TextLabel") then VerifyLabel.TextTransparency = 1 end
-
-	local pulseInfo = TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-	local goals = {}
-	if VerifyLabel:IsA("ImageLabel") then goals.ImageTransparency = 0 end
-	if VerifyLabel:IsA("TextLabel") then goals.TextTransparency = 0 end
-	for _, child in ipairs(VerifyLabel:GetDescendants()) do
-		if child:IsA("UIStroke") then
-			child.Transparency = 1
-			table.insert(currentVerifyStrokeTweens, TweenService:Create(child, pulseInfo, {Transparency = 0}))
-		end
-	end
-
-	currentVerifyTween = TweenService:Create(VerifyLabel, pulseInfo, goals)
-	currentVerifyTween:Play()
-	for _, tween in ipairs(currentVerifyStrokeTweens) do tween:Play() end
-end
-
-local function stopVerifying()
-	if currentVerifyTween then
-		currentVerifyTween:Cancel()
-		currentVerifyTween = nil
-	end
-	for _, tween in ipairs(currentVerifyStrokeTweens) do
-		tween:Cancel()
-	end
-	currentVerifyStrokeTweens = {}
-	if VerifyLabel then
-		for _, child in ipairs(VerifyLabel:GetDescendants()) do
-			if child:IsA("UIStroke") then
-				child.Transparency = 1
-			end
-		end
-		VerifyLabel.Visible = false
-		if VerifyLabel:IsA("ImageLabel") then VerifyLabel.ImageTransparency = 1 end
-		if VerifyLabel:IsA("TextLabel") then VerifyLabel.TextTransparency = 1 end
-	end
-end
-
--- ============================================================================
--- 🆕 MAX BUTTON LOGIC (Added Feature)
--- ============================================================================
-if maxBtn then
-	maxBtn.MouseButton1Click:Connect(function()
-		-- 1. Get Current Bank Balance (Cash source)
-		local currentBank = 0
-		local cashValue = leaderstats and leaderstats:FindFirstChild("Cash")
-		if cashValue then
-			currentBank = cashValue.Value
-		end
-
-		-- 2. Aesthetic Click
-		playSound(CLICK_SOUND_ID)
-
-		-- 3. Auto-Fill Input
-		if currentBank > 0 then
-			-- We use math.floor to ensure no decimals break the transfer
-			amountInput.Text = tostring(math.floor(currentBank))
-			print("✅ Max Amount Set: " .. amountInput.Text)
-		else
-			amountInput.Text = "0"
-		end
-	end)
-else
-	warn("⚠️ 'MaxButton' not found in Transfer UI. Max feature disabled.")
-end
-
--- ============================================================================
--- 🟢 MAIN TRANSFER BUTTON LOGIC
--- ============================================================================
-withdrawBtn.MouseButton1Click:Connect(function()
-
-	-- 🛑 1. CHECK COOLDOWN
-	if isCoolingDown then return end
-	isCoolingDown = true 
-
-	-- 2. DISABLE BUTTON VISUALLY
-	withdrawBtn.Active = false
-	withdrawBtn.AutoButtonColor = false
-
-	-- 3. START VFX (The Pulse)
-	startVerifying()
-
-	-- 4. WAIT 2 SECONDS (Simulate "Thinking")
-	task.wait(2)
-
-	-- 5. PREPARE DATA
-	local rawText = amountInput.Text
-	local amount = tonumber(rawText)
-	local cashValue = leaderstats and leaderstats:FindFirstChild("Cash")
-	local currentBank = cashValue and cashValue.Value or 0
-
-	-- 6. CLIENT-SIDE CHECK (Fast Fail)
-	if (not amount) or (amount <= 0) or (amount > currentBank) then
-		stopVerifying()
-		print("❌ Invalid Input or Insufficient Funds")
-		playSound(ERROR_SOUND_ID)
-		task.spawn(function() animateResult(ErrorLabel) end)
-
-		-- Reset Button
-		task.wait(1)
-		isCoolingDown = false
-		withdrawBtn.Active = true
-		withdrawBtn.AutoButtonColor = true
-		return
-	end
-
-	-- 7. 🔒 SERVER REQUEST (The Sync)
-	local success, msg = withdrawFunc:InvokeServer(amount, "Transfer")
-
-	-- 8. STOP VFX (Now that server replied)
-	stopVerifying()
-
-	if success then
-		-- 🟢 REAL SUCCESS (Server approved it)
-		print("✅ Transaction Approved")
-		playSound(CASH_SOUND_ID)
-		amountInput.Text = "" -- Clear the box
-		task.spawn(function() animateResult(SuccessLabel) end)
+	if bank.Value >= amount then
+		bank.Value = bank.Value - amount
+		atm.Value = atm.Value + amount
+		print("📱 Mobile Transfer: " .. player.Name .. " moved $"..amount.." to ATM.")
+		return true, "Transfer Successful! Visit ATM to collect."
 	else
-		-- 🔴 REAL FAILURE (Server denied it)
-		print("❌ Transaction Denied: " .. msg)
-		playSound(ERROR_SOUND_ID)
-		task.spawn(function() animateResult(ErrorLabel) end)
-	end
-
-	-- 9. RESET
-	task.wait(1)
-	isCoolingDown = false
-	withdrawBtn.Active = true
-	withdrawBtn.AutoButtonColor = true
-end)
-
--- Initialize
-if VerifyLabel then VerifyLabel.Visible = false end
-if SuccessLabel then SuccessLabel.Visible = false end
-if ErrorLabel then ErrorLabel.Visible = false end
-
-if VerifyLabel then
-	for _, child in ipairs(VerifyLabel:GetDescendants()) do
-		if child:IsA("UIStroke") then
-			child.Transparency = 1
-		end
+		return false, "Insufficient Bank Funds"
 	end
 end
 
+-- [[ 2. WITHDRAW: ATM -> WALLET (Physical / NPC) ]]
+local function WithdrawFromATM(player, amount)
+	-- 🛑 DISTANCE CHECK (Security)
+	local npcFolder = Workspace:FindFirstChild(NPC_FOLDER_NAME)
+	local managerNPC = npcFolder and npcFolder:FindFirstChild(MANAGER_NAME)
+
+	-- 🛡️ SECURITY FIX: Fail Safe Logic
+	if managerNPC then
+		local npcRoot = managerNPC:FindFirstChild("HumanoidRootPart") or managerNPC.PrimaryPart
+		local pRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+
+		if npcRoot and pRoot then
+			if (pRoot.Position - npcRoot.Position).Magnitude > MAX_DISTANCE then
+				return false, "You are too far from the ATM!"
+			end
+		else
+			-- Case: Player or NPC has no physical body loaded
+			return false, "Security Check Failed: Physics not loaded."
+		end
+	else
+		-- Case: NPC is missing/deleted/not loaded
+		warn("⚠️ ATM Manager NPC missing. Transaction Denied for Security.")
+		return false, "ATM Unavailable: Security Verification Failed"
+	end
+
+	-- Logic proceeds ONLY if security check passed
+	local leaderstats = player:FindFirstChild("leaderstats")
+	local atm = leaderstats and leaderstats:FindFirstChild("ATMBalance")
+	local wallet = leaderstats and leaderstats:FindFirstChild("Wallet")
+
+	if not atm or not wallet then return false, "Data Error" end
+
+	if atm.Value >= amount then
+		atm.Value = atm.Value - amount
+		wallet.Value = wallet.Value + amount
+		print("🏧 Physical Withdraw: " .. player.Name .. " took $"..amount.." from ATM.")
+		return true, "Cash Withdrawn to Wallet!"
+	else
+		return false, "Insufficient Funds in ATM. Transfer from Bank first."
+	end
+end
+
+-- [[ MAIN HANDLER ]]
+-- We now accept an 'actionType' ("Transfer" or "Withdraw")
+withdrawFunc.OnServerInvoke = function(player, amount, actionType)
+
+	-- 1. Validate Input
+	if typeof(amount) ~= "number" or amount <= 0 or amount ~= amount then
+		return false, "Invalid Amount"
+	end
+	amount = math.floor(amount)
+
+	-- 2. Route Request
+	if actionType == "Transfer" then
+		return TransferToATM(player, amount)
+
+	elseif actionType == "Withdraw" then
+		return WithdrawFromATM(player, amount)
+
+	else
+		-- Fallback (Safety)
+		warn("⚠️ Unknown Transaction Type: " .. tostring(actionType))
+		return false, "System Error: Unknown Action"
+	end
+end
