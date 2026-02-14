@@ -1,0 +1,53 @@
+-- [[ LOCAL SCRIPT: BaseUpgradeClient ]]
+-- Purpose: Opens the UI when the NPC is triggered.
+-- Location: StarterPlayerScripts
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+local Remotes = ReplicatedStorage:WaitForChild("ShopRemotes")
+local OpenEvent = Remotes:WaitForChild("OpenBaseUpgrade")
+
+-- ⚙️ UI CONFIGURATION
+-- Make sure your names match these EXACTLY in StarterGui
+local UI_NAME = "BaseUpgradeUI"       -- ScreenGui Name
+local FRAME_NAME = "MainFrame"        -- Frame Name
+local CLOSE_BTN_NAME = "CloseButton"  -- Close Button Name
+
+-- 🔄 TOGGLE FUNCTION
+local function setVisible(isOpen)
+	local gui = PlayerGui:WaitForChild(UI_NAME, 5)
+	if not gui then return warn("⚠️ UI '"..UI_NAME.."' not found!") end
+
+	local frame = gui:WaitForChild(FRAME_NAME, 5)
+	if not frame then return warn("⚠️ Frame '"..FRAME_NAME.."' not found!") end
+
+	gui.Enabled = isOpen
+	frame.Visible = isOpen
+end
+
+-- 📡 OPEN (Signal from Server)
+OpenEvent.OnClientEvent:Connect(function()
+	setVisible(true)
+end)
+
+-- ❌ CLOSE (Button Logic)
+task.spawn(function()
+	local gui = PlayerGui:WaitForChild(UI_NAME, 10)
+	if not gui then return end
+
+	local frame = gui:WaitForChild(FRAME_NAME, 10)
+	if not frame then return end
+
+	local closeBtn = frame:WaitForChild(CLOSE_BTN_NAME, 10)
+	if closeBtn then
+		closeBtn.MouseButton1Click:Connect(function()
+			setVisible(false)
+		end)
+	else
+		warn("⚠️ CloseButton not found in Frame")
+	end
+end)
