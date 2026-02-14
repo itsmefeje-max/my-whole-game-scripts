@@ -1,5 +1,5 @@
 -- [[ LOCAL SCRIPT: BaseUpgradeClient ]]
--- Purpose: Opens the UI when the NPC is triggered.
+-- Purpose: Waits for the Server signal and opens the BaseUpgradeUI.
 -- Location: StarterPlayerScripts
 
 local Players = game:GetService("Players")
@@ -7,34 +7,34 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
-
 local Remotes = ReplicatedStorage:WaitForChild("ShopRemotes")
+
+-- Wait for the specific remote to exist (created by the server script)
 local OpenEvent = Remotes:WaitForChild("OpenBaseUpgrade")
 
--- ⚙️ UI CONFIGURATION
--- Make sure your names match these EXACTLY in StarterGui
-local UI_NAME = "BaseUpgradeUI"       -- ScreenGui Name
-local FRAME_NAME = "MainFrame"        -- Frame Name
-local CLOSE_BTN_NAME = "CloseButton"  -- Close Button Name
+-- ⚙️ UI SETTINGS (Must match your Studio setup exactly)
+local UI_NAME = "BaseUpgradeUI"
+local FRAME_NAME = "MainFrame"
+local CLOSE_BTN_NAME = "CloseButton"
 
--- 🔄 TOGGLE FUNCTION
-local function setVisible(isOpen)
-	local gui = PlayerGui:WaitForChild(UI_NAME, 5)
-	if not gui then return warn("⚠️ UI '"..UI_NAME.."' not found!") end
-
-	local frame = gui:WaitForChild(FRAME_NAME, 5)
-	if not frame then return warn("⚠️ Frame '"..FRAME_NAME.."' not found!") end
-
-	gui.Enabled = isOpen
-	frame.Visible = isOpen
-end
-
--- 📡 OPEN (Signal from Server)
+-- 🔓 OPEN LOGIC
 OpenEvent.OnClientEvent:Connect(function()
-	setVisible(true)
+	local gui = PlayerGui:FindFirstChild(UI_NAME)
+	if gui then
+		local frame = gui:FindFirstChild(FRAME_NAME)
+		if frame then
+			gui.Enabled = true
+			frame.Visible = true
+			print("✅ [Client] Base Upgrade UI Opened")
+		else
+			warn("⚠️ Frame '"..FRAME_NAME.."' not found in " .. UI_NAME)
+		end
+	else
+		warn("⚠️ ScreenGui '"..UI_NAME.."' not found in PlayerGui")
+	end
 end)
 
--- ❌ CLOSE (Button Logic)
+-- 🔒 CLOSE LOGIC (Auto-connects when the UI loads)
 task.spawn(function()
 	local gui = PlayerGui:WaitForChild(UI_NAME, 10)
 	if not gui then return end
@@ -45,9 +45,8 @@ task.spawn(function()
 	local closeBtn = frame:WaitForChild(CLOSE_BTN_NAME, 10)
 	if closeBtn then
 		closeBtn.MouseButton1Click:Connect(function()
-			setVisible(false)
+			gui.Enabled = false
+			frame.Visible = false
 		end)
-	else
-		warn("⚠️ CloseButton not found in Frame")
 	end
 end)
