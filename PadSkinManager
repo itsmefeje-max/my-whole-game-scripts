@@ -1,6 +1,5 @@
--- [[ SERVER SCRIPT: PadSkinManager ]]
--- Purpose: Visual Handler for Base Skins. 
--- DESIGN: Biggest Part = Shiny Metal. Small Parts = Glowing Neon.
+-- [[ SERVER SCRIPT: PadSkinManager (SMART RESTORE) ]]
+-- Purpose: Visual Handler. Paints Gold, but REMEMBERS original colors to restore them later.
 -- Location: ServerScriptService
 
 local Players = game:GetService("Players")
@@ -9,6 +8,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 local BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats"))
+
+-- 💾 MEMORY SYSTEM (To remember original colors)
+-- Uses weak keys so it doesn't leak memory if parts are destroyed
+local OriginalStateCache = {}
+setmetatable(OriginalStateCache, {__mode = "k"}) 
 
 -- 🛑 EXCLUSION CHECK
 local function IsIgnored(part)
@@ -24,19 +28,22 @@ local function PaintPlot(plot, skinName)
 	if not plot then return end
 
 	local skinData = BaseSkinStats[skinName]
-	if not skinData then return end
+	local isDefault = (skinName == "Default" or skinName == nil)
+
+	-- If not default and no data, stop
+	if not isDefault and not skinData then return end
 
 	local padsFolder = plot:FindFirstChild("Pads")
 	if not padsFolder then return end
 
-	print("🎨 Painting " .. plot.Name .. " with " .. skinName .. " (Smart Design)")
+	print("🎨 Updating " .. plot.Name .. " to " .. (skinName or "Default"))
 
 	for _, padModel in pairs(padsFolder:GetChildren()) do
 
-		-- 1. GATHER ALL VALID PARTS
+		-- 1. GATHER PARTS
 		local partsToPaint = {}
 
-		-- Check if the model itself is a part
+		-- Check model itself
 		if padModel:IsA("BasePart") and not IsIgnored(padModel) then
 			table.insert(partsToPaint, padModel)
 		end
@@ -48,26 +55,49 @@ local function PaintPlot(plot, skinName)
 			end
 		end
 
-		-- 2. SORT BY SIZE (Volume)
-		-- We want the Main Base (Biggest Part) to be Metal, and Details to be Neon
-		table.sort(partsToPaint, function(a, b)
-			local volA = a.Size.X * a.Size.Y * a.Size.Z
-			local volB = b.Size.X * b.Size.Y * b.Size.Z
-			return volA > volB -- Biggest first
-		end)
+		-- 2. CAPTURE ORIGINAL STATE (Before we change anything!)
+		for _, part in ipairs(partsToPaint) do
+			if not OriginalStateCache[part] then
+				OriginalStateCache[part] = {
+					Color = part.Color,
+					Material = part.Material,
+					Reflectance = part.Reflectance
+				}
+			end
+		end
 
-		-- 3. APPLY STYLES
-		for i, part in ipairs(partsToPaint) do
-			part.Color = skinData.Color
+		-- 3. APPLY OR RESTORE
+		if isDefault then
+			-- 🔙 RESTORE ORIGINALS (Cancel the Paint)
+			for _, part in ipairs(partsToPaint) do
+				local original = OriginalStateCache[part]
+				if original then
+					part.Color = original.Color
+					part.Material = original.Material
+					part.Reflectance = original.Reflectance
+				end
+			end
+		else
+			-- ✨ APPLY GOLD SKIN
+			-- Sort: Biggest part gets Metal, small parts get Neon
+			table.sort(partsToPaint, function(a, b)
+				local volA = a.Size.X * a.Size.Y * a.Size.Z
+				local volB = b.Size.X * b.Size.Y * b.Size.Z
+				return volA > volB 
+			end)
 
-			if i == 1 then
-				-- 🏛️ BIGGEST PART (The Base) -> Shiny Metal
-				part.Material = Enum.Material.Metal
-				part.Reflectance = 0.4 -- ✨ High Shine
-			else
-				-- ⚡ SMALLER PARTS (The Children/Details) -> Neon
-				part.Material = Enum.Material.Neon
-				part.Reflectance = 0
+			for i, part in ipairs(partsToPaint) do
+				part.Color = skinData.Color
+
+				if i == 1 then
+					-- Base = Shiny Metal
+					part.Material = Enum.Material.Metal
+					part.Reflectance = 0.4
+				else
+					-- Details = Neon
+					part.Material = Enum.Material.Neon
+					part.Reflectance = 0
+				end
 			end
 		end
 	end
@@ -76,7 +106,6 @@ end
 -- 🔄 PLAYER MONITOR
 local function SetupPlayer(player)
 	task.spawn(function()
-		-- A. Wait for Plot
 		local plotName = player:GetAttribute("OccupiedPlot")
 		while not plotName do
 			player:GetAttributeChangedSignal("OccupiedPlot"):Wait()
@@ -86,13 +115,11 @@ local function SetupPlayer(player)
 		local plot = TycoonFolder:WaitForChild(plotName, 10)
 		if not plot then return end
 
-		-- B. Initial Paint
-		local currentSkin = player:GetAttribute("EquippedSkin")
-		if currentSkin and currentSkin ~= "Default" then
-			PaintPlot(plot, currentSkin)
-		end
+		-- A. Initial Check (Will capture defaults if no skin equipped)
+		local currentSkin = player:GetAttribute("EquippedSkin") or "Default"
+		PaintPlot(plot, currentSkin)
 
-		-- C. Live Paint
+		-- B. Live Listener
 		player:GetAttributeChangedSignal("EquippedSkin"):Connect(function()
 			local newSkin = player:GetAttribute("EquippedSkin")
 			PaintPlot(plot, newSkin)
