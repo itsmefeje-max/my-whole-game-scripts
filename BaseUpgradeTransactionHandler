@@ -1,66 +1,69 @@
 -- [[ SERVER SCRIPT: BaseUpgradeTransactionHandler ]]
--- Purpose: Handles Cash/Robux verification for Base Skins.
+-- Purpose: Verification for Base Upgrades (Wallet Check & Robux Prompt)
 -- Location: ServerScriptService
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
 local Remotes = ReplicatedStorage:WaitForChild("ShopRemotes")
 local TransactionFunc = Remotes:WaitForChild("BaseUpgradeTransaction")
 local StatsModule = require(ReplicatedStorage:WaitForChild("BaseSkinStats"))
 
--- 💰 CASH PURCHASE
+-- 💰 UNIFIED BUY FUNCTION
 TransactionFunc.OnServerInvoke = function(player, skinName, currencyType)
 	local skinData = StatsModule[skinName]
 	if not skinData then return false, "Invalid Skin" end
 
-	-- 1. HANDLE CASH
+	-- 1. CHECK OWNERSHIP FIRST
+	-- We read the attribute we created in TycoonDataHandler
+	local ownedRaw = player:GetAttribute("OwnedBaseSkins") or "[]"
+	local ownedTable = {}
+
+	-- Safe Decode
+	pcall(function()
+		ownedTable = HttpService:JSONDecode(ownedRaw)
+	end)
+
+	if table.find(ownedTable, skinName) then
+		return false, "Already Owned"
+	end
+
+	-- 2. HANDLE CASH (WALLET CHECK)
 	if currencyType == "Cash" then
 		local leaderstats = player:FindFirstChild("leaderstats")
-		local cash = leaderstats and leaderstats:FindFirstChild("Cash") -- Or "Wallet" based on your system
 
-		if cash and cash.Value >= skinData.PriceCash then
+		-- ✅ BUG FIX: Checking 'Wallet' (Hand) instead of 'Cash' (Bank)
+		local wallet = leaderstats and leaderstats:FindFirstChild("Wallet") 
+
+		if wallet and wallet.Value >= skinData.PriceCash then
 			-- A. Deduct Money
-			cash.Value = cash.Value - skinData.PriceCash
+			wallet.Value = wallet.Value - skinData.PriceCash
 
-			-- B. Save Ownership (We will connect to DataHandler next)
-			-- For now, we just set the attribute so it works instantly
+			-- B. Grant Ownership
+			table.insert(ownedTable, skinName)
+
+			-- C. Update Attributes (Client sees this instantly)
+			player:SetAttribute("OwnedBaseSkins", HttpService:JSONEncode(ownedTable))
 			player:SetAttribute("EquippedSkin", skinName)
 
-			print("✅ " .. player.Name .. " bought " .. skinName)
+			print("✅ " .. player.Name .. " bought " .. skinName .. " with Wallet Cash")
 			return true, "Success"
 		else
-			return false, "Not Enough Cash"
+			return false, "Insufficient Wallet Cash"
 		end
 
-		-- 2. HANDLE ROBUX (Trigger Prompt)
+		-- 3. HANDLE ROBUX (Trigger Prompt ONLY)
 	elseif currencyType == "Robux" then
 		if skinData.ProductId > 0 then
+			-- We only prompt here. The success is handled by 'ReceiptRouter'.
 			MarketplaceService:PromptProductPurchase(player, skinData.ProductId)
-			return true, "Prompted"
+			return true, "Prompted" -- Client waits for prompt
 		else
 			return false, "No Product ID Configured"
 		end
 	end
 
 	return false, "Invalid Currency"
-end
-
--- 💎 ROBUX COMPLETION (Standard Receipt Handler)
-MarketplaceService.ProcessReceipt = function(receiptInfo)
-	local player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
-	if not player then return Enum.ProductPurchaseDecision.NotProcessedYet end
-
-	-- Find which skin matches this Product ID
-	for skinName, data in pairs(StatsModule) do
-		if data.ProductId == receiptInfo.ProductId then
-			-- Grant the Skin
-			player:SetAttribute("EquippedSkin", skinName)
-			print("💎 " .. player.Name .. " bought " .. skinName .. " with Robux!")
-			return Enum.ProductPurchaseDecision.PurchaseGranted
-		end
-	end
-
-	return Enum.ProductPurchaseDecision.NotProcessedYet
 end
