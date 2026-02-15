@@ -30,6 +30,60 @@ end
 
 -- 🛡️ STATE MANAGEMENT
 local playerCooldowns = {}
+local nameToUserIdCache = {}
+local thumbnailCache = {}
+local pendingUserIdRequests = {}
+local pendingThumbnailRequests = {}
+
+local function getUserIdCached(playerName)
+	if not playerName or playerName == "" then return nil end
+	local cached = nameToUserIdCache[playerName]
+	if cached then return cached end
+
+	if pendingUserIdRequests[playerName] ~= nil then
+		repeat task.wait() until pendingUserIdRequests[playerName] == nil
+		return nameToUserIdCache[playerName]
+	end
+
+	pendingUserIdRequests[playerName] = true
+	local success, userId = pcall(function()
+		return Players:GetUserIdFromNameAsync(playerName)
+	end)
+	pendingUserIdRequests[playerName] = nil
+
+	if success and userId then
+		nameToUserIdCache[playerName] = userId
+		return userId
+	end
+
+	return nil
+end
+
+local function getHeadshotCached(userId)
+	if not userId then return "" end
+	local cached = thumbnailCache[userId]
+	if cached then return cached end
+
+	if pendingThumbnailRequests[userId] ~= nil then
+		repeat task.wait() until pendingThumbnailRequests[userId] == nil
+		return thumbnailCache[userId] or ""
+	end
+
+	pendingThumbnailRequests[userId] = true
+	local content, isReady = Players:GetUserThumbnailAsync(
+		userId,
+		Enum.ThumbnailType.HeadShot,
+		Enum.ThumbnailSize.Size420x420
+	)
+	pendingThumbnailRequests[userId] = nil
+
+	if isReady and content and content ~= "" then
+		thumbnailCache[userId] = content
+		return content
+	end
+
+	return ""
+end
 
 -- 📊 ABBREVIATION HELPER
 local SUFFIXES = {"K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"}
@@ -142,27 +196,23 @@ local function setupTablet(plot)
 			end
 		end
 
-		-- 4. UPDATE FUNCTIONS
-		local function updateOwnerInfo()
-			local playerName = ownerVal.Value
-			if playerName and playerName ~= "" then
-				usernameLabel.Text = playerName
-				local success, userId = pcall(function()
-					return Players:GetUserIdFromNameAsync(playerName)
-				end)
-				if success and userId then
-					local content, isReady = Players:GetUserThumbnailAsync(
-						userId,
-						Enum.ThumbnailType.HeadShot,
-						Enum.ThumbnailSize.Size420x420
-					)
-					avatarLabel.Image = isReady and content or ""
+			-- 4. UPDATE FUNCTIONS
+			local lastOwnerName = nil
+			local function updateOwnerInfo()
+				local playerName = ownerVal.Value
+				if playerName == lastOwnerName then return end
+				lastOwnerName = playerName
+
+				if playerName and playerName ~= "" then
+					usernameLabel.Text = playerName
+
+					-- Prefer online player UserId first, then fall back to cached lookup.
+					local onlinePlayer = Players:FindFirstChild(playerName)
+					local userId = onlinePlayer and onlinePlayer.UserId or getUserIdCached(playerName)
+					avatarLabel.Image = getHeadshotCached(userId)
 				else
+					usernameLabel.Text = "Vacant"
 					avatarLabel.Image = ""
-				end
-			else
-				usernameLabel.Text = "Vacant"
-				avatarLabel.Image = ""
 			end
 		end
 
