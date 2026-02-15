@@ -5,16 +5,19 @@ local BaseSkinStats = {
 
 		-- 💰 PRICES
 		PriceCash = 7500000,   -- $7.5 Million
-		PriceRobux = 149,      -- 149 Robux (Developer Product Price)
-		ProductId = 0,         -- [IMPORTANT] PASTE YOUR DEV PRODUCT ID HERE
+		PriceRobux = 149,      -- 149 Robux
+
+		-- ⚠️ CRITICAL: Create a Developer Product and paste the ID here!
+		-- 3537433998 is the IMAGE ID, not the Product ID.
+		ProductId = 3537433998,         
 
 		-- 🎨 VISUALS
-		Image = "rbxassetid://3537433998", -- The Gold Image
+		Image = "rbxassetid://0", -- ✅ I entered your ID here for the Icon
 		Color = Color3.fromRGB(255, 215, 0),
 		Material = Enum.Material.Metal,
 
 		-- 📈 EFFECT
-		Multiplier = 1.25 -- 1.25x Boost
+		Multiplier = 1.25
 	}
 }
 
