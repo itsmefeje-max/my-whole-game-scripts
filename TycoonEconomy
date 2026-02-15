@@ -1,5 +1,6 @@
--- [[ SERVER SCRIPT: TycoonEconomy (Friend Bonus + Accumulator Fix) ]]
+-- [[ SERVER SCRIPT: TycoonEconomy (Friend Bonus + Accumulator Fix + SKINS) ]]
 -- [[ UPDATED: Added Friend Multiplier (10% per friend, max 50%) ]]
+-- [[ UPDATED: Added Skin Multiplier (e.g. 25% for Gold) ]]
 -- [[ FIXES: "Zero Income" Bug, Name Mismatch Lookup, API Lag Prevention ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7,6 +8,7 @@ local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 
 local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
+local BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats")) -- ✅ Added Module
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
 local PAY_INTERVAL = 1
@@ -18,11 +20,11 @@ local profitAccumulator = {}
 -- We update this on Join/Leave to avoid lagging the payment loop with web calls.
 local function updateFriendStats()
 	local allPlayers = Players:GetPlayers()
-	
+
 	for _, player in ipairs(allPlayers) do
 		task.spawn(function()
 			local friendCount = 0
-			
+
 			-- Check against every other player in the server
 			for _, otherPlayer in ipairs(allPlayers) do
 				if player ~= otherPlayer then
@@ -35,19 +37,16 @@ local function updateFriendStats()
 					end
 				end
 			end
-			
+
 			-- Cap at 5 friends (50%)
 			local clampedCount = math.min(friendCount, 5)
-			
+
 			-- Calculate Multiplier (1.0 + 0.1 per friend)
 			local multiplier = 1 + (clampedCount * 0.10)
-			
+
 			-- Save attributes so other scripts (like UI) can see them
 			player:SetAttribute("ActiveFriends", friendCount)
 			player:SetAttribute("FriendMultiplier", multiplier)
-			
-			-- Optional: Print for debugging
-			-- print("👥 " .. player.Name .. " has " .. friendCount .. " friends. Multiplier: " .. multiplier .. "x")
 		end)
 	end
 end
@@ -61,6 +60,24 @@ end)
 Players.PlayerRemoving:Connect(function()
 	updateFriendStats()
 end)
+
+-- ============================================================================
+-- 🏆 SKIN MULTIPLIER HELPER
+-- ============================================================================
+local function GetSkinMultiplier(player)
+	if not player then return 1 end
+
+	-- Read the attribute set by TransactionHandler/DataHandler
+	local skinName = player:GetAttribute("EquippedSkin")
+
+	if skinName and BaseSkinStats[skinName] then
+		return BaseSkinStats[skinName].Multiplier or 1
+	end
+	return 1 -- Default (No Boost)
+end
+
+-- ============================================================================
+-- 💰 MAIN ECONOMY LOOP
 -- ============================================================================
 
 local function getLinkedCarValue(pad)
@@ -104,9 +121,9 @@ task.spawn(function()
 						-- Fallback: Search by Display Name if direct key fails
 						if not stats then
 							for _, s in pairs(CarStats.Cars) do
-								if s.Name == linkedCar.Name then
-									stats = s
-									break
+								if s.Name == linkedCar.Name then 
+									stats = s 
+									break 
 								end
 							end
 						end
@@ -122,22 +139,25 @@ task.spawn(function()
 					end
 				end
 
-				-- 2. Apply Friend Multiplier
-				local multiplier = 1 -- Default 1x
-				
+				-- 2. Apply Multipliers (Friends + Skins)
+				local friendMultiplier = 1
+				local skinMultiplier = 1
+
 				if ownerValue and ownerValue.Value ~= "" then
 					local player = Players:FindFirstChild(ownerValue.Value)
 					if player then
-						-- Read the attribute we set in updateFriendStats
+						-- A. Friend Bonus
 						local bonus = player:GetAttribute("FriendMultiplier")
-						if bonus then
-							multiplier = bonus
-						end
+						if bonus then friendMultiplier = bonus end
+
+						-- B. Skin Bonus (Gold Upgrade) ✅ NEW
+						skinMultiplier = GetSkinMultiplier(player)
 					end
 				end
-				
-				-- Apply the bonus
-				plotTotalCPS = plotTotalCPS * multiplier
+
+				-- Apply the bonuses: (Base * Friend) * Skin
+				-- Example: (100 CPS * 1.5 Friend) * 1.25 Gold = 187.5 CPS
+				plotTotalCPS = (plotTotalCPS * friendMultiplier) * skinMultiplier
 
 				-- 3. Accumulate and Payout
 				if not profitAccumulator[plot] then profitAccumulator[plot] = 0 end
