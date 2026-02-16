@@ -1,10 +1,11 @@
--- [[ SERVER SCRIPT: PadSkinManager (RAINBOW SAFETY UPDATE) ]]
--- Purpose: Visual Handler. Paints Gold/Diamond/Rainbow. Contains Stuck-Prevention Logic.
+-- [[ SERVER SCRIPT: PadSkinManager (FIXED - COLLECTION SERVICE) ]]
+-- Purpose: Visual Handler. Paints Gold/Diamond/Rainbow. Uses Tags for reliable replication.
 -- Location: ServerScriptService
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService") -- ✅ Added Service
 
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 local BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats"))
@@ -32,7 +33,7 @@ local function EnsureOriginalStateSaved(part)
 	-- CHECK: Is it ALREADY a Skin?
 	-- 1. Gold (255, 215, 0)
 	-- 2. Diamond Cyan (85, 255, 255)
-	-- 3. Rainbow White (255, 255, 255) ✅ NEW CHECK
+	-- 3. Rainbow White (255, 255, 255) 
 	local isSuspect = (part.Material == Enum.Material.Metal or part.Material == Enum.Material.Neon) 
 		and (part.Color == Color3.fromRGB(255, 215, 0) 
 			or part.Color == Color3.fromRGB(85, 255, 255)
@@ -85,8 +86,10 @@ local function PaintPlot(plot, skinName)
 		if isDefault then
 			-- 🔙 RESTORE MODE
 			for _, part in ipairs(partsToPaint) do
-				-- 🛑 CLEANUP: Remove Rainbow Tag
-				part:SetAttribute("IsRainbow", nil) 
+				-- 🛑 CLEANUP: Remove Rainbow Tag (Using CollectionService)
+				if CollectionService:HasTag(part, "RainbowEffect") then
+					CollectionService:RemoveTag(part, "RainbowEffect")
+				end
 
 				local origColor = part:GetAttribute("Skin_OrigColor")
 				local origMat = part:GetAttribute("Skin_OrigMat")
@@ -119,12 +122,16 @@ local function PaintPlot(plot, skinName)
 
 				-- 🌈 HANDLE RAINBOW / DIAMOND
 				if skinData.IsRainbow then
-					part:SetAttribute("IsRainbow", true) -- ✅ Signal for Client
-					part.Material = Enum.Material.Neon   -- Neon looks best for rainbow
+					-- ✅ ADD TAG FOR CLIENT TO DETECT
+					CollectionService:AddTag(part, "RainbowEffect")
+
+					part.Material = Enum.Material.Neon
 					part.Reflectance = 0
 				else
-					-- 🥇 HANDLE GOLD
-					part:SetAttribute("IsRainbow", nil) -- Ensure off
+					-- 🥇 HANDLE GOLD (Ensure Tag is gone)
+					if CollectionService:HasTag(part, "RainbowEffect") then
+						CollectionService:RemoveTag(part, "RainbowEffect")
+					end
 
 					if i == 1 then
 						part.Material = Enum.Material.Metal -- Base is Metal
