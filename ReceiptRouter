@@ -79,9 +79,9 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		end
 		return Enum.ProductPurchaseDecision.PurchaseGranted
 
-	-- ====================================================
-	-- 2️⃣ PRODUCT: SHOP REROLL (Restock)
-	-- ====================================================
+		-- ====================================================
+		-- 2️⃣ PRODUCT: SHOP REROLL (Restock)
+		-- ====================================================
 	elseif pid == SHOP_REROLL_ID then
 		if ShopRerollFunc then
 			ShopRerollFunc:Invoke(player) 
@@ -91,9 +91,9 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 
-	-- ====================================================
-	-- 3️⃣ PRODUCT: BASE SKINS (Gold Upgrade) ✅ NEW
-	-- ====================================================
+		-- ====================================================
+		-- 3️⃣ PRODUCT: BASE SKINS (Gold Upgrade) ✅ NEW
+		-- ====================================================
 	elseif BaseSkinStats then
 		-- Search the module to see if this ID matches a skin
 		local skinFound = nil
@@ -152,7 +152,7 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			else
 				warn("⚠️ Player dead/respawning during purchase. Item added to StarterGear only.")
 			end
-			
+
 			-- Always add to StarterGear so they keep it after death
 			local gearClone = newTool:Clone()
 			gearClone.Parent = player:WaitForChild("StarterGear")
