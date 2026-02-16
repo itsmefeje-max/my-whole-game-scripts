@@ -40,6 +40,26 @@ local BaseSkinStats = {
 
 		-- 📈 EFFECT
 		Multiplier = 1.75 -- +75% Boost
+	},
+
+	-- 🌈 TIER 3: RAINBOW (NEW)
+	["Rainbow"] = {
+		Name = "Rainbow Hyper",
+		Description = "The Final Upgrade. +199% Cash Boost.",
+
+		-- 💰 PRICES
+		PriceCash = 150000000,  -- $110 Million (End-Game Grind)
+		PriceRobux = 1199,      -- 1,199 Robux
+		ProductId = 3538565378, -- ✅ Rainbow Dev Product ID
+
+		-- 🎨 VISUALS
+		Image = "rbxassetid://0",
+		Color = Color3.fromRGB(255, 255, 255), -- White Base (Pure Canvas for Rainbow)
+		Material = Enum.Material.Neon,
+		IsRainbow = true,                      -- ✅ Triggers Rainbow Animation
+
+		-- 📈 EFFECT
+		Multiplier = 2.99 -- +199% Boost (Base 1 + 1.99)
 	}
 }
 
