@@ -1,5 +1,5 @@
--- [[ SERVER SCRIPT: PadSkinManager (DIAMOND + RAINBOW SUPPORT) ]]
--- Purpose: Visual Handler. Paints Gold/Diamond. Handles Rainbow Tags & Safety.
+-- [[ SERVER SCRIPT: PadSkinManager (RAINBOW SAFETY UPDATE) ]]
+-- Purpose: Visual Handler. Paints Gold/Diamond/Rainbow. Contains Stuck-Prevention Logic.
 -- Location: ServerScriptService
 
 local Players = game:GetService("Players")
@@ -25,14 +25,18 @@ local function IsIgnored(part)
 	return false
 end
 
--- 💾 SAVE STATE (Updated for Diamond Safety)
+-- 💾 SAVE STATE (Updated for Rainbow Safety)
 local function EnsureOriginalStateSaved(part)
 	if part:GetAttribute("Skin_OrigColor") then return end 
 
-	-- CHECK: Is it ALREADY Gold OR Diamond?
-	-- We check for Gold (255, 215, 0) AND Diamond Cyan (85, 255, 255)
+	-- CHECK: Is it ALREADY a Skin?
+	-- 1. Gold (255, 215, 0)
+	-- 2. Diamond Cyan (85, 255, 255)
+	-- 3. Rainbow White (255, 255, 255) ✅ NEW CHECK
 	local isSuspect = (part.Material == Enum.Material.Metal or part.Material == Enum.Material.Neon) 
-		and (part.Color == Color3.fromRGB(255, 215, 0) or part.Color == Color3.fromRGB(85, 255, 255)) 
+		and (part.Color == Color3.fromRGB(255, 215, 0) 
+			or part.Color == Color3.fromRGB(85, 255, 255)
+			or part.Color == Color3.fromRGB(255, 255, 255)) -- The Rainbow Base
 
 	if isSuspect then
 		-- It looks like a skin. DO NOT save this as "Original".
@@ -100,7 +104,7 @@ local function PaintPlot(plot, skinName)
 				end
 			end
 		else
-			-- ✨ SKIN MODE (GOLD OR DIAMOND)
+			-- ✨ SKIN MODE (GOLD OR DIAMOND OR RAINBOW)
 
 			-- Sort: Biggest part first (for Gold metal base)
 			table.sort(partsToPaint, function(a, b)
@@ -110,10 +114,10 @@ local function PaintPlot(plot, skinName)
 			end)
 
 			for i, part in ipairs(partsToPaint) do
-				-- Apply Base Color (Gold or Cyan)
+				-- Apply Base Color (Gold, Cyan, or White)
 				part.Color = skinData.Color 
 
-				-- 🌈 HANDLE DIAMOND RAINBOW
+				-- 🌈 HANDLE RAINBOW / DIAMOND
 				if skinData.IsRainbow then
 					part:SetAttribute("IsRainbow", true) -- ✅ Signal for Client
 					part.Material = Enum.Material.Neon   -- Neon looks best for rainbow
