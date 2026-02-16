@@ -1,21 +1,25 @@
--- Purpose: Centralizes MarketplaceService.ProcessReceipt to handle all product purchases (Cars, Boosts, Skins).
+-- Purpose: Centralizes MarketplaceService.ProcessReceipt with IDEMPOTENCY to prevent duplicates.
 -- Runs on: Server
 -- Location: ServerScriptService
--- Dependencies: MarketplaceService, ServerStorage (CarTools), ReplicatedStorage (BaseSkinStats)
+-- Dependencies: MarketplaceService, DataStoreService, ServerStorage, ReplicatedStorage
 -- Public API: MarketplaceService.ProcessReceipt (Callback)
--- Security: Server-side validation, secure asset cloning, ownership attributes, error handling for missing assets.
--- Notes: Fixes a critical crash where buying an item while dead (no Backpack) caused the script to error.
+-- Security: Atomic-like Idempotency check (PurchaseId), Server-side validation, Secure asset cloning.
+-- Notes: Fixes critical economy bugs (Double Purchases) and "Backpack Missing" crash.
 
 -- [[ SERVER SCRIPT: ReceiptRouter ]]
 -- Centralizes MarketplaceService.ProcessReceipt for the entire game.
--- UPDATED: Fixes "Backpack Missing" Crash + Base Skin Support.
+-- UPDATED: Added Purchase History Locking (Fixes Bug #1)
 
 local MarketplaceService = game:GetService("MarketplaceService")
+local DataStoreService = game:GetService("DataStoreService") -- [ADDED]
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
+
+-- 💾 DATASTORE FOR RECEIPT HISTORY
+local PurchaseHistory = DataStoreService:GetDataStore("PurchaseHistory")
 
 -- ⚙️ EXISTING PRODUCT IDs
 local TABLET_2X_ID = 3509697462 -- Tablet ID
@@ -50,7 +54,28 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	-- 1. Handle Player Leaving/Crashing
 	if not player then return Enum.ProductPurchaseDecision.NotProcessedYet end
 
+	-- 🛡️ SECURITY: IDEMPOTENCY CHECK (Prevents Double Rewards)
+	-- We create a unique key for this specific transaction.
+	local purchaseKey = receiptInfo.PlayerId .. "_" .. receiptInfo.PurchaseId
+	local success, alreadyProcessed = pcall(function()
+		return PurchaseHistory:GetAsync(purchaseKey)
+	end)
+
+	-- If DataStore fails, we DON'T grant (try again later)
+	if not success then 
+		warn("⚠️ DataStore Error during receipt check. Retrying...")
+		return Enum.ProductPurchaseDecision.NotProcessedYet 
+	end
+
+	-- If we already processed this ID, tell Roblox "We're done" and stop.
+	if alreadyProcessed then
+		print("♻️ Duplicate Purchase ID detected. Skipping reward.")
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	end
+
+	-- Proceed with Purchase Logic
 	local pid = receiptInfo.ProductId
+	local purchaseSuccess = false -- Track if we successfully gave the item
 
 	print("🛒 Processing Purchase for ProductID: " .. pid)
 
@@ -61,23 +86,19 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		local myPlotName = player:GetAttribute("OccupiedPlot")
 		local plot = myPlotName and TycoonFolder:FindFirstChild(myPlotName)
 
-		-- Retry if plot isn't ready
-		if not plot or not plot:FindFirstChild("PendingEarnings") then 
-			return Enum.ProductPurchaseDecision.NotProcessedYet 
-		end
+		if plot and plot:FindFirstChild("PendingEarnings") then 
+			local pendingVal = plot.PendingEarnings
+			local amount = pendingVal.Value
 
-		local pendingVal = plot.PendingEarnings
-		local amount = pendingVal.Value
-
-		-- Logic: Reset pending, add 2x to cash
-		if amount > 0 then
-			pendingVal.Value = 0
-			local ls = player:FindFirstChild("leaderstats")
-			if ls and ls:FindFirstChild("Cash") then
-				ls.Cash.Value += (amount * 2)
+			if amount > 0 then
+				pendingVal.Value = 0
+				local ls = player:FindFirstChild("leaderstats")
+				if ls and ls:FindFirstChild("Cash") then
+					ls.Cash.Value += (amount * 2)
+				end
 			end
+			purchaseSuccess = true
 		end
-		return Enum.ProductPurchaseDecision.PurchaseGranted
 
 		-- ====================================================
 		-- 2️⃣ PRODUCT: SHOP REROLL (Restock)
@@ -85,17 +106,15 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	elseif pid == SHOP_REROLL_ID then
 		if ShopRerollFunc then
 			ShopRerollFunc:Invoke(player) 
-			return Enum.ProductPurchaseDecision.PurchaseGranted
+			purchaseSuccess = true
 		else
-			warn("⚠️ Critical: ShopRerollFunction missing in ServerStorage!")
-			return Enum.ProductPurchaseDecision.NotProcessedYet
+			warn("⚠️ Critical: ShopRerollFunction missing!")
 		end
 
 		-- ====================================================
-		-- 3️⃣ PRODUCT: BASE SKINS (Gold Upgrade) ✅ NEW
+		-- 3️⃣ PRODUCT: BASE SKINS (Gold Upgrade)
 		-- ====================================================
 	elseif BaseSkinStats then
-		-- Search the module to see if this ID matches a skin
 		local skinFound = nil
 		for name, data in pairs(BaseSkinStats) do
 			if data.ProductId == pid then
@@ -105,13 +124,11 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		end
 
 		if skinFound then
-			print("💎 Base Skin Purchased: " .. skinFound)
-
 			-- Grant Ownership
 			local ownedRaw = player:GetAttribute("OwnedBaseSkins") or "[]"
 			local ownedTable = {}
-			local success, _ = pcall(function() ownedTable = HttpService:JSONDecode(ownedRaw) end)
-			if not success then ownedTable = {} end -- Fallback if decode fails
+			local decodeSuccess, _ = pcall(function() ownedTable = HttpService:JSONDecode(ownedRaw) end)
+			if not decodeSuccess then ownedTable = {} end
 
 			if not table.find(ownedTable, skinFound) then
 				table.insert(ownedTable, skinFound)
@@ -120,52 +137,55 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 
 			-- Auto Equip
 			player:SetAttribute("EquippedSkin", skinFound)
-
-			return Enum.ProductPurchaseDecision.PurchaseGranted
+			purchaseSuccess = true
 		end
-	end
 
-	-- ====================================================
-	-- 4️⃣ PRODUCT: BUY CAR WITH ROBUX
-	-- ====================================================
-	-- We check this LAST because it's a generic table lookup
-	if CAR_PRODUCT_IDS[pid] then
+		-- ====================================================
+		-- 4️⃣ PRODUCT: BUY CAR WITH ROBUX
+		-- ====================================================
+	elseif CAR_PRODUCT_IDS[pid] then
 		local carName = CAR_PRODUCT_IDS[pid]
 		local CarTools = ServerStorage:FindFirstChild("CarTools")
-
-		-- Try finding the tool
 		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
 
 		if tool then
-			-- Grant the car
 			local newTool = tool:Clone()
 			newTool:SetAttribute("IssuedByServer", true)
 			newTool:SetAttribute("IssuedAt", os.time())
 			newTool:SetAttribute("ToolId", tool.Name) -- Critical for Anti-Cheat
 
-			-- 🛡️ FIX: SAFE BACKPACK CHECK
-			-- If player is dead, Backpack is nil. We skip parenting to Backpack 
-			-- and rely on StarterGear to give it to them on respawn.
+			-- Safe Backpack Check
 			local backpack = player:FindFirstChild("Backpack")
 			if backpack then
 				newTool.Parent = backpack
 			else
-				warn("⚠️ Player dead/respawning during purchase. Item added to StarterGear only.")
+				warn("⚠️ Player dead/respawning. Item added to StarterGear only.")
 			end
 
-			-- Always add to StarterGear so they keep it after death
+			-- StarterGear
 			local gearClone = newTool:Clone()
 			gearClone.Parent = player:WaitForChild("StarterGear")
 
-			print("✅ Gave Robux Car: " .. carName)
-			return Enum.ProductPurchaseDecision.PurchaseGranted
+			purchaseSuccess = true
 		else
 			warn("❌ Critical: Tool missing for Robux Car: " .. carName)
-			return Enum.ProductPurchaseDecision.NotProcessedYet 
 		end
+	else
+		warn("⚠️ Unknown ProductID Purchased: " .. pid)
 	end
 
-	-- Unknown Product
-	warn("⚠️ Unknown ProductID Purchased: " .. pid)
-	return Enum.ProductPurchaseDecision.NotProcessedYet
+	-- ====================================================
+	-- 🏁 FINALIZE PURCHASE
+	-- ====================================================
+	if purchaseSuccess then
+		-- Mark as processed in DataStore so it can't be claimed again
+		pcall(function()
+			PurchaseHistory:SetAsync(purchaseKey, true)
+		end)
+		print("✅ Purchase Successful & Saved: " .. pid)
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	else
+		-- If logic failed (e.g., missing plot), try again later
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
 end
