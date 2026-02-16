@@ -1,65 +1,47 @@
+-- [[ MODULE: BaseSkinStats (FIXED) ]]
+-- Location: ReplicatedStorage
+
 local BaseSkinStats = {
 	-- 🥇 TIER 1: GOLD
 	["Gold"] = {
 		Name = "Midas Touch",
 		Description = "Goldify your Base + 25% Cash Boost",
-
-		-- 💰 PRICES
-		PriceCash = 7500000,   -- $7.5 Million
-		PriceRobux = 149,      -- 149 Robux
-
-		-- ⚠️ CRITICAL: Create a Developer Product and paste the ID here!
-		-- 3537433998 is the IMAGE ID, not the Product ID.
-		ProductId = 3537433998,         
-
-		-- 🎨 VISUALS
-		Image = "rbxassetid://0", -- ✅ I entered your ID here for the Icon
+		PriceCash = 7500000,
+		PriceRobux = 149,
+		ProductId = 3537433998,
+		Image = "rbxassetid://0",
 		Color = Color3.fromRGB(255, 215, 0),
 		Material = Enum.Material.Metal,
-		IsRainbow = false,
-
-		-- 📈 EFFECT
+		IsRainbow = false, -- ✅ Correct
 		Multiplier = 1.25
 	},
 
-	-- 💎 TIER 2: DIAMOND (NEW)
+	-- 💎 TIER 2: DIAMOND
 	["Diamond"] = {
 		Name = "Diamond Prestige",
-		Description = "Rainbow Gradient + 75% Cash Boost",
-
-		-- 💰 PRICES
-		PriceCash = 45000000,  -- $45 Million
-		PriceRobux = 459,      -- 459 Robux
-		ProductId = 3538539066, -- ✅ Diamond Dev Product ID
-
-		-- 🎨 VISUALS
-		Image = "rbxassetid://0", 
-		Color = Color3.fromRGB(85, 255, 255), -- Cyan Base (for when rainbow is off)
-		Material = Enum.Material.Neon,        -- Neon for Glow
-		IsRainbow = true,                     -- ✅ Special Rainbow Effect
-
-		-- 📈 EFFECT
-		Multiplier = 1.75 -- +75% Boost
+		Description = "Cyan Neon + 75% Cash Boost",
+		PriceCash = 45000000,
+		PriceRobux = 459,
+		ProductId = 3538539066,
+		Image = "rbxassetid://0",
+		Color = Color3.fromRGB(85, 255, 255), -- Cyan
+		Material = Enum.Material.Neon,        -- Neon
+		IsRainbow = false,                    -- ✅ FIX: Turned OFF Rainbow for Diamond
+		Multiplier = 1.75
 	},
 
-	-- 🌈 TIER 3: RAINBOW (NEW)
+	-- 🌈 TIER 3: RAINBOW
 	["Rainbow"] = {
 		Name = "Rainbow Hyper",
 		Description = "The Final Upgrade. +199% Cash Boost.",
-
-		-- 💰 PRICES
-		PriceCash = 150000000,  -- $110 Million (End-Game Grind)
-		PriceRobux = 1199,      -- 1,199 Robux
-		ProductId = 3538565378, -- ✅ Rainbow Dev Product ID
-
-		-- 🎨 VISUALS
+		PriceCash = 150000000,
+		PriceRobux = 1199,
+		ProductId = 3538565378,
 		Image = "rbxassetid://0",
-		Color = Color3.fromRGB(255, 255, 255), -- White Base (Pure Canvas for Rainbow)
+		Color = Color3.fromRGB(255, 255, 255), -- White Base
 		Material = Enum.Material.Neon,
-		IsRainbow = true,                      -- ✅ Triggers Rainbow Animation
-
-		-- 📈 EFFECT
-		Multiplier = 2.99 -- +199% Boost (Base 1 + 1.99)
+		IsRainbow = true,                      -- ✅ ONLY Rainbow has this ON
+		Multiplier = 2.99
 	}
 }
 
