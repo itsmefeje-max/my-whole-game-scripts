@@ -1,5 +1,5 @@
--- [[ LOCAL SCRIPT: BaseUpgradeClient (EQUIP SYSTEM + SOUNDS) ]]
--- Purpose: Shop UI, Feedback, Sounds, and EQUIP/UNEQUIP Logic.
+-- [[ LOCAL SCRIPT: BaseUpgradeClient (UPDATED FOR DIAMOND) ]]
+-- Purpose: Shop UI, Feedback, Sounds, and EQUIP/UNEQUIP Logic for Gold & Diamond.
 -- Location: StarterPlayerScripts
 
 local Players = game:GetService("Players")
@@ -239,7 +239,7 @@ local function UpdateCardVisuals(cardFrame, skinName)
 		-- 1. HIDE BUY BUTTONS & INDICATOR
 		if btnCash then btnCash.Visible = false end
 		if btnRobux then btnRobux.Visible = false end
-		if obtainedIndicator then obtainedIndicator.Visible = false end -- Hide "Obtained" text, show buttons instead
+		if obtainedIndicator then obtainedIndicator.Visible = false end 
 
 		-- 2. HANDLE EQUIP / UNEQUIP STATE
 		if currentEquip == skinName then
@@ -277,53 +277,51 @@ local function ConnectCard(cardFrame, skinName)
 
 	-- 1. BUY CASH
 	local btnCash = buyFrame:FindFirstChild("BuyForCash")
-	if btnCash and Kit and Kit.Tween then
-		Kit.Tween:SetupButton(btnCash, function()
+	if btnCash then
+		local function onBuyCash()
 			if feedbackDebounce then return end 
 			local success, msg = TransactionFunc:InvokeServer(skinName, "Cash")
 			if success then ShowFeedback("Purchase Successful!", true)
 			else ShowFeedback(msg or "Purchase Failed", false) end
-		end)
+		end
+
+		if Kit and Kit.Tween then Kit.Tween:SetupButton(btnCash, onBuyCash)
+		else btnCash.MouseButton1Click:Connect(onBuyCash) end
 	end
 
 	-- 2. BUY ROBUX
 	local btnRobux = buyFrame:FindFirstChild("BuyForRobux")
-	if btnRobux and Kit and Kit.Tween then
-		Kit.Tween:SetupButton(btnRobux, function()
+	if btnRobux then
+		local function onBuyRobux()
 			TransactionFunc:InvokeServer(skinName, "Robux") 
-		end)
+		end
+
+		if Kit and Kit.Tween then Kit.Tween:SetupButton(btnRobux, onBuyRobux)
+		else btnRobux.MouseButton1Click:Connect(onBuyRobux) end
 	end
 
-	-- 3. EQUIP BUTTON (NEW)
+	-- 3. EQUIP BUTTON
 	local btnEquip = buyFrame:FindFirstChild("Equip")
 	if btnEquip then
-		-- Attach click handler
 		local function onEquip()
 			TransactionFunc:InvokeServer(skinName, "Equip")
 			PlaySound("Equip")
 		end
 
-		if Kit and Kit.Tween then
-			Kit.Tween:SetupButton(btnEquip, onEquip)
-		else
-			btnEquip.MouseButton1Click:Connect(onEquip)
-		end
+		if Kit and Kit.Tween then Kit.Tween:SetupButton(btnEquip, onEquip)
+		else btnEquip.MouseButton1Click:Connect(onEquip) end
 	end
 
-	-- 4. UNEQUIP BUTTON (NEW)
+	-- 4. UNEQUIP BUTTON
 	local btnUnequip = buyFrame:FindFirstChild("Unequip")
 	if btnUnequip then
-		-- Attach click handler
 		local function onUnequip()
 			TransactionFunc:InvokeServer(skinName, "Unequip")
 			PlaySound("Equip")
 		end
 
-		if Kit and Kit.Tween then
-			Kit.Tween:SetupButton(btnUnequip, onUnequip)
-		else
-			btnUnequip.MouseButton1Click:Connect(onUnequip)
-		end
+		if Kit and Kit.Tween then Kit.Tween:SetupButton(btnUnequip, onUnequip)
+		else btnUnequip.MouseButton1Click:Connect(onUnequip) end
 	end
 end
 
@@ -332,8 +330,14 @@ local function SetupShop()
 	if not gui then return end
 	local scroller = gui:FindFirstChild(SCROLLER_NAME, true) 
 	if not scroller then return end 
+
+	-- 🥇 CARD 1: GOLD
 	local card1 = scroller:FindFirstChild("Card1")
 	if card1 then ConnectCard(card1, "Gold") end
+
+	-- 💎 CARD 2: DIAMOND (NEW)
+	local card2 = scroller:FindFirstChild("Card2")
+	if card2 then ConnectCard(card2, "Diamond") end
 end
 
 -- ============================================================================
