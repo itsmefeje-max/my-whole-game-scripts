@@ -2,6 +2,7 @@
 -- Purpose: Handles placing/picking up cars AND manages Prompt Visibility based on unlocks.
 -- Runs on: Server
 -- Key Upgrade: Checks 'HighestUnlockedPad' to hide prompts on locked pads.
+-- SECURITY UPDATE: Now validates ToolId attribute instead of Tool.Name to prevent spoofing.
 
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
@@ -45,6 +46,7 @@ local function getPadNumber(padObject)
 end
 
 local function FindModelNameFromTool(toolName)
+	if not toolName or typeof(toolName) ~= "string" then return nil end
 	local clean = toolName:gsub(" Item", ""):gsub("Item", "")
 	if CarModels:FindFirstChild(clean) then return clean end
 	if CarStats and CarStats.Cars and CarStats.Cars[clean] then
@@ -99,7 +101,7 @@ local function validatePadState(padObject, occupiedVal, linkedCarVal, placePromp
 	local plot = getPlotFolder(padObject)
 	local ownerName = plot and plot:FindFirstChild("Owner") and plot.Owner.Value
 	local ownerPlayer = Players:FindFirstChild(ownerName or "")
-	
+
 	-- 2. Check Progression (Is this pad unlocked?)
 	local isUnlocked = false
 	if ownerPlayer then
@@ -121,19 +123,19 @@ local function validatePadState(padObject, occupiedVal, linkedCarVal, placePromp
 
 	-- 🔓 UNLOCKED: Normal Logic
 	local car = linkedCarVal.Value
-	
+
 	if occupiedVal.Value == true and (not car or not car.Parent) then
 		-- Ghost Lock Detected (Fix it)
 		occupiedVal.Value = false
 		linkedCarVal.Value = nil
 		placePrompt.Enabled = true
 		pickupPrompt.Enabled = false
-		
+
 	elseif occupiedVal.Value == true then
 		-- Car is placed
 		placePrompt.Enabled = false
 		pickupPrompt.Enabled = true
-		
+
 	else
 		-- Pad is empty
 		placePrompt.Enabled = true
@@ -199,7 +201,7 @@ end
 
 local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVal, placePrompt, pickupPrompt)
 	if occupiedVal.Value then return end
-	
+
 	-- Double Check: Is it unlocked? (Security Layer)
 	local padNum = getPadNumber(padObject)
 	local level = player:GetAttribute("HighestUnlockedPad") or 1
@@ -211,14 +213,25 @@ local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVa
 
 	local tool = player.Character:FindFirstChildWhichIsA("Tool")
 	if not tool then return end
-	if not tool:GetAttribute("IssuedByServer") then return end
-	if not tool:GetAttribute("ToolId") then return end
 
-	local realModelName = FindModelNameFromTool(tool.Name)
+	-- 🛡️ SECURITY FIX: TRUST ATTRIBUTES, NOT NAMES
+	-- 1. Must be issued by server
+	if not tool:GetAttribute("IssuedByServer") then return end
+	
+	-- 2. Get the Secure ID (Server Authority)
+	local secureToolId = tool:GetAttribute("ToolId")
+	if not secureToolId then 
+		warn("⚠️ Security: Tool missing ID attribute: " .. tool.Name)
+		return 
+	end
+
+	-- 3. Resolve Model from ID (NOT tool.Name)
+	-- We pass the secure ID to the helper. 
+	local realModelName = FindModelNameFromTool(secureToolId)
 	local realCar = realModelName and CarModels:FindFirstChild(realModelName)
 
 	if realCar then
-		local toolName = tool.Name
+		local toolName = tool.Name -- Still need name to destroy the instance
 		local removed = removeToolFromPlayer(player, toolName)
 
 		if removed then
@@ -244,7 +257,13 @@ local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVa
 				playSound("PlaceSound", padPart)
 			else
 				warn("⚠️ Spawn Failed! Refunding item to " .. player.Name)
-				local originalTool = CarTools:FindFirstChild(toolName) or StarterPack:FindFirstChild(toolName)
+				-- Refund using the SECURE ID, not the tool name
+				local originalTool = CarTools:FindFirstChild(secureToolId) 
+				-- Fallback search if ID has "Item" suffix but CarTool doesn't or vice versa
+				if not originalTool then
+					originalTool = CarTools:FindFirstChild(secureToolId .. " Item")
+				end
+
 				if originalTool then
 					local backpackClone = originalTool:Clone()
 					local gearClone = originalTool:Clone()
@@ -257,11 +276,13 @@ local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVa
 					end
 					backpackClone.Parent = player.Backpack
 					gearClone.Parent = player.StarterGear
+				else
+					warn("❌ CRITICAL: Could not find original tool to refund: " .. tostring(secureToolId))
 				end
 			end
 		end
 	else
-		warn("⚠️ Invalid Car Tool: " .. tool.Name)
+		warn("⚠️ Security Alert: Player " .. player.Name .. " tried to use invalid ToolId: " .. tostring(secureToolId))
 	end
 end
 
@@ -296,7 +317,7 @@ local function AttemptPickup(player, padObject, padPart, occupiedVal, linkedCarV
 
 		occupiedVal.Value = false
 		linkedCarVal.Value = nil
-		
+
 		-- Update State immediately
 		validatePadState(padObject, occupiedVal, linkedCarVal, placePrompt, pickupPrompt)
 
