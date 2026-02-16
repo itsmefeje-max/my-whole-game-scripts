@@ -1,11 +1,12 @@
--- [[ SERVER SCRIPT: PadSkinManager (FIXED - COLLECTION SERVICE) ]]
--- Purpose: Visual Handler. Paints Gold/Diamond/Rainbow. Uses Tags for reliable replication.
+-- [[ SERVER SCRIPT: PadSkinManager (FINAL COMBINED FIX) ]]
+-- Purpose: Visual Handler. Paints Gold/Diamond/Rainbow. 
+-- Fixes: Uses Tags for Rainbows + Correct Materials for Diamond (Neon) vs Gold (Metal).
 -- Location: ServerScriptService
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CollectionService = game:GetService("CollectionService") -- ✅ Added Service
+local CollectionService = game:GetService("CollectionService")
 
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 local BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats"))
@@ -120,21 +121,24 @@ local function PaintPlot(plot, skinName)
 				-- Apply Base Color (Gold, Cyan, or White)
 				part.Color = skinData.Color 
 
-				-- 🌈 HANDLE RAINBOW / DIAMOND
+				-- 🌈 HANDLE RAINBOW (Animated)
 				if skinData.IsRainbow then
 					-- ✅ ADD TAG FOR CLIENT TO DETECT
-					CollectionService:AddTag(part, "RainbowEffect")
+					if not CollectionService:HasTag(part, "RainbowEffect") then
+						CollectionService:AddTag(part, "RainbowEffect")
+					end
 
 					part.Material = Enum.Material.Neon
 					part.Reflectance = 0
 				else
-					-- 🥇 HANDLE GOLD (Ensure Tag is gone)
+					-- 💎 HANDLE GOLD or DIAMOND (Static)
 					if CollectionService:HasTag(part, "RainbowEffect") then
 						CollectionService:RemoveTag(part, "RainbowEffect")
 					end
 
 					if i == 1 then
-						part.Material = Enum.Material.Metal -- Base is Metal
+						-- ✅ FIX: Use the Material from Stats (Metal for Gold, Neon for Diamond)
+						part.Material = skinData.Material or Enum.Material.Metal 
 						part.Reflectance = 0.4
 					else
 						part.Material = Enum.Material.Neon -- Details are Neon
