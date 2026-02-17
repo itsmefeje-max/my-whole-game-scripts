@@ -1,6 +1,6 @@
--- [[ SERVER SCRIPT: PadSkinManager (FINAL COMBINED FIX) ]]
--- Purpose: Visual Handler. Paints Gold/Diamond/Rainbow. 
--- Fixes: Uses Tags for Rainbows + Correct Materials for Diamond (Neon) vs Gold (Metal).
+-- [[ SERVER SCRIPT: PadSkinManager (ADDED SILVER SAFETY) ]]
+-- Purpose: Visual Handler. Paints Silver/Gold/Diamond/Rainbow. 
+-- Fixes: Uses Tags for Rainbows + Correct Materials + Safety Checks.
 -- Location: ServerScriptService
 
 local Players = game:GetService("Players")
@@ -27,18 +27,20 @@ local function IsIgnored(part)
 	return false
 end
 
--- 💾 SAVE STATE (Updated for Rainbow Safety)
+-- 💾 SAVE STATE (Updated for Silver Safety)
 local function EnsureOriginalStateSaved(part)
 	if part:GetAttribute("Skin_OrigColor") then return end 
 
 	-- CHECK: Is it ALREADY a Skin?
-	-- 1. Gold (255, 215, 0)
-	-- 2. Diamond Cyan (85, 255, 255)
-	-- 3. Rainbow White (255, 255, 255) 
+	-- 1. Silver (192, 192, 192) ✅ NEW CHECK
+	-- 2. Gold (255, 215, 0)
+	-- 3. Diamond Cyan (85, 255, 255)
+	-- 4. Rainbow White (255, 255, 255) 
 	local isSuspect = (part.Material == Enum.Material.Metal or part.Material == Enum.Material.Neon) 
 		and (part.Color == Color3.fromRGB(255, 215, 0) 
 			or part.Color == Color3.fromRGB(85, 255, 255)
-			or part.Color == Color3.fromRGB(255, 255, 255)) -- The Rainbow Base
+			or part.Color == Color3.fromRGB(255, 255, 255)
+			or part.Color == Color3.fromRGB(192, 192, 192)) -- Silver Check
 
 	if isSuspect then
 		-- It looks like a skin. DO NOT save this as "Original".
@@ -108,9 +110,9 @@ local function PaintPlot(plot, skinName)
 				end
 			end
 		else
-			-- ✨ SKIN MODE (GOLD OR DIAMOND OR RAINBOW)
+			-- ✨ SKIN MODE (SILVER, GOLD, DIAMOND, RAINBOW)
 
-			-- Sort: Biggest part first (for Gold metal base)
+			-- Sort: Biggest part first (for Gold/Silver metal base)
 			table.sort(partsToPaint, function(a, b)
 				local volA = a.Size.X * a.Size.Y * a.Size.Z
 				local volB = b.Size.X * b.Size.Y * b.Size.Z
@@ -118,7 +120,7 @@ local function PaintPlot(plot, skinName)
 			end)
 
 			for i, part in ipairs(partsToPaint) do
-				-- Apply Base Color (Gold, Cyan, or White)
+				-- Apply Base Color (Silver, Gold, Cyan, or White)
 				part.Color = skinData.Color 
 
 				-- 🌈 HANDLE RAINBOW (Animated)
@@ -131,13 +133,13 @@ local function PaintPlot(plot, skinName)
 					part.Material = Enum.Material.Neon
 					part.Reflectance = 0
 				else
-					-- 💎 HANDLE GOLD or DIAMOND (Static)
+					-- 💎 HANDLE STATIC SKINS (Silver, Gold, Diamond)
 					if CollectionService:HasTag(part, "RainbowEffect") then
 						CollectionService:RemoveTag(part, "RainbowEffect")
 					end
 
 					if i == 1 then
-						-- ✅ FIX: Use the Material from Stats (Metal for Gold, Neon for Diamond)
+						-- ✅ FIX: Use the Material from Stats (Metal for Silver/Gold, Neon for Diamond)
 						part.Material = skinData.Material or Enum.Material.Metal 
 						part.Reflectance = 0.4
 					else
