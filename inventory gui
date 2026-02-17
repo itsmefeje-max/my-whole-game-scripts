@@ -1,8 +1,11 @@
--- [[ LOCAL SCRIPT: Inventory UI (Final System - Dynamic FOV + Always Count) ]]
--- TYPE: Client-Side UI Controller
--- FEATURES: Universal Glow, Dynamic Camera Restore, "x1" Display, Mobile Optimized
--- FIXED: Solved "no property named ImageColor3" console spam on TextButtons.
+-- [[ LOCAL SCRIPT: Inventory UI (Optimized v3 - FINAL) ]]
+--      - UI pooling (no destroy/recreate spam)
+--      - Event-driven inventory tracking (fast updates)
+--      - No per-item Heartbeat loops (Tweens instead)
+--      - FIXED: Backpack/Character respawn logic (Critical)
+--      - Keeps: dynamic FOV, xCount, mobile friendly, universal glow
 
+-- Services
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
@@ -10,24 +13,18 @@ local SoundService = game:GetService("SoundService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 local openButton = script.Parent
 
--- ✅ CRITICAL: GET PLAYER CONTROLS
+-- Controls
 local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule"))
 local Controls = PlayerModule:GetControls()
 
--- ============================================================================
--- ⚙️ CONFIGURATION
--- ============================================================================
+-- Config
 local CONFIG = {
-	FOV = {
-		Open = 50,
-		Default = 70 -- Fallback only, we now use Dynamic Capture
-	},
+	FOV = { Open = 50 },
 	Zoom = { Min = 0.5, Max = 128 },
 	Tween = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
 	Audio = {
@@ -43,66 +40,72 @@ local CONFIG = {
 		Dim = Color3.fromRGB(150, 150, 150),
 		Gold = Color3.fromRGB(255, 255, 100)
 	},
-	Images = {
-		Default = "rbxassetid://132702954752503"
-	}
+	Images = { Default = "rbxassetid://132702954752503" }
 }
 
--- ============================================================================
--- 📂 HIERARCHY SETUP
--- ============================================================================
+-- UI refs
 local myScreenGui = openButton:FindFirstAncestorWhichIsA("ScreenGui")
 local mainWindow = myScreenGui:WaitForChild("InventoryWindow", 10)
 local itemsContainer = mainWindow:WaitForChild("ItemContainer", 10)
 local closeButton = mainWindow:WaitForChild("CloseButton", 10)
 
--- Tier Components
--- ✅ FIX: TierFrame is now a child of InventoryWindow (mainWindow), not the ScreenGui
 local tierFrame = mainWindow:WaitForChild("TierFrame", 10)
 local tierContainer = tierFrame:WaitForChild("TierContainer", 10)
 
--- ✅ EMPTY INDICATOR (ONLY ADDED FUNCTIONALITY)
--- ✅ FIX: Use mainWindow directly (safer now that hierarchy is known)
 local emptyIndicatorLabel = mainWindow:FindFirstChild("Indicator-v2", true)
 
-local function updateEmptyIndicator(tierName, isEmpty)
-	if not emptyIndicatorLabel then return end
-
-	if isEmpty then
-		emptyIndicatorLabel.Text = ("Your %s Stash is Empty"):format(tierName)
-		emptyIndicatorLabel.Visible = true
-		emptyIndicatorLabel.Active = false
-	else
-		emptyIndicatorLabel.Visible = false
-		emptyIndicatorLabel.Active = false
-	end
-end
-
--- 🔒 STARTUP STATE
+-- Startup UI state
 if mainWindow then mainWindow.Visible = false end
 if tierFrame then tierFrame.Visible = false end
 openButton.Visible = true
-openButton.ImageColor3 = CONFIG.Colors.Normal
+if openButton:IsA("ImageButton") then
+	openButton.ImageColor3 = CONFIG.Colors.Normal
+end
 
--- Music & Audio Setup
+-- Sounds
+local function makeSound(id, vol, looped)
+	local s = Instance.new("Sound")
+	s.SoundId = id
+	s.Volume = vol or 0.5
+	s.Looped = looped or false
+	s.Parent = SoundService
+	return s
+end
+
+local SFX = {
+	Click = makeSound(CONFIG.Audio.Click, 0.5, false),
+	Equip = makeSound(CONFIG.Audio.Equip, 0.5, false),
+	Hover = makeSound(CONFIG.Audio.Hover, 0.3, false),
+	Mythic = makeSound(CONFIG.Audio.Mythic, 1, false),
+}
+
 local gameThemeSound = SoundService:FindFirstChild(CONFIG.Audio.GameThemeName)
-local shopMusic = Instance.new("Sound")
-shopMusic.Name = "ShopMusic_Internal"
-shopMusic.SoundId = CONFIG.Audio.ShopMusic
-shopMusic.Volume = 0.5
-shopMusic.Looped = true
-shopMusic.Parent = SoundService
+local shopMusic = SoundService:FindFirstChild("ShopMusic_Internal")
+if not shopMusic then
+	shopMusic = makeSound(CONFIG.Audio.ShopMusic, 0.5, true)
+	shopMusic.Name = "ShopMusic_Internal"
+end
 
--- State Tracking
-local currentFadeTween = nil
-local hiddenGuis = {}
-local currentTab = "Common"
-local savedFOV = CONFIG.FOV.Default -- Variable to store user's FOV
+local function playSfx(soundObj)
+	if not soundObj then return end
+	if soundObj.IsPlaying then
+		local c = soundObj:Clone()
+		c.Parent = SoundService
+		c:Play()
+		game:GetService("Debris"):AddItem(c, 3)
+	else
+		soundObj:Play()
+	end
+end
 
--- 🖼️ BACKGROUNDS MAP
+-- Disable Roblox backpack
+pcall(function()
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+end)
+
+-- Tier backgrounds
 local tierBackgrounds = {}
 local tierNames = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic" }
-
 for _, rarity in ipairs(tierNames) do
 	local bgObj = mainWindow:FindFirstChild(rarity .. "BG")
 	if bgObj then
@@ -114,29 +117,18 @@ for _, rarity in ipairs(tierNames) do
 	end
 end
 
--- 📚 MODULE LOADING
+local currentTab = "Common"
+local savedFOV = camera.FieldOfView
+local hiddenGuis = {}
+local isOpen = false
+
+-- CarStats
 local CarStats = nil
-local success, err = pcall(function()
+pcall(function()
 	CarStats = require(ReplicatedStorage:WaitForChild("CarStats", 5))
 end)
-if not success then
-	warn("❌ CRITICAL: CarStats failed to load. Inventory will not function.")
-end
 
-pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false) end)
-
--- ============================================================================
--- 🛠️ HELPER FUNCTIONS
--- ============================================================================
-local function playSfx(soundId, volume)
-	local s = Instance.new("Sound")
-	s.SoundId = soundId
-	s.Volume = volume or 0.5
-	s.Parent = openButton
-	s:Play()
-	game.Debris:AddItem(s, 3)
-end
-
+-- Helpers
 local function getRarityColor(rarity)
 	local map = {
 		Common = Color3.fromRGB(180, 180, 180),
@@ -149,255 +141,406 @@ local function getRarityColor(rarity)
 	return map[rarity] or CONFIG.Colors.Normal
 end
 
-local function toggleOtherGuis(shouldHide)
-	local playerGui = player:WaitForChild("PlayerGui")
-	if shouldHide then
-		hiddenGuis = {}
-		for _, gui in pairs(playerGui:GetChildren()) do
-			if gui:IsA("ScreenGui") and gui ~= myScreenGui and gui.Enabled == true then
-				gui.Enabled = false
-				table.insert(hiddenGuis, gui)
-			end
-		end
-	else
-		for _, gui in pairs(hiddenGuis) do
-			if gui and gui.Parent then gui.Enabled = true end
-		end
-		hiddenGuis = {}
-	end
-end
-
--- ============================================================================
--- ⚡ ANIMATION ENGINE (Universal Glow)
--- ============================================================================
-local function ApplyUniversalGlow(textLabel, rarity)
-	-- Cleanup
-	for _, child in pairs(textLabel:GetChildren()) do
-		if child:IsA("UIGradient") or child:IsA("UIStroke") then child:Destroy() end
-	end
-
-	textLabel.TextColor3 = Color3.new(1, 1, 1)
-
-	-- Outline
-	local stroke = Instance.new("UIStroke", textLabel)
-	stroke.Thickness = 3
-	stroke.Color = Color3.new(0, 0, 0)
-
-	local gradient = Instance.new("UIGradient", textLabel)
-
-	-- Color Logic
-	if rarity == "Mythic" then
-		gradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255, 0, 0)),
-			ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 255, 0)),
-			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(0, 255, 0)),
-			ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0, 255, 255)),
-			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(0, 0, 255)),
-			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255, 0, 255))
-		})
-	elseif rarity == "Legendary" then
-		gradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255, 180, 50)),
-			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 240, 150)),
-			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255, 180, 50))
-		})
-		stroke.Color = Color3.fromRGB(100, 60, 0)
-	elseif rarity == "Epic" then
-		gradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(160, 50, 255)),
-			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(220, 100, 255))
-		})
-		stroke.Color = Color3.fromRGB(60, 0, 100)
-	elseif rarity == "Rare" then
-		gradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(0, 100, 255)),
-			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(100, 200, 255))
-		})
-	elseif rarity == "Uncommon" then
-		gradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(0, 180, 0)),
-			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(100, 255, 100))
-		})
-	else
-		-- Common
-		gradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(150, 150, 150)),
-			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(220, 220, 220))
-		})
-	end
-
-	-- Breathing Animation
-	task.spawn(function()
-		local speed = 3
-		while textLabel.Parent do
-			local t = tick()
-			local shimmer = 0.2 + 0.2 * math.sin(t * speed)
-			gradient.Transparency = NumberSequence.new(shimmer)
-			RunService.Heartbeat:Wait()
-		end
-	end)
-end
-
--- ============================================================================
--- 🎨 BUTTON INTERACTION
--- ============================================================================
-local function addButtonEffects(btn, scaleOnly)
-	local scale = btn:FindFirstChild("UIScale") or Instance.new("UIScale", btn)
-
-	if not UserInputService.TouchEnabled then
-		btn.MouseEnter:Connect(function()
-			playSfx(CONFIG.Audio.Hover, 0.3)
-			btn.ZIndex = 10
-			TweenService:Create(scale, TweenInfo.new(0.2), { Scale = 1.1 }):Play()
-
-			if not scaleOnly then
-				local goals = { BackgroundColor3 = CONFIG.Colors.Dim }
-
-				if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
-					goals.ImageColor3 = CONFIG.Colors.Dim
-				end
-
-				TweenService:Create(btn, TweenInfo.new(0.2), goals):Play()
-			end
-		end)
-
-		btn.MouseLeave:Connect(function()
-			btn.ZIndex = 1
-			TweenService:Create(scale, TweenInfo.new(0.2), { Scale = 1 }):Play()
-
-			if not scaleOnly then
-				local goals = { BackgroundColor3 = getRarityColor(btn.Name) }
-
-				if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
-					goals.ImageColor3 = CONFIG.Colors.Normal
-				end
-
-				TweenService:Create(btn, TweenInfo.new(0.2), goals):Play()
-			end
-		end)
-	end
-end
-
-local function addOpenButtonHover(btn)
-	if not UserInputService.TouchEnabled then
-		btn.MouseEnter:Connect(function()
-			playSfx(CONFIG.Audio.Hover, 0.3)
-			TweenService:Create(btn, TweenInfo.new(0.2), { ImageColor3 = CONFIG.Colors.Dim }):Play()
-		end)
-		btn.MouseLeave:Connect(function()
-			TweenService:Create(btn, TweenInfo.new(0.2), { ImageColor3 = CONFIG.Colors.Normal }):Play()
-		end)
-	end
-end
-
 local function updateBackground()
 	for rarityKey, bgObject in pairs(tierBackgrounds) do
 		bgObject.Visible = (rarityKey == currentTab)
 	end
 end
 
--- ============================================================================
--- 🎒 INVENTORY GENERATION (Always Show Count)
--- ============================================================================
-local function updateInventory()
-	for _, child in pairs(itemsContainer:GetChildren()) do
-		if child:IsA("GuiObject") and not child:IsA("UIListLayout") and not child:IsA("UIGridLayout") then
-			child:Destroy()
-		end
-	end
-
-	local inventoryData = {}
-
-	local function scan(loc)
-		if not loc then return end
-		for _, tool in pairs(loc:GetChildren()) do
-			if tool:IsA("Tool") and CarStats and CarStats.Cars then
-				local cleanName = nil
-				if CarStats.Cars[tool.Name] then
-					cleanName = tool.Name
-				elseif tool.Name:match(" Item$") then
-					cleanName = tool.Name:gsub(" Item", "")
-				elseif tool.Name:match("Item$") then
-					cleanName = tool.Name:gsub("Item", "")
-				end
-
-				if cleanName and CarStats.Cars[cleanName] then
-					if inventoryData[cleanName] then
-						inventoryData[cleanName].Count = inventoryData[cleanName].Count + 1
-					else
-						inventoryData[cleanName] = { Tool = tool, Count = 1 }
-					end
-				end
+local function toggleOtherGuis(shouldHide)
+	local playerGui = player:WaitForChild("PlayerGui")
+	if shouldHide then
+		hiddenGuis = {}
+		for _, gui in ipairs(playerGui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui ~= myScreenGui and gui.Enabled == true then
+				gui.Enabled = false
+				table.insert(hiddenGuis, gui)
 			end
 		end
+	else
+		for _, gui in ipairs(hiddenGuis) do
+			if gui and gui.Parent then gui.Enabled = true end
+		end
+		hiddenGuis = {}
+	end
+end
+
+-- Button effects
+local function addButtonEffects(btn, scaleOnly, getBaseBg)
+	local scale = btn:FindFirstChild("UIScale") or Instance.new("UIScale", btn)
+	local baseZ = btn.ZIndex
+
+	if UserInputService.TouchEnabled then return end
+
+	btn.MouseEnter:Connect(function()
+		playSfx(SFX.Hover)
+		btn.ZIndex = baseZ + 20
+		TweenService:Create(scale, TweenInfo.new(0.2), { Scale = 1.1 }):Play()
+
+		if not scaleOnly then
+			local goals = { BackgroundColor3 = CONFIG.Colors.Dim }
+			if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
+				goals.ImageColor3 = CONFIG.Colors.Dim
+			end
+			TweenService:Create(btn, TweenInfo.new(0.2), goals):Play()
+		end
+	end)
+
+	btn.MouseLeave:Connect(function()
+		btn.ZIndex = baseZ
+		TweenService:Create(scale, TweenInfo.new(0.2), { Scale = 1 }):Play()
+
+		if not scaleOnly then
+			local bg = getBaseBg and getBaseBg() or btn.BackgroundColor3
+			local goals = { BackgroundColor3 = bg }
+			if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
+				goals.ImageColor3 = CONFIG.Colors.Normal
+			end
+			TweenService:Create(btn, TweenInfo.new(0.2), goals):Play()
+		end
+	end)
+end
+
+local function addOpenButtonHover(btn)
+	if UserInputService.TouchEnabled then return end
+	if not btn:IsA("ImageButton") then return end
+
+	btn.MouseEnter:Connect(function()
+		playSfx(SFX.Hover)
+		TweenService:Create(btn, TweenInfo.new(0.2), { ImageColor3 = CONFIG.Colors.Dim }):Play()
+	end)
+	btn.MouseLeave:Connect(function()
+		TweenService:Create(btn, TweenInfo.new(0.2), { ImageColor3 = CONFIG.Colors.Normal }):Play()
+	end)
+end
+
+-- ========= EMPTY INDICATOR =========
+local EmptyFX = nil
+local function ensureEmptyFX()
+	if not emptyIndicatorLabel or EmptyFX then return end
+	if not emptyIndicatorLabel:IsA("TextLabel") then return end
+
+	local stroke = emptyIndicatorLabel:FindFirstChild("__EmptyStroke") or Instance.new("UIStroke")
+	stroke.Name = "__EmptyStroke"
+	stroke.Thickness = 3
+	stroke.LineJoinMode = Enum.LineJoinMode.Round
+	stroke.Parent = emptyIndicatorLabel
+
+	local grad = emptyIndicatorLabel:FindFirstChild("__EmptyGrad") or Instance.new("UIGradient")
+	grad.Name = "__EmptyGrad"
+	grad.Rotation = -20
+	grad.Parent = emptyIndicatorLabel
+
+	local shine = emptyIndicatorLabel:FindFirstChild("__EmptyShine") or Instance.new("Frame")
+	shine.Name = "__EmptyShine"
+	shine.BackgroundTransparency = 1
+	shine.Size = UDim2.new(1, 0, 1, 0)
+	shine.ZIndex = emptyIndicatorLabel.ZIndex + 2
+	shine.Parent = emptyIndicatorLabel
+
+	local shineGrad = shine:FindFirstChild("__EmptyShineGrad") or Instance.new("UIGradient")
+	shineGrad.Name = "__EmptyShineGrad"
+	shineGrad.Rotation = -35
+	shineGrad.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(1, 1, 1))
+	shineGrad.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0.00, 1.00),
+		NumberSequenceKeypoint.new(0.45, 1.00),
+		NumberSequenceKeypoint.new(0.50, 0.25),
+		NumberSequenceKeypoint.new(0.55, 1.00),
+		NumberSequenceKeypoint.new(1.00, 1.00),
+	})
+	shineGrad.Offset = Vector2.new(-1.2, 0)
+	shineGrad.Parent = shine
+
+	local shineTween = TweenService:Create(
+		shineGrad,
+		TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false),
+		{ Offset = Vector2.new(1.2, 0) }
+	)
+	shineTween:Play()
+
+	local shimmerTween = TweenService:Create(
+		grad,
+		TweenInfo.new(2.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+		{ Offset = Vector2.new(0.35, 0) }
+	)
+	shimmerTween:Play()
+
+	EmptyFX = { stroke = stroke, grad = grad, shine = shine }
+end
+
+local function styleEmptyIndicator(tierName)
+	if not emptyIndicatorLabel then return end
+	ensureEmptyFX()
+	if not EmptyFX then return end
+
+	local t = tierName or "Common"
+	local st = EmptyFX.stroke
+	local g = EmptyFX.grad
+
+	st.Color = Color3.new(0, 0, 0)
+	if t == "Mythic" then
+		g.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255, 0, 0)),
+			ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 255, 0)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(0, 255, 0)),
+			ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0, 255, 255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(0, 0, 255)),
+			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255, 0, 255)),
+		})
+	elseif t == "Legendary" then
+		g.Color = ColorSequence.new(Color3.fromRGB(255, 240, 165), Color3.fromRGB(255, 175, 55))
+	elseif t == "Epic" then
+		g.Color = ColorSequence.new(Color3.fromRGB(235, 180, 255), Color3.fromRGB(160, 70, 255))
+	elseif t == "Rare" then
+		g.Color = ColorSequence.new(Color3.fromRGB(175, 225, 255), Color3.fromRGB(40, 125, 255))
+	elseif t == "Uncommon" then
+		g.Color = ColorSequence.new(Color3.fromRGB(170, 255, 195), Color3.fromRGB(10, 190, 75))
+	else
+		g.Color = ColorSequence.new(Color3.fromRGB(245, 245, 245), Color3.fromRGB(165, 165, 165))
+	end
+end
+
+local function updateEmptyIndicator(tierName, isEmpty)
+	if not emptyIndicatorLabel then return end
+	if isEmpty then
+		emptyIndicatorLabel.Text = ("Your %s Stash is Empty"):format(tierName)
+		emptyIndicatorLabel.Visible = true
+		emptyIndicatorLabel.Active = false
+		styleEmptyIndicator(tierName)
+	else
+		emptyIndicatorLabel.Visible = false
+		emptyIndicatorLabel.Active = false
+	end
+end
+
+-- ========= INVENTORY TRACKING =========
+local toolToCleanName = {}
+local counts = {}
+local sampleTool = {}
+
+local function normalizeToolName(toolName)
+	if not CarStats or not CarStats.Cars then return nil end
+	if CarStats.Cars[toolName] then return toolName end
+
+	if toolName:match(" Item$") then
+		local n = toolName:gsub(" Item$", "")
+		if CarStats.Cars[n] then return n end
+	end
+	if toolName:match("Item$") then
+		local n = toolName:gsub("Item$", "")
+		if CarStats.Cars[n] then return n end
+	end
+	return nil
+end
+
+local function adjustCount(tool, delta)
+	if not tool or not tool:IsA("Tool") then return end
+	if not CarStats or not CarStats.Cars then return end
+
+	local clean = toolToCleanName[tool]
+	if not clean then
+		clean = normalizeToolName(tool.Name)
+		if not clean then return end
+		toolToCleanName[tool] = clean
 	end
 
-	scan(player:FindFirstChild("Backpack"))
-	scan(player.Character)
+	local newVal = (counts[clean] or 0) + delta
+	if newVal <= 0 then
+		counts[clean] = nil
+		sampleTool[clean] = nil
+	else
+		counts[clean] = newVal
+		if not sampleTool[clean] then
+			sampleTool[clean] = tool
+		end
+	end
+end
 
-	local renderedAnyInTab = false
+local function scanContainer(container)
+	if not container then return end
+	for _, child in ipairs(container:GetChildren()) do
+		if child:IsA("Tool") then
+			adjustCount(child, 1)
+		end
+	end
+end
 
-	for carName, data in pairs(inventoryData) do
-		local tool = data.Tool
-		local count = data.Count
+-- ========= UI POOL =========
+local poolFolder = Instance.new("Folder")
+poolFolder.Name = "__InventoryUIPool"
+poolFolder.Parent = myScreenGui
+
+local buttonPool = {}
+local activeButtons = {}
+local buttonCons = setmetatable({}, { __mode = "k" })
+
+local function disconnectButton(btn)
+	local cons = buttonCons[btn]
+	if cons then
+		for _, c in ipairs(cons) do
+			if c and c.Disconnect then c:Disconnect() end
+		end
+	end
+	buttonCons[btn] = nil
+end
+
+local function setGlow(label, rarity)
+	local stroke = label:FindFirstChild("__GlowStroke") or Instance.new("UIStroke")
+	stroke.Name = "__GlowStroke"
+	stroke.Thickness = 3
+	stroke.Color = Color3.new(0, 0, 0)
+	stroke.Parent = label
+
+	local grad = label:FindFirstChild("__GlowGrad") or Instance.new("UIGradient")
+	grad.Name = "__GlowGrad"
+	grad.Rotation = -20
+	grad.Parent = label
+
+	if rarity == "Mythic" then
+		grad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255, 0, 0)),
+			ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 255, 0)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(0, 255, 0)),
+			ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0, 255, 255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(0, 0, 255)),
+			ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255, 0, 255)),
+		})
+	elseif rarity == "Legendary" then
+		grad.Color = ColorSequence.new(Color3.fromRGB(255, 180, 50), Color3.fromRGB(255, 240, 150))
+		stroke.Color = Color3.fromRGB(100, 60, 0)
+	elseif rarity == "Epic" then
+		grad.Color = ColorSequence.new(Color3.fromRGB(160, 50, 255), Color3.fromRGB(220, 100, 255))
+		stroke.Color = Color3.fromRGB(60, 0, 100)
+	elseif rarity == "Rare" then
+		grad.Color = ColorSequence.new(Color3.fromRGB(0, 100, 255), Color3.fromRGB(100, 200, 255))
+	elseif rarity == "Uncommon" then
+		grad.Color = ColorSequence.new(Color3.fromRGB(0, 180, 0), Color3.fromRGB(100, 255, 100))
+	else
+		grad.Color = ColorSequence.new(Color3.fromRGB(150, 150, 150), Color3.fromRGB(220, 220, 220))
+	end
+
+	if not label:GetAttribute("__GlowTweened") then
+		label:SetAttribute("__GlowTweened", true)
+		grad.Offset = Vector2.new(-0.35, 0)
+		TweenService:Create(
+			grad,
+			TweenInfo.new(2.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+			{ Offset = Vector2.new(0.35, 0) }
+		):Play()
+	end
+end
+
+local function createItemButton()
+	local btn = Instance.new("TextButton")
+	btn.Name = "__ItemButton"
+	btn.Text = ""
+	btn.Size = UDim2.new(0, 100, 0, 120)
+	btn.AutoButtonColor = false
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = btn
+
+	local icon = Instance.new("ImageLabel")
+	icon.Name = "CarIcon"
+	icon.Parent = btn
+	icon.BackgroundTransparency = 1
+	icon.Size = UDim2.new(1, 0, 1, 0)
+	icon.Position = UDim2.new(0.5, 0, 0.5, 0)
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.ScaleType = Enum.ScaleType.Fit
+	icon.ZIndex = 1
+
+	local imgCorner = Instance.new("UICorner")
+	imgCorner.CornerRadius = UDim.new(0, 8)
+	imgCorner.Parent = icon
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Name = "CarName"
+	nameLabel.Parent = btn
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Size = UDim2.new(1, -4, 0.25, 0)
+	nameLabel.Position = UDim2.new(0.5, 0, 0.85, 0)
+	nameLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+	nameLabel.Font = Enum.Font.FredokaOne
+	nameLabel.TextScaled = true
+	nameLabel.ZIndex = 5
+	nameLabel.TextColor3 = Color3.new(1, 1, 1)
+
+	return btn
+end
+
+local function getPooledButton()
+	local btn = table.remove(buttonPool)
+	if not btn then
+		btn = createItemButton()
+	end
+	btn.Visible = true
+	btn.Parent = itemsContainer
+	return btn
+end
+
+local function releaseAllButtons()
+	for carName, btn in pairs(activeButtons) do
+		disconnectButton(btn)
+		btn.Parent = poolFolder
+		btn.Visible = false
+		activeButtons[carName] = nil
+	end
+end
+
+-- ========= RENDER UI =========
+local refreshQueued = false
+local function renderCurrentTab()
+	if not isOpen then return end
+	if not CarStats or not CarStats.Cars then
+		releaseAllButtons()
+		updateEmptyIndicator(currentTab, true)
+		return
+	end
+
+	releaseAllButtons()
+
+	local renderedAny = false
+	local char = player.Character
+
+	for carName, count in pairs(counts) do
 		local stats = CarStats.Cars[carName]
-
 		if stats and stats.Rarity == currentTab then
-			renderedAnyInTab = true
+			renderedAny = true
 
-			local btn = Instance.new("TextButton")
-			btn.Name = stats.Rarity
-			btn.Text = ""
-			btn.Parent = itemsContainer
-			btn.Size = UDim2.new(0, 100, 0, 120)
-			btn.BackgroundColor3 = getRarityColor(stats.Rarity)
-			btn.AutoButtonColor = false
+			local tool = sampleTool[carName]
+			local btn = getPooledButton()
+			activeButtons[carName] = btn
 
-			local corner = Instance.new("UICorner")
-			corner.CornerRadius = UDim.new(0, 8)
-			corner.Parent = btn
+			local rarity = stats.Rarity
+			local baseBg = getRarityColor(rarity)
+			btn.BackgroundColor3 = baseBg
 
-			local icon = Instance.new("ImageLabel")
-			icon.Name = "CarIcon"
-			icon.Parent = btn
-			icon.BackgroundTransparency = 1
-			icon.Size = UDim2.new(1, 0, 1, 0)
-			icon.Position = UDim2.new(0.5, 0, 0.5, 0)
-			icon.AnchorPoint = Vector2.new(0.5, 0.5)
-			icon.ScaleType = Enum.ScaleType.Fit
-			icon.ZIndex = 1
+			local icon = btn:FindFirstChild("CarIcon")
+			local nameLabel = btn:FindFirstChild("CarName")
 
-			local imgCorner = Instance.new("UICorner")
-			imgCorner.CornerRadius = UDim.new(0, 8)
-			imgCorner.Parent = icon
-
-			if stats.Image and stats.Image ~= "" then
-				icon.Image = stats.Image
-			elseif tool.TextureId and tool.TextureId ~= "" then
-				icon.Image = tool.TextureId
-			else
-				icon.Image = CONFIG.Images.Default
+			if icon and icon:IsA("ImageLabel") then
+				if stats.Image and stats.Image ~= "" then
+					icon.Image = stats.Image
+				elseif tool and tool.TextureId and tool.TextureId ~= "" then
+					icon.Image = tool.TextureId
+				else
+					icon.Image = CONFIG.Images.Default
+				end
 			end
 
-			local nameLabel = Instance.new("TextLabel")
-			nameLabel.Name = "CarName"
-			nameLabel.Parent = btn
-			nameLabel.BackgroundTransparency = 1
-			nameLabel.Size = UDim2.new(1, -4, 0.25, 0)
-			nameLabel.Position = UDim2.new(0.5, 0, 0.85, 0)
-			nameLabel.AnchorPoint = Vector2.new(0.5, 0.5)
-			nameLabel.Text = carName
-			nameLabel.Font = Enum.Font.FredokaOne
-			nameLabel.TextScaled = true
-			nameLabel.ZIndex = 5
+			if nameLabel and nameLabel:IsA("TextLabel") then
+				nameLabel.Text = carName
+				setGlow(nameLabel, rarity)
+			end
 
-			ApplyUniversalGlow(nameLabel, stats.Rarity)
-
-			if count >= 1 then
-				local countTag = Instance.new("TextLabel")
+			local countTag = btn:FindFirstChild("MultiplierCount")
+			if not countTag then
+				countTag = Instance.new("TextLabel")
 				countTag.Name = "MultiplierCount"
 				countTag.Parent = btn
-				countTag.Text = "x" .. count
 				countTag.Size = UDim2.new(0.35, 0, 0.25, 0)
 				countTag.Position = UDim2.new(0.95, 0, 0.05, 0)
 				countTag.AnchorPoint = Vector2.new(1, 0)
@@ -407,107 +550,206 @@ local function updateInventory()
 				countTag.Font = Enum.Font.FredokaOne
 				countTag.TextScaled = true
 				countTag.ZIndex = 6
-
-				local countCorner = Instance.new("UICorner")
-				countCorner.CornerRadius = UDim.new(0, 6)
-				countCorner.Parent = countTag
+				Instance.new("UICorner", countTag).CornerRadius = UDim.new(0, 6)
 			end
+			countTag.Text = "x" .. tostring(count)
+			countTag.Visible = true
 
-			local isEquipped = false
-			local charTool = player.Character:FindFirstChild(tool.Name)
-			if charTool then isEquipped = true end
+			local equipped = (char and char:FindFirstChild((tool and tool.Name) or carName)) ~= nil
+			local existingStroke = btn:FindFirstChild("__EquippedStroke")
+			local existingTag = btn:FindFirstChild("__EquippedTag")
 
-			if isEquipped then
-				local stroke = Instance.new("UIStroke")
-				stroke.Color = CONFIG.Colors.Gold
-				stroke.Thickness = 4
-				stroke.Parent = btn
-
-				local equippedTag = nameLabel:Clone()
-				equippedTag.Parent = btn
-				equippedTag.Text = "EQUIPPED"
-				equippedTag.TextColor3 = CONFIG.Colors.Gold
-				equippedTag.Position = UDim2.new(0.5, 0, 0.5, 0)
-				equippedTag.Rotation = -15
-				equippedTag.ZIndex = 7
-
-				for _, c in pairs(equippedTag:GetChildren()) do
-					if c:IsA("UIGradient") then c:Destroy() end
+			if equipped then
+				if not existingStroke then
+					local stroke = Instance.new("UIStroke")
+					stroke.Name = "__EquippedStroke"
+					stroke.Color = CONFIG.Colors.Gold
+					stroke.Thickness = 4
+					stroke.Parent = btn
 				end
-			end
-
-			addButtonEffects(btn, false)
-
-			btn.MouseButton1Click:Connect(function()
-				playSfx(CONFIG.Audio.Equip, 0.5)
-				local char = player.Character
-				if not char then return end
-
-				local existingTool = char:FindFirstChild(tool.Name)
-				if existingTool then
-					existingTool.Parent = player.Backpack
-				else
-					if tool.Parent == player.Backpack then
-						for _, object in pairs(char:GetChildren()) do
-							if object:IsA("Tool") then
-								object.Parent = player.Backpack
-							end
-						end
-						tool.Parent = char
+				if nameLabel and not existingTag then
+					local tag = nameLabel:Clone()
+					tag.Name = "__EquippedTag"
+					tag.Parent = btn
+					tag.Text = "EQUIPPED"
+					tag.TextColor3 = CONFIG.Colors.Gold
+					tag.Position = UDim2.new(0.5, 0, 0.5, 0)
+					tag.Rotation = -15
+					tag.ZIndex = 7
+					for _, c in ipairs(tag:GetChildren()) do
+						if c:IsA("UIGradient") then c:Destroy() end
 					end
 				end
-				updateInventory()
-			end)
+			else
+				if existingStroke then existingStroke:Destroy() end
+				if existingTag then existingTag:Destroy() end
+			end
+
+			addButtonEffects(btn, false, function() return baseBg end)
+
+			local cons = {}
+			buttonCons[btn] = cons
+			table.insert(cons, btn.MouseButton1Click:Connect(function()
+				playSfx(SFX.Equip)
+
+				local charNow = player.Character
+				if not charNow then return end
+				local currentBp = player:FindFirstChild("Backpack")
+				if not currentBp then return end
+
+				local moveTool = currentBp:FindFirstChild((tool and tool.Name) or carName) or charNow:FindFirstChild((tool and tool.Name) or carName)
+				if not moveTool or not moveTool:IsA("Tool") then return end
+
+				if moveTool.Parent == charNow then
+					moveTool.Parent = currentBp
+				else
+					for _, obj in ipairs(charNow:GetChildren()) do
+						if obj:IsA("Tool") then
+							obj.Parent = currentBp
+						end
+					end
+					moveTool.Parent = charNow
+				end
+
+				if not refreshQueued then
+					refreshQueued = true
+					task.defer(function()
+						refreshQueued = false
+						renderCurrentTab()
+					end)
+				end
+			end))
 		end
 	end
 
-	updateEmptyIndicator(currentTab, not renderedAnyInTab)
+	updateEmptyIndicator(currentTab, not renderedAny)
 end
 
--- ============================================================================
--- 🟢 UI CONTROL LOGIC (FIXED CAMERA RETURN)
--- ============================================================================
+local function scheduleRender()
+	if not isOpen then return end
+	if refreshQueued then return end
+	refreshQueued = true
+	task.defer(function()
+		refreshQueued = false
+		renderCurrentTab()
+	end)
+end
+
+-- ========= CRITICAL FIX: BACKPACK HOOKING =========
+local currentBackpack = player:WaitForChild("Backpack")
+local bpConnections = {} -- track connections to disconnect later
+
+local function bindContainer(container)
+	local conns = {}
+	
+	table.insert(conns, container.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			adjustCount(child, 1)
+			scheduleRender()
+		end
+	end))
+
+	table.insert(conns, container.ChildRemoved:Connect(function(child)
+		if child:IsA("Tool") then
+			adjustCount(child, -1)
+			scheduleRender()
+		end
+	end))
+	
+	return conns
+end
+
+-- Hook initial backpack
+bpConnections = bindContainer(currentBackpack)
+
+local function onCharacter(char)
+	-- Hook character (tools held in hand)
+	scanContainer(char)
+	local charConnections = bindContainer(char)
+	
+	-- When char dies, clean up char connections
+	local deathConn
+	deathConn = char.Humanoid.Died:Connect(function()
+		for _, c in ipairs(charConnections) do c:Disconnect() end
+		if deathConn then deathConn:Disconnect() end
+	end)
+	
+	scheduleRender()
+end
+
+-- Handle Respawn Logic
+player.CharacterAdded:Connect(function(char)
+	-- 1. Reset Data
+	toolToCleanName = {}
+	counts = {}
+	sampleTool = {}
+
+	-- 2. Switch to NEW Backpack
+	currentBackpack = player:WaitForChild("Backpack")
+	
+	-- Clean old backpack connections
+	for _, c in ipairs(bpConnections) do c:Disconnect() end
+	
+	-- Bind new backpack
+	bpConnections = bindContainer(currentBackpack)
+	scanContainer(currentBackpack)
+
+	-- 3. Handle Character
+	task.defer(function()
+		scanContainer(char)
+		onCharacter(char)
+		scheduleRender()
+	end)
+end)
+
+-- Initial run
+scanContainer(currentBackpack)
+if player.Character then onCharacter(player.Character) end
+
+-- ========= UI ACTIONS =========
 local function performClose()
+	isOpen = false
 	mainWindow.Visible = false
 	tierFrame.Visible = false
 	openButton.Visible = true
 
 	Controls:Enable()
-
 	player.CameraMinZoomDistance = CONFIG.Zoom.Min
 	player.CameraMaxZoomDistance = CONFIG.Zoom.Max
 
 	toggleOtherGuis(false)
-
 	TweenService:Create(camera, CONFIG.Tween, { FieldOfView = savedFOV }):Play()
 
 	if shopMusic.IsPlaying then
-		currentFadeTween = TweenService:Create(shopMusic, TweenInfo.new(1), { Volume = 0 })
-		currentFadeTween:Play()
-		currentFadeTween.Completed:Connect(function()
+		local fade = TweenService:Create(shopMusic, TweenInfo.new(1), { Volume = 0 })
+		fade:Play()
+		fade.Completed:Connect(function()
 			shopMusic:Stop()
+			shopMusic.Volume = 0.5
 			if gameThemeSound then gameThemeSound:Resume() end
 		end)
 	end
 end
 
 closeButton.MouseButton1Click:Connect(function()
-	playSfx(CONFIG.Audio.Click, 0.5)
+	playSfx(SFX.Click)
 	performClose()
 end)
 
 openButton.MouseButton1Click:Connect(function()
-	playSfx(CONFIG.Audio.Click, 0.5)
+	playSfx(SFX.Click)
 
 	savedFOV = camera.FieldOfView
+	isOpen = true
 
 	if gameThemeSound and gameThemeSound.IsPlaying then gameThemeSound:Pause() end
-	shopMusic.Volume = 0.5
-	if not shopMusic.IsPlaying then shopMusic:Play() end
+	if not shopMusic.IsPlaying then
+		shopMusic.Volume = 0.5
+		shopMusic:Play()
+	end
 
 	toggleOtherGuis(true)
 	currentTab = "Common"
-	updateInventory()
 	updateBackground()
 
 	Controls:Disable()
@@ -520,235 +762,28 @@ openButton.MouseButton1Click:Connect(function()
 	openButton.Visible = false
 
 	TweenService:Create(camera, CONFIG.Tween, { FieldOfView = CONFIG.FOV.Open }):Play()
+
+	-- Render UI now (fast)
+	renderCurrentTab()
 end)
 
 addOpenButtonHover(openButton)
-addButtonEffects(closeButton, false)
+addButtonEffects(closeButton, false, function() return closeButton.BackgroundColor3 end)
 
 if tierContainer then
-	for _, btn in pairs(tierContainer:GetChildren()) do
+	for _, btn in ipairs(tierContainer:GetChildren()) do
 		if btn:IsA("GuiButton") then
 			addButtonEffects(btn, true)
 			btn.MouseButton1Click:Connect(function()
 				if btn.Name == "Mythic" then
-					playSfx(CONFIG.Audio.Mythic, 1)
+					playSfx(SFX.Mythic)
 				else
-					playSfx(CONFIG.Audio.Click, 0.5)
+					playSfx(SFX.Click)
 				end
 				currentTab = btn.Name
 				updateBackground()
-				updateInventory()
+				renderCurrentTab()
 			end)
 		end
 	end
-end
-
--- ✅ FINAL: PASTE THIS AT THE VERY BOTTOM (SCOPED: ONLY InventoryWindow > Indicator-v2)
--- ✅ Removes label background edits + removes shadow label (no text covering)
-do
-	if not mainWindow then return end
-	local indicator = mainWindow:FindFirstChild("Indicator-v2", true)
-	if not indicator or not indicator:IsA("TextLabel") then return end
-
-	-- Names for ONLY what we add (won't touch anything else)
-	local TAG = "__InvEmptyFX"
-	local STROKE_NAME = TAG .. "_Stroke"
-	local TEXTGRAD_NAME = TAG .. "_TextGrad"
-	local SCALE_NAME = TAG .. "_Scale"
-	local SHINE_NAME = TAG .. "_Shine"
-	local SHINEGRAD_NAME = TAG .. "_ShineGrad"
-
-	local function getOrMake(className, parent, name)
-		local obj = parent:FindFirstChild(name)
-		if obj and obj.ClassName == className then return obj end
-		if obj then obj:Destroy() end
-		obj = Instance.new(className)
-		obj.Name = name
-		obj.Parent = parent
-		return obj
-	end
-
-	-- Tier aesthetic palette (NO background colors touched)
-	local function tierStyle(tier)
-		local map = {
-			Common = {
-				textGrad = ColorSequence.new(Color3.fromRGB(245, 245, 245), Color3.fromRGB(165, 165, 165)),
-				stroke = Color3.fromRGB(10, 10, 10),
-				glow = Color3.fromRGB(255, 255, 255),
-			},
-			Uncommon = {
-				textGrad = ColorSequence.new(Color3.fromRGB(170, 255, 195), Color3.fromRGB(10, 190, 75)),
-				stroke = Color3.fromRGB(0, 60, 20),
-				glow = Color3.fromRGB(160, 255, 200),
-			},
-			Rare = {
-				textGrad = ColorSequence.new(Color3.fromRGB(175, 225, 255), Color3.fromRGB(40, 125, 255)),
-				stroke = Color3.fromRGB(0, 35, 85),
-				glow = Color3.fromRGB(170, 220, 255),
-			},
-			Epic = {
-				textGrad = ColorSequence.new(Color3.fromRGB(235, 180, 255), Color3.fromRGB(160, 70, 255)),
-				stroke = Color3.fromRGB(55, 0, 90),
-				glow = Color3.fromRGB(235, 190, 255),
-			},
-			Legendary = {
-				textGrad = ColorSequence.new(Color3.fromRGB(255, 240, 165), Color3.fromRGB(255, 175, 55)),
-				stroke = Color3.fromRGB(90, 45, 0),
-				glow = Color3.fromRGB(255, 235, 160),
-			},
-			Mythic = {
-				textGrad = ColorSequence.new({
-					ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255, 90, 90)),
-					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 245, 140)),
-					ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255, 90, 255)),
-				}),
-				stroke = Color3.fromRGB(60, 0, 0),
-				glow = Color3.fromRGB(255, 200, 255),
-			},
-		}
-		return map[tier] or map.Common
-	end
-
-	local function tierFromText(txt)
-		return (string.match(txt or "", "^Your%s+(%w+)%s+Stash%s+is%s+Empty")) or currentTab or "Common"
-	end
-
-	-- ✅ remove old shadow if it exists (from previous versions)
-	local oldShadow = indicator:FindFirstChild(TAG .. "_Shadow")
-	if oldShadow and oldShadow:IsA("TextLabel") then
-		oldShadow:Destroy()
-	end
-
-	-- Core FX objects (ONLY under indicator)
-	local stroke = getOrMake("UIStroke", indicator, STROKE_NAME)
-	stroke.LineJoinMode = Enum.LineJoinMode.Round
-	stroke.Thickness = 3
-	stroke.Transparency = 0.05
-
-	local textGrad = getOrMake("UIGradient", indicator, TEXTGRAD_NAME)
-	textGrad.Rotation = -20
-
-	local scale = getOrMake("UIScale", indicator, SCALE_NAME)
-
-	-- Glass shine overlay
-	local shine = getOrMake("Frame", indicator, SHINE_NAME)
-	shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	shine.BackgroundTransparency = 1
-	shine.Size = UDim2.new(1, 0, 1, 0)
-	shine.Position = UDim2.new(0, 0, 0, 0)
-	shine.Visible = true
-
-	-- copy corner if label has it (optional)
-	local existingCorner = indicator:FindFirstChildOfClass("UICorner")
-	if existingCorner and not shine:FindFirstChildOfClass("UICorner") then
-		existingCorner:Clone().Parent = shine
-	end
-
-	local shineGrad = getOrMake("UIGradient", shine, SHINEGRAD_NAME)
-	shineGrad.Rotation = -35
-	shineGrad.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 255, 255))
-	shineGrad.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0.00, 1.00),
-		NumberSequenceKeypoint.new(0.35, 1.00),
-		NumberSequenceKeypoint.new(0.48, 0.25),
-		NumberSequenceKeypoint.new(0.52, 0.25),
-		NumberSequenceKeypoint.new(0.65, 1.00),
-		NumberSequenceKeypoint.new(1.00, 1.00),
-	})
-
-	-- ZIndex safety (ONLY affects indicator + shine, not TierFrame)
-	local function enforceZ()
-		indicator.ZIndex = math.max(indicator.ZIndex or 1, (mainWindow.ZIndex or 1) + 200)
-		shine.ZIndex = indicator.ZIndex + 2
-	end
-
-	-- Animation control
-	local pulseConn = nil
-	local running = false
-
-	local function stopAnim()
-		running = false
-		if pulseConn then pulseConn:Disconnect() pulseConn = nil end
-		shine.BackgroundTransparency = 1
-	end
-
-	local function startAnim()
-		if running then return end
-		running = true
-
-		-- pop-in (scale + fade) - text only, no shadow
-		scale.Scale = 0.92
-		indicator.TextTransparency = 0.35
-		TweenService:Create(scale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-		TweenService:Create(indicator, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = 0 }):Play()
-
-		-- subtle breathing + moving shine sweep
-		local t0 = tick()
-		pulseConn = RunService.Heartbeat:Connect(function()
-			if not indicator.Visible then return end
-			enforceZ()
-
-			local t = tick() - t0
-
-			-- shimmer in text gradient
-			local shimmer = 0.12 + 0.10 * math.sin(t * 2.2)
-			textGrad.Transparency = NumberSequence.new({
-				NumberSequenceKeypoint.new(0, shimmer),
-				NumberSequenceKeypoint.new(1, shimmer + 0.04),
-			})
-
-			-- glass shine sweep across the label
-			shine.BackgroundTransparency = 0.88
-			local sweep = (t * 0.55) % 1
-			shineGrad.Offset = Vector2.new(-1.2 + sweep * 2.4, 0)
-
-			-- tiny glow pulse via stroke thickness
-			stroke.Thickness = 2.6 + 0.9 * (0.5 + 0.5 * math.sin(t * 2.2))
-		end)
-	end
-
-	local function applyTierLook()
-		local tier = tierFromText(indicator.Text)
-		local st = tierStyle(tier)
-
-		-- IMPORTANT: do NOT touch BackgroundTransparency/BackgroundColor3 (your request)
-		stroke.Color = Color3.fromRGB(
-			math.floor((st.stroke.R * 255 + st.glow.R * 255 * 0.25) / 1.25),
-			math.floor((st.stroke.G * 255 + st.glow.G * 255 * 0.25) / 1.25),
-			math.floor((st.stroke.B * 255 + st.glow.B * 255 * 0.25) / 1.25)
-		)
-		textGrad.Color = st.textGrad
-	end
-
-	local function refresh()
-		enforceZ()
-		indicator.Active = false -- your rule
-		applyTierLook()
-
-		if indicator.Visible then
-			startAnim()
-		else
-			stopAnim()
-		end
-	end
-
-	-- React ONLY to this label
-	indicator:GetPropertyChangedSignal("Visible"):Connect(refresh)
-	indicator:GetPropertyChangedSignal("Text"):Connect(refresh)
-	indicator:GetPropertyChangedSignal("ZIndex"):Connect(enforceZ)
-
-	-- Update tier colors even if text doesn't change (tier switching)
-	task.spawn(function()
-		local last = nil
-		while indicator.Parent do
-			if currentTab ~= last then
-				last = currentTab
-				applyTierLook()
-			end
-			task.wait(0.05)
-		end
-	end)
-
-	-- initial
-	refresh()
 end
