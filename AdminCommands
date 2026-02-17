@@ -54,7 +54,6 @@ CarTools.ChildAdded:Connect(function() ToolCache = nil end)
 local function matchTool(query)
 	local target = getCleanID(query)
 	local bestMatch = nil
-	local exactMatch = false
 
 	for _, tool in pairs(getAllTools()) do
 		local id = getCleanID(tool.Name)
@@ -231,6 +230,22 @@ Players.PlayerAdded:Connect(function(player)
 			if not selector or itemName == "" then return end
 
 			local targets = getTargets(player, selector)
+			
+			-- ✅ SPECIAL LOGIC: /give [player] all
+			if itemName:lower() == "all" then
+				local allTools = getAllTools()
+				for _, t in pairs(targets) do
+					local count = 0
+					for _, tool in pairs(allTools) do
+						local success, _ = Action_Give(t, tool, false)
+						if success then count = count + 1 end
+					end
+					print(string.format("🎁 [Admin] Given %d NEW items to %s", count, t.Name))
+				end
+				return -- Stop here so we don't run the single item match
+			end
+
+			-- Normal Single Item Logic
 			local tool = matchTool(itemName)
 
 			if not tool then
