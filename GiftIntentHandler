@@ -1,22 +1,42 @@
--- [[ SERVER SCRIPT: GiftIntentHandler ]]
--- Purpose: Remembers who a player wants to gift.
+-- [[ SERVER SCRIPT: GiftIntentHandler (FIXED) ]]
+-- Purpose: Remembers who a player wants to gift AND creates the necessary Remotes.
+-- Runs on: Server
 -- Location: ServerScriptService
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
-local Remotes = ReplicatedStorage:WaitForChild("GiftRemotes")
-local SetIntentEvent = Remotes:WaitForChild("SetGiftIntent")
+-- 🛠️ FIX: Auto-Create Remotes to prevent "Deadlock"
+-- (We use FindFirstChild or Instance.new so we don't wait forever)
+local Remotes = ReplicatedStorage:FindFirstChild("GiftRemotes") 
+if not Remotes then
+	Remotes = Instance.new("Folder")
+	Remotes.Name = "GiftRemotes"
+	Remotes.Parent = ReplicatedStorage
+	print("✅ GiftIntentHandler: Created 'GiftRemotes' folder")
+end
+
+local SetIntentEvent = Remotes:FindFirstChild("SetGiftIntent")
+if not SetIntentEvent then
+	SetIntentEvent = Instance.new("RemoteEvent")
+	SetIntentEvent.Name = "SetGiftIntent"
+	SetIntentEvent.Parent = Remotes
+	print("✅ GiftIntentHandler: Created 'SetGiftIntent' RemoteEvent")
+end
 
 -- 🗄️ STORAGE: { [BuyerUserId] = ReceiverUserId }
 local pendingGifts = {}
 
 -- 📡 LISTEN FOR INTENT
 SetIntentEvent.OnServerEvent:Connect(function(buyer, receiverUserId)
-	-- Basic Validation
+	-- Security: Validate Input Type
 	if typeof(receiverUserId) == "number" then
+		-- Optional: Check if receiver actually exists in game (if you only want to gift present players)
+		-- For now, we allow offline gifting intent if your system supports it.
 		print("🎁 Gift Intent Set: " .. buyer.Name .. " wants to gift UserID: " .. receiverUserId)
 		pendingGifts[buyer.UserId] = receiverUserId
+	else
+		warn("⚠️ Invalid Gift Intent from " .. buyer.Name .. ": ReceiverID is not a number.")
 	end
 end)
 
@@ -26,12 +46,17 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 -- 🔒 EXPOSE DATA TO RECEIPT ROUTER
--- We use a Module pattern or _G so ReceiptRouter can read this table
+-- We use _G so ReceiptRouter can read this table without a circular dependency
 _G.GetGiftReceiver = function(buyerUserId)
 	local receiverId = pendingGifts[buyerUserId]
 
 	-- Important: Clear the intent immediately after reading so next purchase isn't accidental
-	pendingGifts[buyerUserId] = nil 
+	if receiverId then
+		pendingGifts[buyerUserId] = nil 
+		print("✅ _G.GetGiftReceiver: Retrieved & Cleared intent for Buyer " .. buyerUserId)
+	end
 
 	return receiverId
 end
+
+print("🟢 GiftIntentHandler: Loaded & Ready")
