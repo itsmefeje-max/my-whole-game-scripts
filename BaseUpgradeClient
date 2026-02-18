@@ -1,5 +1,5 @@
--- [[ LOCAL SCRIPT: BaseUpgradeClient (ADDED SILVER) ]]
--- Purpose: Shop UI, Feedback, Sounds, and EQUIP/UNEQUIP Logic for Silver, Gold, Diamond & Rainbow.
+-- [[ LOCAL SCRIPT: BaseUpgradeClient (FINAL - WITH GIFTING) ]]
+-- Purpose: Shop UI, Feedback, Sounds, EQUIP/UNEQUIP, and GIFTING connection.
 -- Location: StarterPlayerScripts
 
 local Players = game:GetService("Players")
@@ -39,7 +39,7 @@ local Sounds = {}
 local SFX_IDs = {
 	Success = "rbxassetid://2619623062", 
 	Fail = "rbxassetid://1526487928",
-	Equip = "rbxassetid://6895079853" -- Added subtle pop for equip
+	Equip = "rbxassetid://6895079853" 
 }
 
 -- Create sounds once at startup
@@ -213,7 +213,7 @@ local function setMovement(active)
 end
 
 -- ============================================================================
--- 🛍️ CARD LOGIC (BUY / EQUIP / UNEQUIP)
+-- 🛍️ CARD LOGIC (BUY / EQUIP / UNEQUIP / GIFT)
 -- ============================================================================
 
 local function UpdateCardVisuals(cardFrame, skinName)
@@ -224,7 +224,6 @@ local function UpdateCardVisuals(cardFrame, skinName)
 	local btnRobux = buyFrame:FindFirstChild("BuyForRobux")
 	local obtainedIndicator = buyFrame:FindFirstChild("ObtainedIndicator")
 
-	-- ✅ NEW BUTTONS
 	local btnEquip = buyFrame:FindFirstChild("Equip")
 	local btnUnequip = buyFrame:FindFirstChild("Unequip")
 
@@ -323,6 +322,26 @@ local function ConnectCard(cardFrame, skinName)
 		if Kit and Kit.Tween then Kit.Tween:SetupButton(btnUnequip, onUnequip)
 		else btnUnequip.MouseButton1Click:Connect(onUnequip) end
 	end
+
+	-- 5. 🎁 GIFT BUTTON (NEW INTEGRATION)
+	local btnGift = cardFrame:FindFirstChild("GiftButton")
+	if btnGift then
+		btnGift.MouseButton1Click:Connect(function()
+			-- A. Get the Stats for this card
+			local skinData = BaseSkinStats[skinName]
+
+			if skinData and skinData.ProductId then
+				-- B. Call the Global Gift Function (defined in GiftUIController)
+				if _G.OpenGiftMenu then
+					_G.OpenGiftMenu(skinData.ProductId)
+				else
+					warn("⚠️ Gift Controller hasn't loaded yet. Wait a moment.")
+				end
+			else
+				warn("❌ No Product ID found for " .. skinName)
+			end
+		end)
+	end
 end
 
 local function SetupShop()
@@ -331,7 +350,7 @@ local function SetupShop()
 	local scroller = gui:FindFirstChild(SCROLLER_NAME, true) 
 	if not scroller then return end 
 
-	-- 🥈 CARD 0.1: SILVER (NEW)
+	-- 🥈 CARD 0.1: SILVER
 	local cardSilver = scroller:FindFirstChild("Card0.1")
 	if cardSilver then ConnectCard(cardSilver, "Silver") end
 
@@ -343,7 +362,7 @@ local function SetupShop()
 	local card2 = scroller:FindFirstChild("Card2")
 	if card2 then ConnectCard(card2, "Diamond") end
 
-	-- 🌈 CARD 3: RAINBOW (NEW)
+	-- 🌈 CARD 3: RAINBOW
 	local card3 = scroller:FindFirstChild("Card3")
 	if card3 then ConnectCard(card3, "Rainbow") end
 end
