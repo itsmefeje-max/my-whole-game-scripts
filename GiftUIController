@@ -1,0 +1,165 @@
+-- [[ LOCAL SCRIPT: GiftUIController (STATIC SLOT VERSION) ]]
+-- Purpose: Handles 5 Static Slots, Gifting Logic, and Indicator Feedback.
+-- Location: StarterPlayerScripts
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- 📡 REMOTES
+local Remotes = ReplicatedStorage:WaitForChild("GiftRemotes")
+local SetIntentEvent = Remotes:WaitForChild("SetGiftIntent")
+
+-- ⚙️ STATE
+local currentProductId = nil
+local currentTargetName = "" -- Stores who we are currently trying to gift
+local mainFrame = nil
+
+-- ============================================================================
+-- 🎨 ANIMATIONS & VISUALS
+-- ============================================================================
+local function SetIndicator(msg, color)
+	if mainFrame then
+		local indicator = mainFrame:FindFirstChild("Indicator")
+		if indicator then
+			indicator.Text = msg
+			indicator.TextColor3 = color
+			indicator.Visible = true
+		end
+	end
+end
+
+local function ResetIndicator()
+	if mainFrame then
+		local indicator = mainFrame:FindFirstChild("Indicator")
+		if indicator then
+			indicator.Text = "" -- Clear text
+			indicator.Visible = false
+		end
+	end
+end
+
+local function AnimateHover(btn, isHovering)
+	local targetColor = isHovering and Color3.fromRGB(200, 200, 200) or Color3.fromRGB(255, 255, 255)
+	TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = targetColor}):Play()
+end
+
+-- ============================================================================
+-- 🔄 UI REFRESH LOGIC (THE SLOT SYSTEM)
+-- ============================================================================
+local function UpdateSlots()
+	if not mainFrame then return end
+
+	-- 1. Find all eligible players (Everyone except ME)
+	local validPlayers = {}
+	for _, p in pairs(Players:GetPlayers()) do
+		if p ~= player then
+			table.insert(validPlayers, p)
+		end
+	end
+
+	-- 2. Loop through Static Slots (Player1 -> Player5)
+	for i = 1, 5 do
+		local slotName = "Player" .. i
+		local slotFrame = mainFrame:FindFirstChild(slotName)
+
+		if slotFrame then
+			local target = validPlayers[i]
+
+			if target then
+				-- ✅ PLAYER FOUND: SHOW SLOT
+				slotFrame.Visible = true
+
+				local nameLbl = slotFrame:FindFirstChild("PlayerName")
+				local avatarImg = slotFrame:FindFirstChild("PlayerAvatar")
+				local giftBtn = slotFrame:FindFirstChild("GiftThePlayer")
+
+				-- Update Info
+				if nameLbl then nameLbl.Text = target.Name end
+				if avatarImg then 
+					avatarImg.Image = "rbxthumb://type=AvatarHeadShot&id=" .. target.UserId .. "&w=150&h=150"
+				end
+
+				-- Connect Button
+				if giftBtn then
+					-- Clear old connections (Simple overwrite via variable capability is tricky in Lua, 
+					-- so we clone the button to wipe events or use a debounce. 
+					-- For safety here, we assume the menu re-opens fresh.)
+
+					-- Hover
+					giftBtn.MouseEnter:Connect(function() AnimateHover(giftBtn, true) end)
+					giftBtn.MouseLeave:Connect(function() AnimateHover(giftBtn, false) end)
+
+					-- CLICK TO GIFT
+					giftBtn.MouseButton1Click:Connect(function()
+						if currentProductId then
+							-- 1. Save Target Name for the Indicator
+							currentTargetName = target.Name
+
+							-- 2. Tell Server Intent
+							SetIntentEvent:FireServer(target.UserId)
+
+							-- 3. Prompt Purchase
+							MarketplaceService:PromptProductPurchase(player, currentProductId)
+						end
+					end)
+				end
+			else
+				-- ❌ NO PLAYER: HIDE SLOT
+				slotFrame.Visible = false
+			end
+		end
+	end
+end
+
+-- ============================================================================
+-- 🧾 PURCHASE FEEDBACK (INDICATOR LOGIC)
+-- ============================================================================
+MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
+	if userId ~= player.UserId then return end
+	if not mainFrame or not mainFrame.Visible then return end
+
+	-- Check if this was the item we were gifting
+	if productId == currentProductId then
+		if isPurchased then
+			-- ✅ SUCCESS
+			SetIndicator("Gift successfully sent to " .. currentTargetName, Color3.fromRGB(85, 255, 127)) -- Green
+		else
+			-- ❌ FAILED / CANCELLED
+			SetIndicator("Purchase failed", Color3.fromRGB(255, 85, 85)) -- Red
+		end
+	end
+end)
+
+-- ============================================================================
+-- 🚀 PUBLIC API (OPEN MENU)
+-- ============================================================================
+local GiftSystem = {}
+
+function GiftSystem.Open(productId)
+	local gui = PlayerGui:WaitForChild("UniversalGiftUI")
+	mainFrame = gui:WaitForChild("MainFrame")
+	currentProductId = productId
+
+	ResetIndicator() -- Clear old messages
+	UpdateSlots()    -- Refresh list of players
+
+	-- Setup Exit Button
+	local exitBtn = mainFrame:FindFirstChild("ExitButton")
+	if exitBtn then
+		exitBtn.MouseButton1Click:Connect(function()
+			gui.Enabled = false
+		end)
+	end
+
+	gui.Enabled = true
+end
+
+-- Expose to Global so your Shop Scripts can find it
+_G.OpenGiftMenu = GiftSystem.Open
+
+return GiftSystem
