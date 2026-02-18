@@ -324,7 +324,7 @@ local function ConnectCard(cardFrame, skinName)
 	end
 
 	-- 5. 🎁 GIFT BUTTON (NEW INTEGRATION)
-	local btnGift = cardFrame:FindFirstChild("GiftButton")
+	local btnGift = buyFrame:FindFirstChild("GiftButton")
 	if btnGift then
 		btnGift.MouseButton1Click:Connect(function()
 			-- A. Get the Stats for this card
