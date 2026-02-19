@@ -1,6 +1,12 @@
--- [[ LOCAL SCRIPT: BaseUpgradeClient (FINAL - WITH GIFTING FIX) ]]
 -- Purpose: Shop UI, Feedback, Sounds, EQUIP/UNEQUIP, and GIFTING connection.
+-- Runs on: Client
 -- Location: StarterPlayerScripts
+-- Dependencies: ReplicatedStorage, TweenService, MarketplaceService, HttpService
+-- Public API: None (Listens to ShopRemotes)
+-- Networking: BaseUpgradeTransaction (Client -> Server)
+-- Security: UI visual logic. Validations happen on the server.
+-- Performance: Preloads sounds, caches UI states.
+-- Notes: Contains aggressive debugging for the GiftButton click failure.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -42,7 +48,6 @@ local SFX_IDs = {
 	Equip = "rbxassetid://6895079853" 
 }
 
--- Create sounds once at startup
 for name, id in pairs(SFX_IDs) do
 	local s = Instance.new("Sound")
 	s.Name = name
@@ -75,10 +80,9 @@ local function ShowFeedback(message, isSuccess)
 	local frame = gui:FindFirstChild(FRAME_NAME)
 	if not frame then return end
 
-	local feedbackLbl = frame:FindFirstChild(FEEDBACK_LBL_NAME)
+	local feedbackLbl = frame:FindFirstChild(FEEDBACK_LBL_NAME, true) -- Recursive search
 	if not feedbackLbl then return end 
 
-	-- 1. PLAY SOUND & SET COLOR
 	if isSuccess then
 		feedbackLbl.TextColor3 = Color3.fromRGB(85, 255, 127) 
 		PlaySound("Success") 
@@ -87,14 +91,12 @@ local function ShowFeedback(message, isSuccess)
 		PlaySound("Fail")    
 	end
 
-	-- 2. SHOW TEXT
 	feedbackDebounce = true
 	feedbackLbl.Text = message
 	feedbackLbl.TextTransparency = 1
 	feedbackLbl.Visible = true
 	feedbackLbl.ZIndex = 10
 
-	-- 3. ANIMATE
 	local fadeIn = TweenService:Create(feedbackLbl, TweenInfo.new(0.3), {TextTransparency = 0})
 	fadeIn:Play()
 	fadeIn.Completed:Wait()
@@ -217,15 +219,16 @@ end
 -- ============================================================================
 
 local function UpdateCardVisuals(cardFrame, skinName)
-	local buyFrame = cardFrame:FindFirstChild("BuyFrame")
+	local buyFrame = cardFrame:FindFirstChild("BuyFrame", true)
 	if not buyFrame then return end
 
-	local btnCash = buyFrame:FindFirstChild("BuyForCash")
-	local btnRobux = buyFrame:FindFirstChild("BuyForRobux")
-	local obtainedIndicator = buyFrame:FindFirstChild("ObtainedIndicator")
+	-- 🛡️ RECURSIVE SEARCH: Fixes issues where buttons are inside sub-frames
+	local btnCash = buyFrame:FindFirstChild("BuyForCash", true)
+	local btnRobux = buyFrame:FindFirstChild("BuyForRobux", true)
+	local obtainedIndicator = buyFrame:FindFirstChild("ObtainedIndicator", true)
 
-	local btnEquip = buyFrame:FindFirstChild("Equip")
-	local btnUnequip = buyFrame:FindFirstChild("Unequip")
+	local btnEquip = buyFrame:FindFirstChild("Equip", true)
+	local btnUnequip = buyFrame:FindFirstChild("Unequip", true)
 
 	local ownedRaw = player:GetAttribute("OwnedBaseSkins") or "[]"
 	local ownedTable = {}
@@ -235,23 +238,18 @@ local function UpdateCardVisuals(cardFrame, skinName)
 	local currentEquip = player:GetAttribute("EquippedSkin")
 
 	if isOwned then
-		-- 1. HIDE BUY BUTTONS & INDICATOR
 		if btnCash then btnCash.Visible = false end
 		if btnRobux then btnRobux.Visible = false end
 		if obtainedIndicator then obtainedIndicator.Visible = false end 
 
-		-- 2. HANDLE EQUIP / UNEQUIP STATE
 		if currentEquip == skinName then
-			-- Currently equipped -> Show UNEQUIP
 			if btnEquip then btnEquip.Visible = false end
 			if btnUnequip then btnUnequip.Visible = true end
 		else
-			-- Owned but not equipped -> Show EQUIP
 			if btnEquip then btnEquip.Visible = true end
 			if btnUnequip then btnUnequip.Visible = false end
 		end
 	else
-		-- NOT OWNED
 		if btnCash then btnCash.Visible = true end
 		if btnRobux then btnRobux.Visible = true end
 		if btnEquip then btnEquip.Visible = false end
@@ -263,7 +261,6 @@ end
 local function ConnectCard(cardFrame, skinName)
 	UpdateCardVisuals(cardFrame, skinName)
 
-	-- LISTENERS
 	player:GetAttributeChangedSignal("OwnedBaseSkins"):Connect(function()
 		UpdateCardVisuals(cardFrame, skinName)
 	end)
@@ -271,11 +268,20 @@ local function ConnectCard(cardFrame, skinName)
 		UpdateCardVisuals(cardFrame, skinName)
 	end)
 
-	local buyFrame = cardFrame:FindFirstChild("BuyFrame")
-	if not buyFrame then return end
+	local buyFrame = cardFrame:FindFirstChild("BuyFrame", true)
+	if not buyFrame then 
+		warn("❌ CRITICAL: BuyFrame not found inside " .. cardFrame.Name)
+		return 
+	end
+
+	-- 🛡️ RECURSIVE SEARCH FOR ALL BUTTONS
+	local btnCash = buyFrame:FindFirstChild("BuyForCash", true)
+	local btnRobux = buyFrame:FindFirstChild("BuyForRobux", true)
+	local btnEquip = buyFrame:FindFirstChild("Equip", true)
+	local btnUnequip = buyFrame:FindFirstChild("Unequip", true)
+	local btnGift = buyFrame:FindFirstChild("GiftButton", true)
 
 	-- 1. BUY CASH
-	local btnCash = buyFrame:FindFirstChild("BuyForCash")
 	if btnCash then
 		local function onBuyCash()
 			if feedbackDebounce then return end 
@@ -289,7 +295,6 @@ local function ConnectCard(cardFrame, skinName)
 	end
 
 	-- 2. BUY ROBUX
-	local btnRobux = buyFrame:FindFirstChild("BuyForRobux")
 	if btnRobux then
 		local function onBuyRobux()
 			TransactionFunc:InvokeServer(skinName, "Robux") 
@@ -300,7 +305,6 @@ local function ConnectCard(cardFrame, skinName)
 	end
 
 	-- 3. EQUIP BUTTON
-	local btnEquip = buyFrame:FindFirstChild("Equip")
 	if btnEquip then
 		local function onEquip()
 			TransactionFunc:InvokeServer(skinName, "Equip")
@@ -312,7 +316,6 @@ local function ConnectCard(cardFrame, skinName)
 	end
 
 	-- 4. UNEQUIP BUTTON
-	local btnUnequip = buyFrame:FindFirstChild("Unequip")
 	if btnUnequip then
 		local function onUnequip()
 			TransactionFunc:InvokeServer(skinName, "Unequip")
@@ -323,16 +326,18 @@ local function ConnectCard(cardFrame, skinName)
 		else btnUnequip.MouseButton1Click:Connect(onUnequip) end
 	end
 
-	-- 5. 🎁 GIFT BUTTON (NEW INTEGRATION - WITH SAFETY CHECK)
-	local btnGift = buyFrame:FindFirstChild("GiftButton")
+	-- 5. 🎁 GIFT BUTTON (WITH AGGRESSIVE DEBUGGING)
 	if btnGift then
+		print("✅ Found GiftButton for " .. skinName .. "! Class type: " .. btnGift.ClassName)
+		
 		btnGift.MouseButton1Click:Connect(function()
-			-- A. Get the Stats for this card
+			print("🖱️ CLICK REGISTERED ON: " .. skinName .. " Gift Button!")
+			
 			local skinData = BaseSkinStats[skinName]
 
 			if skinData and skinData.ProductId then
-				-- B. Call the Global Gift Function (defined in GiftUIController)
-				-- 🛡️ RACE CONDITION FIX: Wait if not ready
+				print("📦 Product ID found: " .. tostring(skinData.ProductId))
+				
 				if not _G.OpenGiftMenu then
 					warn("⚠️ Gift Controller hasn't loaded yet. Retrying...")
 					local attempts = 0
@@ -343,14 +348,17 @@ local function ConnectCard(cardFrame, skinName)
 				end
 
 				if _G.OpenGiftMenu then
+					print("🚀 Launching _G.OpenGiftMenu!")
 					_G.OpenGiftMenu(skinData.ProductId)
 				else
-					warn("❌ CRITICAL: Gift Menu function (_G.OpenGiftMenu) is missing. Is GiftUIController running?")
+					warn("❌ CRITICAL: Gift Menu function (_G.OpenGiftMenu) is missing.")
 				end
 			else
 				warn("❌ No Product ID found for " .. skinName)
 			end
 		end)
+	else
+		warn("❌ btnGift NOT FOUND for " .. skinName)
 	end
 end
 
@@ -360,21 +368,17 @@ local function SetupShop()
 	local scroller = gui:FindFirstChild(SCROLLER_NAME, true) 
 	if not scroller then return end 
 
-	-- 🥈 CARD 0.1: SILVER
-	local cardSilver = scroller:FindFirstChild("Card0.1")
-	if cardSilver then ConnectCard(cardSilver, "Silver") end
+	local cardSilver = scroller:FindFirstChild("Card0.1", true)
+	if cardSilver then ConnectCard(cardSilver, "Silver") else warn("⚠️ Card0.1 (Silver) not found") end
 
-	-- 🥇 CARD 1: GOLD
-	local card1 = scroller:FindFirstChild("Card1")
-	if card1 then ConnectCard(card1, "Gold") end
+	local card1 = scroller:FindFirstChild("Card1", true)
+	if card1 then ConnectCard(card1, "Gold") else warn("⚠️ Card1 (Gold) not found") end
 
-	-- 💎 CARD 2: DIAMOND
-	local card2 = scroller:FindFirstChild("Card2")
-	if card2 then ConnectCard(card2, "Diamond") end
+	local card2 = scroller:FindFirstChild("Card2", true)
+	if card2 then ConnectCard(card2, "Diamond") else warn("⚠️ Card2 (Diamond) not found") end
 
-	-- 🌈 CARD 3: RAINBOW
-	local card3 = scroller:FindFirstChild("Card3")
-	if card3 then ConnectCard(card3, "Rainbow") end
+	local card3 = scroller:FindFirstChild("Card3", true)
+	if card3 then ConnectCard(card3, "Rainbow") else warn("⚠️ Card3 (Rainbow) not found") end
 end
 
 -- ============================================================================
@@ -383,7 +387,7 @@ end
 local function setVisible(isOpen)
 	local gui = PlayerGui:WaitForChild(UI_NAME, 5)
 	if not gui then return end
-	local frame = gui:FindFirstChild(FRAME_NAME)
+	local frame = gui:FindFirstChild(FRAME_NAME, true)
 	if not frame then return end
 
 	if isOpen then
@@ -414,7 +418,7 @@ task.spawn(function()
 	local frame = gui:WaitForChild(FRAME_NAME, 10)
 	if frame then frame.Visible = false end
 
-	local closeBtn = frame and frame:WaitForChild(CLOSE_BTN_NAME, 10)
+	local closeBtn = gui:FindFirstChild(CLOSE_BTN_NAME, true)
 	if not closeBtn then return end
 
 	if Kit and Kit.Tween and Kit.Tween.SetupButton then
