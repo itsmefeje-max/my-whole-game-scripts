@@ -1,138 +1,204 @@
--- [[ LOCAL SCRIPT: GiftUIController (MAX LEVEL) ]]
--- Purpose: The "Brain" of the Gifting System. Handles UI, Animation, Logic, and Feedback.
+-- Purpose: Gift UI brain with Bank UI flow: hide other GUIs, lock movement, dim hover, optional FOV tween.
+-- Runs on: Client
 -- Location: StarterPlayerScripts
+-- Dependencies: Players, ReplicatedStorage, MarketplaceService, TweenService, Workspace, Debris
+-- Public API: _G.OpenGiftMenu (Consider refactoring to a ModuleScript export)
+-- Networking: Fires 'SetGiftIntent' to server to map buyer to receiver.
+-- Security: Client authority is zero. Server must validate intent, verify target is in-game, and rate-limit remote calls.
+-- Performance: Utilizes event connection pooling instead of UI cloning to avoid layout recalculations.
+-- Notes: Implemented state-guards to prevent permanent movement locking and GUI hiding if opened twice.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
 local TweenService = game:GetService("TweenService")
-local SoundService = game:GetService("SoundService")
+local Workspace = game:GetService("Workspace")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- 📡 REMOTES (Wait slightly to prevent "Silent Freeze" if loading slowly)
+-- 📡 REMOTES
 local Remotes = ReplicatedStorage:WaitForChild("GiftRemotes", 10)
-if not Remotes then 
-	warn("⚠️ GiftUIController: 'GiftRemotes' folder missing in ReplicatedStorage!") 
-	return 
+if not Remotes then
+	warn("⚠️ GiftUIController: 'GiftRemotes' missing in ReplicatedStorage!")
+	return
 end
 local SetIntentEvent = Remotes:WaitForChild("SetGiftIntent")
 
--- ⚙️ CONFIGURATION
+-- ⚙️ CONFIG
 local UI_NAME = "UniversalGiftUI"
-local TWEEN_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local HOVER_COLOR = Color3.fromRGB(200, 200, 200) -- Dim color
-local NORMAL_COLOR = Color3.fromRGB(255, 255, 255) -- Normal color
+local HOVER_TWEEN = TweenInfo.new(0.2)
+local NORMAL_COLOR = Color3.fromRGB(255, 255, 255)
+local DIM_COLOR = Color3.fromRGB(200, 200, 200)
 
--- 🔊 SOUNDS (Create on the fly for reliability)
-local Audio = {
-	Open = Instance.new("Sound", SoundService),
-	Click = Instance.new("Sound", SoundService),
-	Success = Instance.new("Sound", SoundService),
-	Error = Instance.new("Sound", SoundService)
+local USE_CAMERA_FOV = true
+local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+local OPEN_FOV_OFFSET = -20 
+local MIN_OPEN_FOV = 40
+
+local SFX = {
+	Open = "rbxassetid://6895079853",
+	Click = "rbxassetid://4210586953",
+	Success = "rbxassetid://2619623062",
+	Error = "rbxassetid://1526487928"
 }
-Audio.Open.SoundId = "rbxassetid://6895079853" -- Pop
-Audio.Click.SoundId = "rbxassetid://4210586953" -- Click
-Audio.Success.SoundId = "rbxassetid://2619623062" -- Chime
-Audio.Error.SoundId = "rbxassetid://1526487928" -- Error buzz
+
+local function playSfx(soundId, volume, parent)
+	local s = Instance.new("Sound")
+	s.SoundId = soundId
+	s.Volume = volume or 0.5
+	s.Parent = parent or PlayerGui
+	s:Play()
+	Debris:AddItem(s, 3)
+end
 
 -- 💾 STATE
 local currentProductId = nil
-local currentTargetName = "" 
-local mainFrame = nil
+local currentTargetName = ""
+local isMenuOpen = false -- STATE GUARD
+local isInitialized = false
+
 local screenGui = nil
-local mainScale = nil
-local mainCanvasGroup = nil
+local mainFrame = nil
+local detector = nil
+
+local hiddenGuis = {}
+local btnConnections = {} -- Event pool to replace UI cloning
+
+local normalFov = nil
+local openFov = nil
+
+local savedWalkSpeed = nil
+local savedJumpPower = nil
 
 -- ============================================================================
--- 🎨 ANIMATION ENGINE
+-- 👁️ GUI HIDING
 -- ============================================================================
-local function AnimateOpen()
-	if not mainFrame or not screenGui then return end
-	screenGui.Enabled = true
-	mainFrame.Visible = true
-
-	if mainScale then
-		mainScale.Scale = 0.8
-		TweenService:Create(mainScale, TWEEN_INFO, {Scale = 1}):Play()
-	end
-
-	if mainCanvasGroup then
-		mainCanvasGroup.GroupTransparency = 1
-		TweenService:Create(mainCanvasGroup, TWEEN_INFO, {GroupTransparency = 0}):Play()
-	end
-
-	Audio.Open:Play()
-end
-
-local function AnimateClose()
-	if not mainFrame or not screenGui then return end
-
-	local closeTween = nil
-	if mainScale then
-		closeTween = TweenService:Create(mainScale, TWEEN_INFO, {Scale = 0.8})
-		closeTween:Play()
-	end
-
-	if mainCanvasGroup then
-		TweenService:Create(mainCanvasGroup, TWEEN_INFO, {GroupTransparency = 1}):Play()
-	end
-
-	local function finishClose()
-		mainFrame.Visible = false
-		screenGui.Enabled = false
-	end
-
-	if closeTween then
-		closeTween.Completed:Once(finishClose)
+local function toggleOtherGuis(shouldHide)
+	if shouldHide then
+		table.clear(hiddenGuis)
+		for _, gui in pairs(PlayerGui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui ~= screenGui and gui.Enabled then
+				gui.Enabled = false
+				hiddenGuis[gui] = true
+			end
+		end
 	else
-		finishClose()
+		for gui in pairs(hiddenGuis) do
+			if gui and gui.Parent then
+				gui.Enabled = true
+			end
+		end
+		table.clear(hiddenGuis)
 	end
 end
 
-local function AnimateButton(btn, isHovering)
-	local target = isHovering and HOVER_COLOR or NORMAL_COLOR
-	TweenService:Create(btn, TweenInfo.new(0.2), {ImageColor3 = target}):Play()
+-- ============================================================================
+-- 🚶 MOVEMENT LOCK
+-- ============================================================================
+local function setMovementLocked(isLocked)
+	local character = player.Character
+	if not character then return end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	if isLocked then
+		-- Only save if we haven't already
+		if savedWalkSpeed == nil then
+			savedWalkSpeed = humanoid.WalkSpeed
+			savedJumpPower = humanoid.JumpPower
+		end
+		humanoid.WalkSpeed = 0
+		humanoid.JumpPower = 0
+	else
+		if savedWalkSpeed ~= nil then humanoid.WalkSpeed = savedWalkSpeed end
+		if savedJumpPower ~= nil then humanoid.JumpPower = savedJumpPower end
+
+		savedWalkSpeed = nil
+		savedJumpPower = nil
+	end
+end
+
+-- ============================================================================
+-- 🎥 DYNAMIC FOV TWEEN
+-- ============================================================================
+local function tweenFov(toFov)
+	if not USE_CAMERA_FOV or not toFov then return end
+	local currentCamera = Workspace.CurrentCamera -- Dynamically fetch in case of reset
+	if not currentCamera then return end
+	
+	TweenService:Create(currentCamera, CAM_TWEEN_INFO, {FieldOfView = toFov}):Play()
+end
+
+-- ============================================================================
+-- ✨ HOVER EFFECT
+-- ============================================================================
+local function addHover(btn)
+	if not btn or btn:GetAttribute("HoverAdded") then return end
+	btn:SetAttribute("HoverAdded", true)
+
+	local prop = nil
+	if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
+		prop = "ImageColor3"
+	elseif btn:IsA("TextButton") or btn:IsA("TextLabel") or btn:IsA("Frame") then
+		prop = "BackgroundColor3"
+	end
+	if not prop then return end
+
+	btn.MouseEnter:Connect(function()
+		TweenService:Create(btn, HOVER_TWEEN, {[prop] = DIM_COLOR}):Play()
+	end)
+	btn.MouseLeave:Connect(function()
+		TweenService:Create(btn, HOVER_TWEEN, {[prop] = NORMAL_COLOR}):Play()
+	end)
 end
 
 -- ============================================================================
 -- 💡 INDICATOR LOGIC
 -- ============================================================================
 local function SetIndicator(msg, color)
-	if mainFrame then
-		local indicator = mainFrame:FindFirstChild("Indicator")
-		if indicator then
-			indicator.Text = msg
-			indicator.TextColor3 = color
-			indicator.Visible = true
+	if not mainFrame then return end
+	local indicator = mainFrame:FindFirstChild("Indicator")
+	if not indicator then return end
 
-			-- Gentle pulse effect
-			local originalSize = indicator.TextSize
-			indicator.TextSize = originalSize * 1.2
-			TweenService:Create(indicator, TweenInfo.new(0.5, Enum.EasingStyle.Bounce), {TextSize = originalSize}):Play()
-		end
-	end
+	indicator.Text = msg
+	indicator.TextColor3 = color
+	indicator.Visible = true
 end
 
-local function ResetIndicator()
-	if mainFrame then
-		local indicator = mainFrame:FindFirstChild("Indicator")
-		if indicator then
-			indicator.Text = "Select a player to gift"
-			indicator.TextColor3 = Color3.fromRGB(255, 255, 255)
-			indicator.Visible = true
-		end
+-- ============================================================================
+-- 🧠 FOCUS MODE
+-- ============================================================================
+local function setFocusMode(isFocused)
+	if not screenGui or not mainFrame then return end
+	if isMenuOpen == isFocused then return end -- Strict state guard
+	
+	isMenuOpen = isFocused
+	detector.Visible = isFocused
+
+	if isFocused then
+		screenGui.Enabled = true
+		mainFrame.Visible = true
+		toggleOtherGuis(true)
+		setMovementLocked(true)
+		tweenFov(openFov)
+	else
+		mainFrame.Visible = false
+		screenGui.Enabled = false
+		toggleOtherGuis(false)
+		setMovementLocked(false)
+		tweenFov(normalFov)
 	end
 end
 
 -- ============================================================================
--- 🔄 UI REFRESH LOGIC (THE SLOT SYSTEM)
+-- 🔄 UI REFRESH (EVENT POOLING INSTEAD OF CLONING)
 -- ============================================================================
 local function UpdateSlots()
 	if not mainFrame then return end
 
-	-- 1. Find all eligible players (Everyone except ME)
 	local validPlayers = {}
 	for _, p in pairs(Players:GetPlayers()) do
 		if p ~= player then
@@ -140,59 +206,47 @@ local function UpdateSlots()
 		end
 	end
 
-	-- 2. Loop through Static Slots (Player1 -> Player5)
 	for i = 1, 5 do
-		local slotName = "Player" .. i
-		local slotFrame = mainFrame:FindFirstChild(slotName)
-
+		local slotFrame = mainFrame:FindFirstChild("Player" .. i)
 		if slotFrame then
 			local target = validPlayers[i]
-
 			if target then
-				-- ✅ PLAYER FOUND: SHOW SLOT
 				slotFrame.Visible = true
 
 				local nameLbl = slotFrame:FindFirstChild("PlayerName")
 				local avatarImg = slotFrame:FindFirstChild("PlayerAvatar")
 				local giftBtn = slotFrame:FindFirstChild("GiftThePlayer")
 
-				-- Update Info
 				if nameLbl then nameLbl.Text = target.Name end
-				if avatarImg then 
+				if avatarImg then
 					avatarImg.Image = "rbxthumb://type=AvatarHeadShot&id=" .. target.UserId .. "&w=150&h=150"
 				end
 
-				-- Connect Button (Disconnecting old events via cloning is safer for repeated use)
 				if giftBtn then
-					-- Hack: Clone button to wipe old connections, then replace
-					local newBtn = giftBtn:Clone()
-					newBtn.Parent = slotFrame
-					giftBtn:Destroy()
-					giftBtn = newBtn
+					addHover(giftBtn)
+					
+					-- Safely pool connections instead of cloning UI
+					if btnConnections[i] then
+						btnConnections[i]:Disconnect()
+						btnConnections[i] = nil
+					end
 
-					-- Hover
-					giftBtn.MouseEnter:Connect(function() AnimateButton(giftBtn, true) end)
-					giftBtn.MouseLeave:Connect(function() AnimateButton(giftBtn, false) end)
+					btnConnections[i] = giftBtn.MouseButton1Click:Connect(function()
+						if not currentProductId or giftBtn:GetAttribute("Cooldown") then return end
+						
+						-- Client debounce to prevent remote spam
+						giftBtn:SetAttribute("Cooldown", true)
+						task.delay(1, function() giftBtn:SetAttribute("Cooldown", false) end)
 
-					-- CLICK TO GIFT
-					giftBtn.MouseButton1Click:Connect(function()
-						if currentProductId then
-							Audio.Click:Play()
+						playSfx(SFX.Click, 0.5, screenGui)
+						currentTargetName = target.Name
+						SetIndicator("Processing...", Color3.fromRGB(255, 255, 100))
 
-							-- 1. Save Target Name for the Indicator
-							currentTargetName = target.Name
-							SetIndicator("Processing...", Color3.fromRGB(255, 255, 100)) -- Yellow
-
-							-- 2. Tell Server Intent
-							SetIntentEvent:FireServer(target.UserId)
-
-							-- 3. Prompt Purchase
-							MarketplaceService:PromptProductPurchase(player, currentProductId)
-						end
+						SetIntentEvent:FireServer(target.UserId)
+						MarketplaceService:PromptProductPurchase(player, currentProductId)
 					end)
 				end
 			else
-				-- ❌ NO PLAYER: HIDE SLOT
 				slotFrame.Visible = false
 			end
 		end
@@ -200,68 +254,92 @@ local function UpdateSlots()
 end
 
 -- ============================================================================
+-- 🔴 CLOSE
+-- ============================================================================
+local function PerformClose()
+	if not isMenuOpen then return end
+	playSfx(SFX.Click, 0.5, screenGui)
+	setFocusMode(false)
+end
+
+-- ============================================================================
 -- 🧾 PURCHASE FEEDBACK
 -- ============================================================================
 MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
-	if userId ~= player.UserId then return end
+	if userId ~= player.UserId or productId ~= currentProductId then return end
 
-	-- Only react if the UI is open or was just used
-	if productId == currentProductId then
-		if isPurchased then
-			-- ✅ SUCCESS
-			SetIndicator("Gift sent to " .. currentTargetName .. "!", Color3.fromRGB(85, 255, 127)) -- Green
-			Audio.Success:Play()
+	if isPurchased then
+		SetIndicator("Gift sent to " .. currentTargetName .. "!", Color3.fromRGB(85, 255, 127))
+		playSfx(SFX.Success, 0.6, screenGui)
 
-			-- Auto-close after 2 seconds
-			task.delay(2.5, function()
-				if screenGui.Enabled then AnimateClose() end
-			end)
-		else
-			-- ❌ CANCELLED / FAILED
-			SetIndicator("Purchase Cancelled", Color3.fromRGB(255, 85, 85)) -- Red
-			Audio.Error:Play()
-		end
+		task.delay(2.5, function()
+			setFocusMode(false)
+		end)
+	else
+		SetIndicator("Purchase Cancelled", Color3.fromRGB(255, 85, 85))
+		playSfx(SFX.Error, 0.6, screenGui)
 	end
 end)
 
 -- ============================================================================
--- 🚀 INIT & PUBLIC API
+-- 🚀 INIT
 -- ============================================================================
 local function Init()
-	screenGui = PlayerGui:WaitForChild(UI_NAME)
-	mainFrame = screenGui:WaitForChild("MainFrame")
+	if isInitialized then return end
 
-	-- Ensure components for animation exist
-	mainScale = mainFrame:FindFirstChildOfClass("UIScale")
-	if not mainScale then
-		mainScale = Instance.new("UIScale")
-		mainScale.Parent = mainFrame
-	end
-
-	mainCanvasGroup = mainFrame:FindFirstChildOfClass("CanvasGroup")
-
-	-- Setup Exit Button
-	local exitBtn = mainFrame:FindFirstChild("ExitButton")
-	if exitBtn then
-		exitBtn.MouseButton1Click:Connect(function()
-			Audio.Click:Play()
-			AnimateClose()
-		end)
-	end
-end
-
--- Global Function called by your Shops
-_G.OpenGiftMenu = function(productId)
-	if not mainFrame or not screenGui then Init() end
-	if not mainFrame or not screenGui then
-		warn("❌ Gift UI failed to initialize")
+	screenGui = PlayerGui:WaitForChild(UI_NAME, 5)
+	if not screenGui then
+		warn("❌ GiftUIController: Could not find " .. UI_NAME)
 		return
 	end
+	mainFrame = screenGui:WaitForChild("MainFrame")
+
+	screenGui.Enabled = false
+	mainFrame.Visible = false
+
+	local currentCamera = Workspace.CurrentCamera
+	normalFov = (currentCamera and currentCamera.FieldOfView) or 70
+	openFov = math.clamp(normalFov + OPEN_FOV_OFFSET, MIN_OPEN_FOV, normalFov)
+
+	detector = screenGui:FindFirstChild("OutsideDetector")
+	if not detector then
+		detector = Instance.new("TextButton")
+		detector.Name = "OutsideDetector"
+		detector.Parent = screenGui
+		detector.Size = UDim2.new(1, 0, 1, 0)
+		detector.BackgroundTransparency = 1
+		detector.Text = ""
+	end
+
+	local mfZ = 10
+	pcall(function() mfZ = mainFrame.ZIndex end)
+	pcall(function() detector.ZIndex = math.max(0, mfZ - 1) end)
+	
+	detector.Visible = false
+	detector.MouseButton1Click:Connect(PerformClose)
+
+	local exitBtn = mainFrame:FindFirstChild("ExitButton")
+	if exitBtn then
+		addHover(exitBtn)
+		exitBtn.MouseButton1Click:Connect(PerformClose)
+	end
+
+	isInitialized = true
+end
+
+-- ============================================================================
+-- 🌍 PUBLIC API
+-- ============================================================================
+_G.OpenGiftMenu = function(productId)
+	Init()
+	if not isInitialized then return end
 
 	currentProductId = productId
-	ResetIndicator()
+	SetIndicator("Select a player to gift", Color3.fromRGB(255, 255, 255))
 	UpdateSlots()
-	AnimateOpen()
+
+	playSfx(SFX.Open, 0.5, screenGui)
+	setFocusMode(true)
 end
 
 return {}
