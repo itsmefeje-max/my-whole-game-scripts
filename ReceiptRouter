@@ -1,9 +1,12 @@
--- [[ SERVER SCRIPT: ReceiptRouter (UPDATED WITH GIFTING) ]]
 -- Purpose: Centralizes MarketplaceService.ProcessReceipt with IDEMPOTENCY & GIFTING.
 -- Runs on: Server
 -- Location: ServerScriptService
 -- Dependencies: MarketplaceService, DataStoreService, ServerStorage, ReplicatedStorage, GiftIntentHandler
 -- Public API: MarketplaceService.ProcessReceipt (Callback)
+-- Networking: N/A
+-- Security: Strict datastore error handling prevents duplicate rewards; safe container checks prevent infinite yields.
+-- Performance: Replaces WaitForChild with FindFirstChild to prevent memory leaks on player disconnect.
+-- Notes: Assumes GiftIntentHandler (_G.GetGiftReceiver) handles invalid/offline user IDs gracefully.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local DataStoreService = game:GetService("DataStoreService")
@@ -153,8 +156,6 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 				targetPlayer:SetAttribute("OwnedBaseSkins", HttpService:JSONEncode(ownedTable))
 			end
 
-			-- Optional: Auto-Equip only if buying for self? 
-			-- Or Auto-Equip for friend too? Let's Auto-Equip for friend to show it off immediately.
 			targetPlayer:SetAttribute("EquippedSkin", skinFound)
 			purchaseSuccess = true
 		end
@@ -168,12 +169,23 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
 
 		if tool then
+			-- 🛑 SECURE DATASORE WRITE: Lock the purchase ID *before* granting to prevent duping
+			-- If the server crashes during grant, it's safer to lose the car than create an infinite duplication glitch.
+			local dataSuccess, err = pcall(function()
+				PurchaseHistory:SetAsync(purchaseKey, true)
+			end)
+
+			if not dataSuccess then
+				warn("⚠️ Datastore down. Halting grant to prevent dupe. " .. tostring(err))
+				return Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+
 			local newTool = tool:Clone()
 			newTool:SetAttribute("IssuedByServer", true)
 			newTool:SetAttribute("IssuedAt", os.time())
 			newTool:SetAttribute("ToolId", tool.Name) 
 
-			-- Give to TARGET PLAYER'S Backpack
+			-- Give to TARGET PLAYER'S Backpack safely
 			local backpack = targetPlayer:FindFirstChild("Backpack")
 			if backpack then
 				newTool.Parent = backpack
@@ -181,11 +193,18 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 				warn("⚠️ Receiver dead/respawning. Item added to StarterGear only.")
 			end
 
-			-- StarterGear (Persistence)
-			local gearClone = newTool:Clone()
-			gearClone.Parent = targetPlayer:WaitForChild("StarterGear")
+			-- 🛑 FIX: Safe StarterGear check without infinite yield
+			local starterGear = targetPlayer:FindFirstChild("StarterGear")
+			if starterGear then
+				local gearClone = newTool:Clone()
+				gearClone.Parent = starterGear
+			end
 
-			purchaseSuccess = true
+			-- We handle the success manually here because we already SetAsync
+			if isGift then
+				print("✅ Gift successfully delivered to " .. targetPlayer.Name)
+			end
+			return Enum.ProductPurchaseDecision.PurchaseGranted
 		else
 			warn("❌ Critical: Tool missing for Robux Car: " .. carName)
 		end
@@ -194,15 +213,22 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	end
 
 	-- ====================================================
-	-- 🏁 FINALIZE PURCHASE
+	-- 🏁 FINALIZE PURCHASE (For non-car items)
 	-- ====================================================
 	if purchaseSuccess then
 		-- Mark as processed in DataStore so it can't be claimed again
-		pcall(function()
+		local dataSuccess, dataErr = pcall(function()
 			PurchaseHistory:SetAsync(purchaseKey, true)
 		end)
 
-		-- Optional: Send a visual notification or sound to the receiver if it was a gift
+		if not dataSuccess then
+			warn("⚠️ Critical Datastore Error saving receipt: " .. tostring(dataErr))
+			-- Tell Roblox we failed so they retry the receipt later. 
+			-- (Note: For non-car items, this risks double-granting if the DB fails, 
+			-- but guarantees they get what they paid for eventually).
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
 		if isGift then
 			print("✅ Gift successfully delivered to " .. targetPlayer.Name)
 		end
