@@ -1,6 +1,12 @@
--- [[ LOCAL SCRIPT: UniversalToolAnimator (No Spin) ]]
--- -- Indicating what the script is for: Animates held tools with a gentle UP/DOWN float only.
--- LOCATION: StarterPlayer > StarterPlayerScripts
+-- Purpose: Animates held tools (cars) with a floating effect without causing server lag.
+-- Runs on: Client
+-- Location: StarterPlayerScripts
+-- Dependencies: RunService, Players
+-- Public API: None
+-- Networking: None (Purely local visual effect)
+-- Security: Client-sided visuals only; cannot be exploited to move hitboxes server-side.
+-- Performance: Modifies Weld C0 directly instead of rebuilding joints. Zero server network footprint.
+-- Notes: Assumes the tool is held in the "Right Arm" (R6) or "RightHand" (R15).
 
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
@@ -8,13 +14,14 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
 -- ⚙️ CONFIGURATION
-local FLOAT_HEIGHT = 3   -- Base height above hand
+local FLOAT_HEIGHT = 3    -- Base height above hand
 local BOB_SPEED = 2       -- How fast it goes up/down
-local BOB_HEIGHT = 0.5     -- How far it travels
+local BOB_HEIGHT = 0.5    -- How far it travels
 
 -- 🛡️ STATE
 local currentTool = nil
-local originalGrip = nil
+local rightGripWeld = nil
+local originalC0 = nil
 local animConnection = nil
 
 local function stopAnimation()
@@ -22,24 +29,35 @@ local function stopAnimation()
 		animConnection:Disconnect()
 		animConnection = nil
 	end
-	if currentTool and originalGrip then
-		currentTool.Grip = originalGrip
+
+	-- Restore the original grip offset safely if the weld still exists
+	if rightGripWeld and rightGripWeld.Parent and originalC0 then
+		rightGripWeld.C0 = originalC0
 	end
+
 	currentTool = nil
-	originalGrip = nil
+	rightGripWeld = nil
+	originalC0 = nil
 end
 
 local function animateTool(character, tool)
 	stopAnimation()
-	currentTool = tool
-	originalGrip = tool.Grip
 
-	-- Wait for hand to be ready
+	-- Wait for the character's arm
 	local arm = character:FindFirstChild("Right Arm") or character:FindFirstChild("RightHand")
 	if not arm then return end
 
+	-- Roblox automatically creates a "RightGrip" weld when a tool is equipped.
+	-- We wait briefly for it to appear in the arm.
+	rightGripWeld = arm:WaitForChild("RightGrip", 2)
+	if not rightGripWeld or not rightGripWeld:IsA("Weld") then return end
+
+	currentTool = tool
+	originalC0 = rightGripWeld.C0
+
 	animConnection = RunService.RenderStepped:Connect(function()
-		if tool.Parent ~= character then
+		-- Failsafe: if tool drops or weld is destroyed, stop animating
+		if tool.Parent ~= character or not rightGripWeld.Parent then
 			stopAnimation()
 			return
 		end
@@ -47,20 +65,28 @@ local function animateTool(character, tool)
 		local t = time()
 		local bob = math.sin(t * BOB_SPEED) * BOB_HEIGHT
 
-		-- ONLY Move Up/Down (No CFrame.Angles)
-		tool.Grip = originalGrip * CFrame.new(0, -FLOAT_HEIGHT - bob, 0) 
+		-- Modifying C0 is instantly rendered and does NOT rebuild the joint.
+		-- This stops the physics/network lag entirely.
+		rightGripWeld.C0 = originalC0 * CFrame.new(0, FLOAT_HEIGHT + bob, 0)
 	end)
 end
 
 local function onCharacterAdded(character)
 	character.ChildAdded:Connect(function(child)
 		if child:IsA("Tool") then
-			animateTool(character, child)
+			-- Defer execution to ensure Roblox's backend has finished creating the RightGrip
+			task.defer(function()
+				if child.Parent == character then
+					animateTool(character, child)
+				end
+			end)
 		end
 	end)
 
 	character.ChildRemoved:Connect(function(child)
-		if child == currentTool then stopAnimation() end
+		if child == currentTool then 
+			stopAnimation() 
+		end
 	end)
 end
 
