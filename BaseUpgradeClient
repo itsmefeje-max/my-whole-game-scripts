@@ -39,13 +39,14 @@ local CLOSE_BTN_NAME = "CloseButton"
 local FEEDBACK_LBL_NAME = "Indicator-purchase"
 local BLUR_SIZE = 24 
 
--- 🎵 SOUND PRE-LOADING (UPDATED LOUD & DISTINCT IDs)
+-- 🎵 SOUND PRE-LOADING (✅ FULLY SEPARATED IDs)
 local Sounds = {}
 local SFX_IDs = {
-	CashSuccess = "rbxassetid://14810387808",  -- Loud Ca-ching!
-	RobuxSuccess = "rbxassetid://14810387808", -- Loud Ca-ching!
-	Fail = "rbxassetid://4612375233",          -- Error Buzz
-	Equip = "rbxassetid://6895079853"          -- UI Equip pop
+	CashSuccess  = "rbxassetid://14810387808", -- 🟢 Played on successful Cash buy
+	RobuxSuccess = "rbxassetid://14810387808", -- 🟢 Played on successful Robux buy
+	CashFail     = "rbxassetid://1569434825",  -- 🔴 Played when you don't have enough Cash
+	RobuxFail    = "rbxassetid://1569434825",  -- 🔴 Played when you cancel/fail a Robux prompt
+	Equip        = "rbxassetid://6895079853"   -- ⚪ Played when equipping a base
 }
 
 for name, id in pairs(SFX_IDs) do
@@ -84,13 +85,13 @@ local function ShowFeedback(message, statusType)
 	local feedbackLbl = frame:FindFirstChild(FEEDBACK_LBL_NAME, true)
 	if not feedbackLbl then return end 
 
-	-- 🔊 Trigger the specific sound based on the transaction result
+	-- 🔊 Trigger the specific sound based on the exact transaction result
 	if statusType == "CashSuccess" or statusType == "RobuxSuccess" then
 		feedbackLbl.TextColor3 = Color3.fromRGB(85, 255, 127) 
 		PlaySound(statusType) 
 	else
 		feedbackLbl.TextColor3 = Color3.fromRGB(255, 85, 85) 
-		PlaySound("Fail")    
+		PlaySound(statusType) -- ✅ Now plays "CashFail" or "RobuxFail" specifically
 	end
 
 	feedbackDebounce = true
@@ -131,7 +132,7 @@ MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, produc
 		if isPurchased then
 			ShowFeedback("Purchase Successful!", "RobuxSuccess")
 		else
-			ShowFeedback("Purchase Cancelled", "Fail")
+			ShowFeedback("Purchase Cancelled", "RobuxFail") -- ✅ Triggers specific Robux fail sound
 		end
 	end
 end)
@@ -305,7 +306,7 @@ local function ConnectCard(cardFrame, skinName)
 			if success then 
 				ShowFeedback("Purchase Successful!", "CashSuccess")
 			else 
-				ShowFeedback(msg or "Purchase Failed", "Fail") 
+				ShowFeedback(msg or "Purchase Failed", "CashFail") -- ✅ Triggers specific Cash fail sound
 			end
 
 			task.wait(0.2) 
