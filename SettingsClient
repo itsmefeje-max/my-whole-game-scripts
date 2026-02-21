@@ -1,13 +1,12 @@
--- [[ LOCAL SCRIPT: SettingsClient (CENTERED POP - INSTANT CLOSE) ]]
 -- Purpose: Settings UI + Music Toggle + Center Pop Open / Instant Close
--- Runs on: Client (StarterPlayerScripts or StarterGui)
+-- Runs on: Client
 -- Location: StarterGui/SettingsGui
--- Dependencies: SoundService, TweenService, Debris
+-- Dependencies: SoundService, TweenService, Debris, UserInputService
 -- Public API: None (Internal Logic)
 -- Networking: None (Client-side UI logic only)
--- Security: N/A (Visuals only)
+-- Security: Client-side visuals only; no server validation needed.
 -- Performance: Tweens used for open animation only.
--- Notes: Close animation removed per request. Open animation retained.
+-- Notes: Close animation removed per request. Open animation retained. Initial music state synced on startup.
 
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
@@ -182,4 +181,8 @@ setupButton(btnMusicOff, function() setMusicMuted(false) end)
 -- Default State
 window.Visible = false
 openButton.Visible = true
--- (Optional) Mute logic ensures buttons are correct, but we don't need to force volume here if defaults are set in SoundService
+
+-- [FIXED] Sync initial music state immediately.
+-- This ensures the buttons match the actual game volume right when the player joins,
+-- eliminating the "double-click" bug on the first try.
+setMusicMuted(false)
