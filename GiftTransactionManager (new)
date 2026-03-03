@@ -70,9 +70,9 @@ local LockedTools = {}
 -- ----------------------------------------------------------------------------
 -- 🛡️ HELPER FUNCTIONS
 -- ----------------------------------------------------------------------------
-local function sendResult(player, success, message)
+local function sendResult(player, success, message, toolId, isSender, otherPlayerName, otherPlayerId)
 	if player and player.Parent then
-		GiftResult:FireClient(player, success, message)
+		GiftResult:FireClient(player, success, message, toolId, isSender, otherPlayerName, otherPlayerId)
 	end
 end
 
@@ -400,8 +400,8 @@ ResolveGift.OnServerEvent:Connect(function(player, transactionId, isAccepted)
 		end
 		ActiveTransactions[transactionId] = nil
 
-		sendResult(tx.Sender, true, "Gift successfully sent to " .. tx.Receiver.Name .. "!")
-		sendResult(tx.Receiver, true, "You received a gift from " .. tx.Sender.Name .. "!")
+		sendResult(tx.Sender, true, "Gift successfully sent to " .. tx.Receiver.Name .. "!", tx.ToolId, true, tx.Receiver.Name, tx.Receiver.UserId)
+		sendResult(tx.Receiver, true, "You received a gift from " .. tx.Sender.Name .. "!", tx.ToolId, false, tx.Sender.Name, tx.Sender.UserId)
 	else
 		cancelTransaction(transactionId, "Server error during transfer.", true, true)
 	end
