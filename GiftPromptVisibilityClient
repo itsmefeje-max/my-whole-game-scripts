@@ -1,0 +1,137 @@
+-- Purpose: Dynamically toggle Gift ProximityPrompts based on equipped valid Tycoon cars. Prompts are only visible when actively holding a giftable car.
+-- Runs on: Client
+-- Location: StarterPlayerScripts
+-- Dependencies: Players
+-- Public API: N/A
+-- Networking: N/A (Purely visual/UX client logic)
+-- Security: Purely UX. Server still strictly validates equipped state and proximity on trigger.
+-- Performance: Event-driven via Character.ChildAdded/Removed. Avoids expensive loops.
+-- Notes: Monitors LocalPlayer's equipped state. Enables/disables "GiftPrompt" on all other players' HumanoidRootParts.
+
+local Players = game:GetService("Players")
+
+local LocalPlayer = Players.LocalPlayer
+
+local isHoldingValidTool = false
+
+-- Function to check if a tool is a valid Tycoon car gift
+local function isToolValidGift(tool)
+	if not tool or not tool:IsA("Tool") then return false end
+	-- Validate Tycoon attributes
+	if not tool:GetAttribute("IssuedByServer") then return false end
+	if not tool:GetAttribute("ToolId") then return false end
+	return true
+end
+
+-- Function to update visibility of GiftPrompts on all other players
+local function updatePromptsVisibility()
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and player.Character then
+			local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				local prompt = hrp:FindFirstChild("GiftPrompt")
+				if prompt and prompt:IsA("ProximityPrompt") then
+					prompt.Enabled = isHoldingValidTool
+				end
+			end
+		end
+	end
+end
+
+-- Function to handle when a tool is equipped/unequipped
+local function checkEquippedState()
+	local character = LocalPlayer.Character
+	if not character then
+		isHoldingValidTool = false
+		updatePromptsVisibility()
+		return
+	end
+
+	local foundValidTool = false
+	for _, child in ipairs(character:GetChildren()) do
+		if isToolValidGift(child) then
+			foundValidTool = true
+			break
+		end
+	end
+
+	if isHoldingValidTool ~= foundValidTool then
+		isHoldingValidTool = foundValidTool
+		updatePromptsVisibility()
+	end
+end
+
+-- Monitor Character changes
+local function onCharacterAdded(character)
+	checkEquippedState()
+
+	character.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			task.defer(checkEquippedState)
+		end
+	end)
+
+	character.ChildRemoved:Connect(function(child)
+		if child:IsA("Tool") then
+			task.defer(checkEquippedState)
+		end
+	end)
+end
+
+if LocalPlayer.Character then
+	onCharacterAdded(LocalPlayer.Character)
+end
+
+LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+
+-- Monitor other players to update newly spawned prompts
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function(character)
+		-- Wait for HRP and Prompt to potentially be added
+		local hrp = character:WaitForChild("HumanoidRootPart", 10)
+		if hrp then
+			hrp.ChildAdded:Connect(function(child)
+				if child.Name == "GiftPrompt" and child:IsA("ProximityPrompt") then
+					child.Enabled = isHoldingValidTool
+				end
+			end)
+
+			-- Initial check in case it's already there
+			local prompt = hrp:FindFirstChild("GiftPrompt")
+			if prompt and prompt:IsA("ProximityPrompt") then
+				prompt.Enabled = isHoldingValidTool
+			end
+		end
+	end)
+end)
+
+-- Handle existing players
+for _, player in ipairs(Players:GetPlayers()) do
+	if player ~= LocalPlayer then
+		if player.Character then
+			local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				hrp.ChildAdded:Connect(function(child)
+					if child.Name == "GiftPrompt" and child:IsA("ProximityPrompt") then
+						child.Enabled = isHoldingValidTool
+					end
+				end)
+			end
+		end
+		player.CharacterAdded:Connect(function(character)
+			local hrp = character:WaitForChild("HumanoidRootPart", 10)
+			if hrp then
+				hrp.ChildAdded:Connect(function(child)
+					if child.Name == "GiftPrompt" and child:IsA("ProximityPrompt") then
+						child.Enabled = isHoldingValidTool
+					end
+				end)
+
+				local prompt = hrp:FindFirstChild("GiftPrompt")
+				if prompt and prompt:IsA("ProximityPrompt") then
+					prompt.Enabled = isHoldingValidTool
+				end
+			end
+		end)
+	end
+end

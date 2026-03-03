@@ -6,7 +6,7 @@
 -- Networking: ReplicatedStorage.GiftRemotes (InitiateGift, ResolveGift, RequestInventoryToGift, IncomingGift, GiftResult)
 -- Security: Inventory Locking (Anti-Double Spend), Distance Check (Anti-Snipe), Parent Validation (Anti-Equip/Drop Race), Rate Limiting (Anti-Spam), Strict Type Validation.
 -- Performance: Lightweight dictionaries for state, cached remotes, task.delay for timeouts.
--- Notes: Assumes TycoonDataHandler manages saving. Gifting requires the car to be in the Backpack/Character (unspawned).
+-- Notes: Assumes TycoonDataHandler manages saving. Gifting requires the car to be in the Character (unspawned).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -78,10 +78,9 @@ end
 
 local function isToolValidAndParented(player, tool)
 	if not tool or not tool.Parent then return false end
-	-- Check if parent is exactly Backpack or Character
-	local inBackpack = tool.Parent == player:FindFirstChild("Backpack")
+	-- Check if parent is exactly Character
 	local inCharacter = player.Character and tool.Parent == player.Character
-	if not (inBackpack or inCharacter) then return false end
+	if not inCharacter then return false end
 	-- Check if it's a valid Tycoon tool (issued by server)
 	if not tool:GetAttribute("IssuedByServer") then return false end
 	if not tool:GetAttribute("ToolId") then return false end
@@ -106,6 +105,12 @@ local function cancelTransaction(transactionId, reason, notifySender, notifyRece
 	-- Cancel timeout thread
 	if tx.Timer then
 		task.cancel(tx.Timer)
+	end
+
+	-- Disconnect unequip connection
+	if tx.UnequipConnection then
+		tx.UnequipConnection:Disconnect()
+		tx.UnequipConnection = nil
 	end
 
 	-- Notify
@@ -187,6 +192,7 @@ local function injectPrompt(player, character)
 	prompt.ObjectText = player.Name
 	prompt.MaxActivationDistance = MAX_DISTANCE
 	prompt.RequiresLineOfSight = false
+	prompt.Enabled = false -- Default to false, handled by Client Script
 	prompt.Parent = hrp
 
 	prompt.Triggered:Connect(function(sender)
@@ -231,7 +237,6 @@ local function injectPrompt(player, character)
 				end
 			end
 		end
-		scan(sender:FindFirstChild("Backpack"))
 		scan(sender.Character)
 
 		if #inventoryList == 0 then
@@ -315,12 +320,21 @@ InitiateGift.OnServerEvent:Connect(function(sender, receiver, toolInstance)
 		cancelTransaction(transactionId, "Transaction timed out.", true, true)
 	end)
 
+	-- Escrow Race Condition Defense
+	local unequipConnection
+	unequipConnection = toolInstance.AncestryChanged:Connect(function(_, newParent)
+		if newParent ~= sender.Character then
+			cancelTransaction(transactionId, "Transaction cancelled because tool was unequipped or dropped.", true, true)
+		end
+	end)
+
 	ActiveTransactions[transactionId] = {
 		Sender = sender,
 		Receiver = receiver,
 		Tool = toolInstance,
 		ToolId = toolInstance:GetAttribute("ToolId"),
-		Timer = timerThread
+		Timer = timerThread,
+		UnequipConnection = unequipConnection
 	}
 
 	-- Send to Receiver
@@ -380,6 +394,10 @@ ResolveGift.OnServerEvent:Connect(function(player, transactionId, isAccepted)
 		LockedTools[tx.Tool] = nil
 		ActiveIncoming[tx.Receiver.UserId] = nil
 		if tx.Timer then task.cancel(tx.Timer) end
+		if tx.UnequipConnection then
+			tx.UnequipConnection:Disconnect()
+			tx.UnequipConnection = nil
+		end
 		ActiveTransactions[transactionId] = nil
 
 		sendResult(tx.Sender, true, "Gift successfully sent to " .. tx.Receiver.Name .. "!")
