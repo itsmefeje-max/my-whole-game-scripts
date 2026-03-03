@@ -193,6 +193,7 @@ local function injectPrompt(player, character)
 	prompt.MaxActivationDistance = MAX_DISTANCE
 	prompt.RequiresLineOfSight = false
 	prompt.Enabled = false -- Default to false, handled by Client Script
+	prompt.HoldDuration = 1
 	prompt.Parent = hrp
 
 	prompt.Triggered:Connect(function(sender)
