@@ -1,12 +1,10 @@
--- Purpose: Handles receiving, accepting, and declining incoming car gifts from other players.
+-- Purpose: Handles receiving car gifts (Receiver UI) and status updates for the Sender using a Studio-designed label.
 -- Runs on: Client
 -- Location: StarterPlayerScripts
 -- Dependencies: Players, ReplicatedStorage, TweenService, Debris
--- Public API: N/A
 -- Networking: Listens to 'IncomingGift' & 'GiftResult'. Fires 'ResolveGift'.
--- Security: Sanitizes user input for RichText. Validates connection teardown to prevent exploits.
--- Performance: Optimized Tween cancelation and task.delay management to prevent memory leaks.
--- Notes: Incorporates specific Sender and Receiver Notification displays based on cross-referenced ReplicatedStorage modules.
+-- Security: Sanitizes player names for RichText. Enforces UI visibility state via state-guards.
+-- Performance: Utilizes task.cancel on notification threads to prevent flickering and memory leaks.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,45 +14,52 @@ local Debris = game:GetService("Debris")
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- 📡 REMOTES
+-- 📡 REMOTES & MODULES
 local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
-local Remotes = ReplicatedStorage:WaitForChild("GiftRemotes", 10)
-
-local function getRarityColorHex(rarity)
-	local map = {
-		Common = "b4b4b4",
-		Uncommon = "32dc32",
-		Rare = "3296ff",
-		Epic = "b432ff",
-		Legendary = "ffb432",
-		Mythic = "ff2828"
-	}
-	return map[rarity] or "ffffff"
-end
-
-local function sanitize(str)
-	return str:gsub("<", "&lt;"):gsub(">", "&gt;")
-end
-if not Remotes then
-	warn("⚠️ IncomingGiftUI: 'GiftRemotes' missing in ReplicatedStorage!")
-	return
-end
+local Remotes = ReplicatedStorage:WaitForChild("GiftRemotes")
 local IncomingGift = Remotes:WaitForChild("IncomingGift")
 local ResolveGift = Remotes:WaitForChild("ResolveGift")
 local GiftResult = Remotes:WaitForChild("GiftResult")
 
--- ⚙️ CONFIG
+-- ⚙️ CONFIG & UI REFERENCES
 local UI_NAME = "IncomingGiftUI"
+local NOTIF_GUI_NAME = "Notifications"
+local SENDER_LABEL_NAME = "SentToWho"
+
+local COLOR_USER = "#00FFFF"    -- Bright Cyan for @Usernames
+local COLOR_TEXT = "#FFFFFF"    -- White for standard text
+local COLOR_SUCCESS = "#55FF7F" -- Green for Accepted
+local COLOR_FAIL = "#FF5555"    -- Red for Declined/Error
+
 local HOVER_TWEEN = TweenInfo.new(0.2)
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255)
 local DIM_COLOR = Color3.fromRGB(200, 200, 200)
 
 local SFX = {
-	Incoming = "rbxassetid://6895079853", -- Use same as Open from your GiftUIController
+	Incoming = "rbxassetid://6895079853",
 	Click = "rbxassetid://4210586953",
 	Success = "rbxassetid://2619623062",
 	Error = "rbxassetid://1526487928"
 }
+
+-- 👁️ GUI INITIALIZATION
+local screenGui = PlayerGui:WaitForChild(UI_NAME, 10)
+local mainFrame = screenGui:WaitForChild("MainFrame")
+local statusLbl = mainFrame:WaitForChild("StatusLabel")
+local acceptBtn = mainFrame:WaitForChild("Buttons"):WaitForChild("AcceptButton")
+local declineBtn = mainFrame:WaitForChild("Buttons"):WaitForChild("DeclineButton")
+
+-- Studio Reference for Sender Notifications
+local notificationsGui = PlayerGui:WaitForChild(NOTIF_GUI_NAME, 10)
+local sentToWhoLbl = notificationsGui:WaitForChild(SENDER_LABEL_NAME, 5)
+
+if sentToWhoLbl then
+	sentToWhoLbl.RichText = true
+	sentToWhoLbl.Visible = false
+end
+
+-- 🛡️ HELPER FUNCTIONS
+local function sanitize(str) return str:gsub("<", "&lt;"):gsub(">", "&gt;") end
 
 local function playSfx(soundId, volume)
 	local s = Instance.new("Sound")
@@ -65,216 +70,122 @@ local function playSfx(soundId, volume)
 	Debris:AddItem(s, 3)
 end
 
--- ----------------------------------------------------------------------------
--- 🎨 GUI GENERATION (Fallback if not created in Studio)
--- ----------------------------------------------------------------------------
-local screenGui = PlayerGui:WaitForChild(UI_NAME, 10)
-
-if not screenGui then
-	warn("⚠️ IncomingGiftUI not found in PlayerGui. Ensure it is placed in StarterGui and named exactly 'IncomingGiftUI'.")
-	return
+local function getRarityColorHex(rarity)
+	local map = {Common="b4b4b4", Uncommon="32dc32", Rare="3296ff", Epic="b432ff", Legendary="ffb432", Mythic="ff2828"}
+	return map[rarity] or "ffffff"
 end
 
-local mainFrame = screenGui:WaitForChild("MainFrame")
-local avatarImg = mainFrame:WaitForChild("Avatar")
-local senderLbl = mainFrame:WaitForChild("SenderLabel")
-local whatIsSentLbl = mainFrame:WaitForChild("WhatIsSent")
-local statusLbl = mainFrame:WaitForChild("StatusLabel")
-local btnContainer = mainFrame:WaitForChild("Buttons")
-local acceptBtn = btnContainer:WaitForChild("AcceptButton")
-local declineBtn = btnContainer:WaitForChild("DeclineButton")
-
--- Enable RichText to properly display <font> tags in text labels
-senderLbl.RichText = true
-whatIsSentLbl.RichText = true
-
--- ----------------------------------------------------------------------------
--- ✨ HOVER EFFECT
--- ----------------------------------------------------------------------------
-local function addHover(btn)
-	if not btn or btn:GetAttribute("HoverAdded") then return end
-	btn:SetAttribute("HoverAdded", true)
-
-	local prop = nil
-	if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
-		prop = "ImageColor3"
-	elseif btn:IsA("TextButton") or btn:IsA("TextLabel") or btn:IsA("Frame") then
-		prop = "BackgroundColor3"
-	end
-	if not prop then return end
-
-	btn.MouseEnter:Connect(function()
-		TweenService:Create(btn, HOVER_TWEEN, {[prop] = DIM_COLOR}):Play()
-	end)
-	btn.MouseLeave:Connect(function()
-		TweenService:Create(btn, HOVER_TWEEN, {[prop] = NORMAL_COLOR}):Play()
-	end)
-end
-
-addHover(acceptBtn)
-addHover(declineBtn)
-
--- ----------------------------------------------------------------------------
 -- 💾 STATE
--- ----------------------------------------------------------------------------
 local currentTransactionId = nil
 local isProcessing = false
-local currentTween = nil
 local closeThread = nil
-local acceptConn = nil
-local declineConn = nil
-
+local countdownThread = nil
 local senderNotifThread = nil
 
--- ----------------------------------------------------------------------------
--- 🔴 CLOSE
--- ----------------------------------------------------------------------------
-local function closeMenu(delayTime)
-	if closeThread then
-		task.cancel(closeThread)
-		closeThread = nil
-	end
+-- 🟢 NOTIFICATION HANDLER (For Sender)
+local function showSenderStatus(richMessage)
+	if not sentToWhoLbl then return end
+
+	sentToWhoLbl.Text = richMessage
+	sentToWhoLbl.Visible = true
+
+	if senderNotifThread then task.cancel(senderNotifThread) end
+	senderNotifThread = task.delay(4, function()
+		sentToWhoLbl.Visible = false
+		senderNotifThread = nil
+	end)
+end
+
+local function closeReceiverMenu(delayTime)
+	if closeThread then task.cancel(closeThread) closeThread = nil end
+	if countdownThread then task.cancel(countdownThread) countdownThread = nil end
 
 	closeThread = task.delay(delayTime or 0, function()
-		if currentTween then
-			currentTween:Cancel()
-			currentTween = nil
-		end
-
-		if acceptConn then acceptConn:Disconnect() acceptConn = nil end
-		if declineConn then declineConn:Disconnect() declineConn = nil end
-
 		screenGui.Enabled = false
 		currentTransactionId = nil
 		isProcessing = false
 	end)
 end
 
--- ----------------------------------------------------------------------------
--- 🟢 SENDER NOTIFICATION HELPER
--- ----------------------------------------------------------------------------
-local function showSenderNotification(tier, tierHex, carName, receiverName)
-	local notificationsGui = PlayerGui:FindFirstChild("Notifications")
-	if not notificationsGui then
-		notificationsGui = Instance.new("ScreenGui")
-		notificationsGui.Name = "Notifications"
-		notificationsGui.ResetOnSpawn = false
-		notificationsGui.Parent = PlayerGui
-	end
-
-	local notifLbl = notificationsGui:FindFirstChild("WhatIsSent")
-	if not notifLbl then
-		notifLbl = Instance.new("TextLabel")
-		notifLbl.Name = "WhatIsSent"
-		notifLbl.Size = UDim2.new(0, 400, 0, 50)
-		notifLbl.Position = UDim2.new(0.5, 0, 0.8, 0)
-		notifLbl.AnchorPoint = Vector2.new(0.5, 0.5)
-		notifLbl.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-		notifLbl.Font = Enum.Font.GothamMedium
-		notifLbl.RichText = true
-		notifLbl.TextSize = 18
-		notifLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 8)
-		corner.Parent = notifLbl
-
-		local stroke = Instance.new("UIStroke")
-		stroke.Thickness = 2
-		stroke.Color = Color3.fromRGB(255, 175, 55)
-		stroke.Parent = notifLbl
-
-		notifLbl.Parent = notificationsGui
-	end
-
-	notifLbl.Text = string.format("<font color='#%s'>[%s]</font> %s Has been sent to <font color='#ff0000'>@%s</font>", tierHex, tier, carName, sanitize(receiverName))
-	notifLbl.Visible = true
-
-	if senderNotifThread then
-		task.cancel(senderNotifThread)
-		senderNotifThread = nil
-	end
-
-	senderNotifThread = task.delay(4, function()
-		if notifLbl then
-			notifLbl.Visible = false
-		end
-		senderNotifThread = nil
-	end)
-end
-
--- ----------------------------------------------------------------------------
--- 🟢 INCOMING REQUEST
--- ----------------------------------------------------------------------------
+-- 🟢 INCOMING GIFT (For Receiver)
 IncomingGift.OnClientEvent:Connect(function(transactionId, sender, toolName)
-	if currentTransactionId then return end -- Already reviewing one
-	if closeThread then task.cancel(closeThread) closeThread = nil end
+	if currentTransactionId then return end
+	if closeThread then task.cancel(closeThread) end
 
 	currentTransactionId = transactionId
 	isProcessing = false
 
 	local displayName = toolName:gsub(" Tool", ""):gsub(" Item", "")
-	local tier = "Common"
-	if CarStats.Cars[displayName] then
-		tier = CarStats.Cars[displayName].Rarity
-	end
+	local tier = CarStats.Cars[displayName] and CarStats.Cars[displayName].Rarity or "Common"
 	local tierHex = getRarityColorHex(tier)
 
-	senderLbl.Text = string.format("<font color='#55ff7f'>Received Gift from</font> <font color='#ff0000'>@%s</font>", sanitize(sender.Name))
-	whatIsSentLbl.Text = string.format("Sent a <font color='#%s'>[%s]</font> %s", tierHex, tier, displayName)
-	avatarImg.Image = "rbxthumb://type=AvatarHeadShot&id=" .. sender.UserId .. "&w=150&h=150"
+	mainFrame:WaitForChild("SenderLabel").Text = string.format("<font color='#55ff7f'>Received Gift from</font> <font color='%s'>@%s</font>", COLOR_USER, sanitize(sender.Name))
+	mainFrame:WaitForChild("WhatIsSent").Text = string.format("Sent a <font color='#%s'>[%s]</font> %s", tierHex, tier, displayName)
+	mainFrame:WaitForChild("Avatar").Image = "rbxthumb://type=AvatarHeadShot&id=" .. sender.UserId .. "&w=150&h=150"
 
-	statusLbl.Text = "Time remaining: 30s..."
+	local timeLeft = 30
 	statusLbl.TextColor3 = Color3.fromRGB(150, 150, 150)
-
-	if acceptConn then acceptConn:Disconnect() end
-	if declineConn then declineConn:Disconnect() end
-
-	acceptConn = acceptBtn.MouseButton1Click:Connect(function()
-		if isProcessing or not currentTransactionId then return end
-		isProcessing = true
-		playSfx(SFX.Click, 0.5)
-		statusLbl.Text = "Accepting transaction..."
-		statusLbl.TextColor3 = Color3.fromRGB(255, 255, 100)
-		ResolveGift:FireServer(currentTransactionId, true)
+	countdownThread = task.spawn(function()
+		while timeLeft > 0 and not isProcessing do
+			statusLbl.Text = string.format("Time remaining: %ds...", timeLeft)
+			task.wait(1)
+			timeLeft -= 1
+		end
 	end)
 
-	declineConn = declineBtn.MouseButton1Click:Connect(function()
-		if isProcessing or not currentTransactionId then return end
-		isProcessing = true
-		playSfx(SFX.Click, 0.5)
-		statusLbl.Text = "Declining transaction..."
-		statusLbl.TextColor3 = Color3.fromRGB(255, 85, 85)
-		ResolveGift:FireServer(currentTransactionId, false)
-	end)
-
-	-- Enable and pop in
 	screenGui.Enabled = true
 	mainFrame.Visible = true
-
 	playSfx(SFX.Incoming, 0.6)
 end)
 
--- ----------------------------------------------------------------------------
--- 🧾 RESULT NOTIFICATION
--- ----------------------------------------------------------------------------
+-- 🏁 RESOLUTION (Resolve Logic for Receiver Buttons)
+local function handleResolution(isAccepted)
+	if isProcessing or not currentTransactionId then return end
+	isProcessing = true
+	playSfx(SFX.Click, 0.5)
+
+	statusLbl.Text = isAccepted and "Accepting..." or "Declining..."
+	statusLbl.TextColor3 = isAccepted and Color3.fromRGB(255, 255, 100) or Color3.fromRGB(255, 85, 85)
+
+	ResolveGift:FireServer(currentTransactionId, isAccepted)
+end
+
+acceptBtn.MouseButton1Click:Connect(function() handleResolution(true) end)
+declineBtn.MouseButton1Click:Connect(function() handleResolution(false) end)
+
+-- 🧾 RESULT NOTIFICATION (Handles both Sender & Receiver feedback)
 GiftResult.OnClientEvent:Connect(function(success, message, toolId, isSender, otherPlayerName, otherPlayerId)
-	if isSender and success and toolId and otherPlayerName then
-		local displayName = toolId:gsub(" Tool", ""):gsub(" Item", "")
-		local tier = "Common"
-		if CarStats.Cars[displayName] then tier = CarStats.Cars[displayName].Rarity end
-		showSenderNotification(tier, getRarityColorHex(tier), displayName, otherPlayerName)
+	if isSender and otherPlayerName then
+		local cleanName = sanitize(otherPlayerName)
+		local richMsg = ""
+
+		if success then
+			if message == "SENT_PENDING" then
+				-- Initial request sent
+				richMsg = string.format("<font color='%s'>Sent gift to: </font><font color='%s'>@%s</font>", COLOR_TEXT, COLOR_USER, cleanName)
+			else
+				-- Acceptance confirmed
+				richMsg = string.format("<font color='%s'>Gift </font><font color='%s'>accepted</font><font color='%s'> by </font><font color='%s'>@%s</font>", COLOR_TEXT, COLOR_SUCCESS, COLOR_TEXT, COLOR_USER, cleanName)
+			end
+		else
+			if message:find("declined") then
+				-- Explicitly declined
+				richMsg = string.format("<font color='%s'>Gift </font><font color='%s'>declined</font><font color='%s'> by </font><font color='%s'>@%s</font>", COLOR_TEXT, COLOR_FAIL, COLOR_TEXT, COLOR_USER, cleanName)
+			else
+				-- System error (Too far, busy, etc.)
+				richMsg = string.format("<font color='%s'>%s</font>", COLOR_FAIL, sanitize(message))
+			end
+		end
+		showSenderStatus(richMsg)
 	end
 
-	if screenGui and screenGui.Enabled and (not isSender) then
+	-- Logic for Receiver UI feedback
+	if screenGui.Enabled and (not isSender) then
+		if countdownThread then task.cancel(countdownThread) end
+		isProcessing = true
 		statusLbl.Text = message
-		if success then
-			statusLbl.TextColor3 = Color3.fromRGB(85, 255, 127) -- Green
-			playSfx(SFX.Success, 0.6)
-		else
-			statusLbl.TextColor3 = Color3.fromRGB(255, 85, 85) -- Red
-			playSfx(SFX.Error, 0.6)
-		end
-		closeMenu(2.5) -- Close after 2.5 seconds
+		statusLbl.TextColor3 = success and Color3.fromRGB(85, 255, 127) or Color3.fromRGB(255, 85, 85)
+		playSfx(success and SFX.Success or SFX.Error, 0.6)
+		closeReceiverMenu(2.5)
 	end
 end)
