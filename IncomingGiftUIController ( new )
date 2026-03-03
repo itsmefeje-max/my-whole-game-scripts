@@ -363,10 +363,7 @@ IncomingGift.OnClientEvent:Connect(function(transactionId, sender, toolName)
 
 	-- Enable and pop in
 	screenGui.Enabled = true
-	mainFrame.Size = UDim2.new(0, 0, 0, 0)
-	if currentTween then currentTween:Cancel() end
-	currentTween = TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(0, 400, 0, 250)})
-	currentTween:Play()
+	mainFrame.Visible = true
 
 	playSfx(SFX.Incoming, 0.6)
 end)
