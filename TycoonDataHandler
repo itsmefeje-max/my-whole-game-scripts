@@ -300,6 +300,11 @@ AdminAPI.OnInvoke = function(action, player)
 		markDirty(player)
 		print("⚠️ FORCE WIPE INITIATED FOR: " .. player.Name)
 		return true
+	elseif action == "MarkDirty" and player and SessionData[player] then
+		markDirty(player)
+		SessionData[player].ExplicitClear = true -- Prevents anti-wipe if player gives away their only item
+		print("🔄 MARK DIRTY INITIATED FOR: " .. player.Name)
+		return true
 	end
 	return false
 end
