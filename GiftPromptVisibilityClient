@@ -20,6 +20,7 @@ local function isToolValidGift(tool)
 	-- Validate Tycoon attributes
 	if not tool:GetAttribute("IssuedByServer") then return false end
 	if not tool:GetAttribute("ToolId") then return false end
+	if tool:GetAttribute("GiftLocked") then return false end
 	return true
 end
 
@@ -65,11 +66,20 @@ end
 local function onCharacterAdded(character)
 	checkEquippedState()
 
-	character.ChildAdded:Connect(function(child)
+	local function onToolAdded(child)
 		if child:IsA("Tool") then
 			task.defer(checkEquippedState)
+			child:GetAttributeChangedSignal("GiftLocked"):Connect(function()
+				task.defer(checkEquippedState)
+			end)
 		end
-	end)
+	end
+
+	character.ChildAdded:Connect(onToolAdded)
+
+	for _, child in ipairs(character:GetChildren()) do
+		onToolAdded(child)
+	end
 
 	character.ChildRemoved:Connect(function(child)
 		if child:IsA("Tool") then

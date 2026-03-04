@@ -60,6 +60,7 @@ end
 local function cancelTransaction(transactionId, reason, notifySender, notifyReceiver)
 	local tx = ActiveTransactions[transactionId]
 	if not tx then return end
+	if tx.IsResolving then return end
 
 	if tx.Tool then
 		tx.Tool:SetAttribute("GiftLocked", nil)
@@ -80,31 +81,14 @@ local function cancelTransaction(transactionId, reason, notifySender, notifyRece
 end
 
 local function transferTool(sender, receiver, toolInstance)
-	local CarTools = ServerStorage:FindFirstChild("CarTools")
-	if not CarTools then return false end
-
 	local toolId = toolInstance:GetAttribute("ToolId")
-	local sourceTool = CarTools:FindFirstChild(toolId) or CarTools:FindFirstChild((toolId:gsub(" Item", "")))
-	if not sourceTool then return false end
+	if not toolId then return false end
 
-	local newId = HttpService:GenerateGUID(false)
-	local now = os.time()
+	local gearTool = toolInstance:Clone()
 
-	local backpackTool = sourceTool:Clone()
-	local gearTool = sourceTool:Clone()
-
-	for _, newTool in ipairs({backpackTool, gearTool}) do
-		newTool:SetAttribute("IssuedByServer", true)
-		newTool:SetAttribute("IssuedAt", now)
-		newTool:SetAttribute("IssuedId", newId)
-		newTool:SetAttribute("ToolId", sourceTool.Name)
-		newTool.CanBeDropped = false
-	end
-
-	if receiver:FindFirstChild("Backpack") then backpackTool.Parent = receiver.Backpack end
+	if receiver:FindFirstChild("Backpack") then toolInstance.Parent = receiver.Backpack end
 	if receiver:FindFirstChild("StarterGear") then gearTool.Parent = receiver.StarterGear end
 
-	toolInstance:Destroy()
 	if sender:FindFirstChild("StarterGear") then
 		for _, gear in pairs(sender.StarterGear:GetChildren()) do
 			if gear:IsA("Tool") and gear:GetAttribute("ToolId") == toolId then
@@ -112,6 +96,12 @@ local function transferTool(sender, receiver, toolInstance)
 				break
 			end
 		end
+	end
+
+	local AdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+	if AdminAPI then
+		AdminAPI:Invoke("MarkDirty", sender)
+		AdminAPI:Invoke("MarkDirty", receiver)
 	end
 
 	return true
@@ -177,40 +167,6 @@ local function attemptInitiateGift(sender, receiver, optionalToolInstance)
 		return
 	end
 
-	-- Initial Validation UI Trigger
-	sendResult(sender, true, "VALIDATING_PENDING", toolInstance:GetAttribute("ToolId"), true, receiver.Name, receiver.UserId)
-
-	-- Artificial 3-Second Validation Delay
-	task.wait(3)
-
-	-- Re-verify conditions after delay to prevent race conditions
-	if not sender.Character or not receiver.Character then
-		sendResult(sender, false, "Gift failed: player left or died.")
-		sender:SetAttribute("IsInitiatingGift", nil)
-		return
-	end
-
-	if not isToolValidAndParented(sender, toolInstance) or toolInstance:GetAttribute("GiftLocked") or LockedTools[toolInstance] then
-		sendResult(sender, false, "Gift failed: car unequipped or unavailable.")
-		sender:SetAttribute("IsInitiatingGift", nil)
-		return
-	end
-
-	if ActiveIncoming[receiver.UserId] then
-		sendResult(sender, false, "Gift failed: " .. receiver.Name .. " is busy.")
-		sender:SetAttribute("IsInitiatingGift", nil)
-		return
-	end
-
-	local senderHrpFinal = sender.Character:FindFirstChild("HumanoidRootPart")
-	local receiverHrpFinal = receiver.Character:FindFirstChild("HumanoidRootPart")
-
-	if not senderHrpFinal or not receiverHrpFinal or (senderHrpFinal.Position - receiverHrpFinal.Position).Magnitude > MAX_DISTANCE + 5 then
-		sendResult(sender, false, "Gift failed: too far away.")
-		sender:SetAttribute("IsInitiatingGift", nil)
-		return
-	end
-
 	-- Escrow Lock
 	local transactionId = HttpService:GenerateGUID(false)
 	toolInstance:SetAttribute("GiftLocked", true)
@@ -256,6 +212,15 @@ local function injectPrompt(player, character)
 	prompt.Triggered:Connect(function(sender)
 		attemptInitiateGift(sender, player, nil)
 	end)
+
+	local humanoid = character:WaitForChild("Humanoid", 10)
+	if humanoid then
+		humanoid.Died:Connect(function()
+			if prompt then
+				prompt.Enabled = false
+			end
+		end)
+	end
 end
 
 Players.PlayerAdded:Connect(function(player)
