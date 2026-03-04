@@ -174,8 +174,9 @@ end
 -- ----------------------------------------------------------------------------
 -- 🎁 GIVE TOOL
 -- ----------------------------------------------------------------------------
-local function giveTool(player, toolName)
+local function giveTool(player, toolData)
 	if not player or not player.Parent then return end
+	local toolName = typeof(toolData) == "table" and toolData.ToolId or toolData
 	local sourceTool = CarTools:FindFirstChild(toolName)
 	if not sourceTool then 
 		local altName = toolName:gsub(" Item", "")
@@ -191,6 +192,16 @@ local function giveTool(player, toolName)
 		local gearTool = sourceTool:Clone()
 		tagIssued(backpackTool, sourceTool.Name)
 		tagIssued(gearTool, sourceTool.Name)
+
+		if typeof(toolData) == "table" then
+			for k, v in pairs(toolData) do
+				if k ~= "ToolId" then
+					backpackTool:SetAttribute(k, v)
+					gearTool:SetAttribute(k, v)
+				end
+			end
+		end
+
 		backpackTool.Parent = player.Backpack
 		if player:FindFirstChild("StarterGear") then
 			gearTool.Parent = player.StarterGear
@@ -359,7 +370,13 @@ local function save(player, isClosing)
 					if invCount < MAX_INVENTORY_SIZE then
 						local id = tool:GetAttribute("ToolId")
 						if id then
-							table.insert(inventory, id)
+							local toolData = { ToolId = id }
+							for name, value in pairs(tool:GetAttributes()) do
+								if name ~= "IssuedByServer" and name ~= "IssuedAt" and name ~= "IssuedId" and name ~= "ToolId" and name ~= "GiftLocked" then
+									toolData[name] = value
+								end
+							end
+							table.insert(inventory, toolData)
 							invCount += 1
 						end
 					end
@@ -424,7 +441,8 @@ local function save(player, isClosing)
 						warn("⚠️ Anti-Wipe (Inventory): Preserving for " .. player.Name)
 						finalInventory = {}
 						for _, oldId in pairs(oldData.Inventory) do
-							if CarTools:FindFirstChild(oldId) then table.insert(finalInventory, oldId) end
+							local tId = typeof(oldId) == "table" and oldId.ToolId or oldId
+							if CarTools:FindFirstChild(tId) then table.insert(finalInventory, oldId) end
 						end
 					end
 
@@ -495,6 +513,7 @@ local function save(player, isClosing)
 	end
 
 	session.IsDirty = false
+	session.ExplicitClear = false
 	session.LastSave = os.time()
 	-- [[ SHOP SYNC ]] Cleanup session if player is leaving
 	if isClosing then
