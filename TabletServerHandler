@@ -314,3 +314,11 @@ TabletEvent.OnServerEvent:Connect(function(player, action, plotName, requestId)
 		MarketplaceService:PromptProductPurchase(player, DEV_PRODUCT_ID)
 	end
 end)
+
+-- 🧹 CLEANUP MEMORY LEAKS
+Players.PlayerRemoving:Connect(function(player)
+	playerCooldowns[player.UserId] = nil
+	prompt2xCooldowns[player.UserId] = nil
+	thumbnailCache[player.UserId] = nil
+	nameToUserIdCache[player.Name] = nil
+end)
