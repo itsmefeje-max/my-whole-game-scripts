@@ -197,23 +197,23 @@ local function setupTablet(plot)
 			end
 		end
 
-			-- 4. UPDATE FUNCTIONS
-			local lastOwnerName = nil
-			local function updateOwnerInfo()
-				local playerName = ownerVal.Value
-				if playerName == lastOwnerName then return end
-				lastOwnerName = playerName
+		-- 4. UPDATE FUNCTIONS
+		local lastOwnerName = nil
+		local function updateOwnerInfo()
+			local playerName = ownerVal.Value
+			if playerName == lastOwnerName then return end
+			lastOwnerName = playerName
 
-				if playerName and playerName ~= "" then
-					usernameLabel.Text = playerName
+			if playerName and playerName ~= "" then
+				usernameLabel.Text = playerName
 
-					-- Prefer online player UserId first, then fall back to cached lookup.
-					local onlinePlayer = Players:FindFirstChild(playerName)
-					local userId = onlinePlayer and onlinePlayer.UserId or getUserIdCached(playerName)
-					avatarLabel.Image = getHeadshotCached(userId)
-				else
-					usernameLabel.Text = "Vacant"
-					avatarLabel.Image = ""
+				-- Prefer online player UserId first, then fall back to cached lookup.
+				local onlinePlayer = Players:FindFirstChild(playerName)
+				local userId = onlinePlayer and onlinePlayer.UserId or getUserIdCached(playerName)
+				avatarLabel.Image = getHeadshotCached(userId)
+			else
+				usernameLabel.Text = "Vacant"
+				avatarLabel.Image = ""
 			end
 		end
 
@@ -313,4 +313,12 @@ TabletEvent.OnServerEvent:Connect(function(player, action, plotName, requestId)
 
 		MarketplaceService:PromptProductPurchase(player, DEV_PRODUCT_ID)
 	end
+end)
+
+-- 🧹 CLEANUP MEMORY LEAKS
+Players.PlayerRemoving:Connect(function(player)
+	playerCooldowns[player.UserId] = nil
+	prompt2xCooldowns[player.UserId] = nil
+	thumbnailCache[player.UserId] = nil
+	nameToUserIdCache[player.Name] = nil
 end)
