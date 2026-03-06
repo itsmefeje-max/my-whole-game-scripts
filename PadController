@@ -6,6 +6,7 @@
 
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
+local StarterPack = game:GetService("StarterPack")
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
@@ -158,6 +159,8 @@ local function removeToolFromPlayer(player, toolName)
 			found = true
 		end
 	end
+	local gearTool = player.StarterGear:FindFirstChild(toolName)
+	if gearTool then gearTool:Destroy() end
 	return found
 end
 
@@ -214,18 +217,12 @@ local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVa
 	-- 🛡️ SECURITY FIX: TRUST ATTRIBUTES, NOT NAMES
 	-- 1. Must be issued by server
 	if not tool:GetAttribute("IssuedByServer") then return end
-	
+
 	-- 2. Get the Secure ID (Server Authority)
 	local secureToolId = tool:GetAttribute("ToolId")
 	if not secureToolId then 
 		warn("⚠️ Security: Tool missing ID attribute: " .. tool.Name)
 		return 
-	end
-
-	-- 2.5 Gift Lock Validation (Cannot place a locked car)
-	if tool:GetAttribute("GiftLocked") then
-		warn("⚠️ Security: Cannot place a car that is currently locked for a gift transaction.")
-		return
 	end
 
 	-- 3. Resolve Model from ID (NOT tool.Name)
@@ -268,10 +265,17 @@ local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVa
 				end
 
 				if originalTool then
-					local AdminAPI = game:GetService("ServerStorage"):FindFirstChild("TycoonAdminAPI")
-					if AdminAPI then
-						AdminAPI:Invoke("GiveTool", player, originalTool.Name)
+					local backpackClone = originalTool:Clone()
+					local gearClone = originalTool:Clone()
+					for _, clone in ipairs({backpackClone, gearClone}) do
+						clone:SetAttribute("IssuedByServer", true)
+						clone:SetAttribute("IssuedAt", os.time())
+						clone:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
+						clone:SetAttribute("ToolId", originalTool.Name)
+						clone.CanBeDropped = false
 					end
+					backpackClone.Parent = player.Backpack
+					gearClone.Parent = player.StarterGear
 				else
 					warn("❌ CRITICAL: Could not find original tool to refund: " .. tostring(secureToolId))
 				end
@@ -297,10 +301,17 @@ local function AttemptPickup(player, padObject, padPart, occupiedVal, linkedCarV
 	local foundTool = FindToolFromModelName(carName)
 
 	if foundTool then
-		local AdminAPI = game:GetService("ServerStorage"):FindFirstChild("TycoonAdminAPI")
-		if AdminAPI then
-			AdminAPI:Invoke("GiveTool", player, foundTool.Name)
+		local backpackClone = foundTool:Clone()
+		local gearClone = foundTool:Clone()
+		for _, clone in ipairs({backpackClone, gearClone}) do
+			clone:SetAttribute("IssuedByServer", true)
+			clone:SetAttribute("IssuedAt", os.time())
+			clone:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
+			clone:SetAttribute("ToolId", foundTool.Name)
+			clone.CanBeDropped = false
 		end
+		backpackClone.Parent = player.Backpack
+		gearClone.Parent = player.StarterGear 
 
 		carToRemove:Destroy()
 
