@@ -188,22 +188,16 @@ local function giveTool(player, toolName, customAttributes)
 
 	if sourceTool then
 		local backpackTool = sourceTool:Clone()
-		local gearTool = sourceTool:Clone()
 		tagIssued(backpackTool, sourceTool.Name)
-		tagIssued(gearTool, sourceTool.Name)
 
 		-- Apply custom attributes
 		if customAttributes and type(customAttributes) == "table" then
 			for attrName, attrValue in pairs(customAttributes) do
 				backpackTool:SetAttribute(attrName, attrValue)
-				gearTool:SetAttribute(attrName, attrValue)
 			end
 		end
 
 		backpackTool.Parent = player.Backpack
-		if player:FindFirstChild("StarterGear") then
-			gearTool.Parent = player.StarterGear
-		end
 		markDirty(player)
 	else
 		warn("⚠️ [DATA] Invalid tool requested: " .. tostring(toolName))
@@ -553,8 +547,11 @@ local function InitializePlayer(player)
 	local function setDirty() markDirty(player) end
 	cash.Changed:Connect(setDirty); wallet.Changed:Connect(setDirty); atm.Changed:Connect(setDirty)
 
-	local gear = player:WaitForChild("StarterGear", 10)
-	if gear then gear.ChildAdded:Connect(setDirty); gear.ChildRemoved:Connect(setDirty) end
+	player.CharacterRemoving:Connect(function()
+		if SessionData[player] and SessionData[player].DataLoaded then
+			SessionData[player].Inventory = CaptureInventory(player)
+		end
+	end)
 
 	player.CharacterAdded:Connect(function(char)
 			local currentInv
@@ -589,16 +586,6 @@ local function InitializePlayer(player)
 		end
 
 		sanitizeInventory(player)
-
-			-- Hook humanoid death to snapshot inventory before Backpack is cleared
-			local humanoid = char:WaitForChild("Humanoid", 10)
-			if humanoid then
-				humanoid.Died:Connect(function()
-					if SessionData[player] and SessionData[player].DataLoaded then
-						SessionData[player].Inventory = CaptureInventory(player)
-					end
-				end)
-			end
 	end)
 
 	local key = "User_V27_" .. player.UserId
