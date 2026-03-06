@@ -370,6 +370,14 @@ local function scanContainer(container)
 	end
 end
 
+local function pruneDeadSampleTools()
+	for cleanName, tool in pairs(sampleTool) do
+		if typeof(tool) ~= "Instance" or tool.Parent == nil or not tool:IsA("Tool") then
+			sampleTool[cleanName] = nil
+		end
+	end
+end
+
 -- ========= UI POOL =========
 local poolFolder = Instance.new("Folder")
 poolFolder.Name = "__InventoryUIPool"
@@ -505,6 +513,7 @@ local function renderCurrentTab()
 	end
 
 	releaseAllButtons()
+	pruneDeadSampleTools()
 
 	local renderedAny = false
 	local char = player.Character
@@ -515,6 +524,10 @@ local function renderCurrentTab()
 			renderedAny = true
 
 			local tool = sampleTool[carName]
+			if tool and (tool.Parent == nil or not tool:IsA("Tool")) then
+				sampleTool[carName] = nil
+				tool = nil
+			end
 			local btn = getPooledButton()
 			activeButtons[carName] = btn
 
@@ -674,38 +687,45 @@ local function onCharacter(char)
 	-- Hook character (tools held in hand)
 	scanContainer(char)
 	local charConnections = bindContainer(char)
-	
+
 	-- When char dies, clean up char connections
 	local deathConn
-	deathConn = char.Humanoid.Died:Connect(function()
-		for _, c in ipairs(charConnections) do c:Disconnect() end
-		if deathConn then deathConn:Disconnect() end
-	end)
-	
+	local humanoid = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
+	if humanoid then
+		deathConn = humanoid.Died:Connect(function()
+			for _, c in ipairs(charConnections) do c:Disconnect() end
+			if deathConn then deathConn:Disconnect() end
+		end)
+	end
+
 	scheduleRender()
 end
 
 -- Handle Respawn Logic
 player.CharacterAdded:Connect(function(char)
 	-- 1. Reset Data
-		toolToCleanName = setmetatable({}, { __mode = "k" })
+	toolToCleanName = setmetatable({}, { __mode = "k" })
 	counts = {}
 	sampleTool = {}
-		scannedTools = setmetatable({}, { __mode = "k" })
+	scannedTools = setmetatable({}, { __mode = "k" })
 
 	-- 2. Switch to NEW Backpack
 	currentBackpack = player:WaitForChild("Backpack")
-	
+
 	-- Clean old backpack connections
 	for _, c in ipairs(bpConnections) do c:Disconnect() end
-	
+
 	-- Bind new backpack
 	bpConnections = bindContainer(currentBackpack)
+
+	-- Allow server-side respawn repopulation to settle before scanning/rendering
+	task.wait(0.1)
 	scanContainer(currentBackpack)
 
 	-- 3. Handle Character
 	task.defer(function()
 		scanContainer(char)
+		pruneDeadSampleTools()
 		onCharacter(char)
 		scheduleRender()
 	end)

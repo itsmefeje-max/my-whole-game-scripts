@@ -6,7 +6,6 @@
 
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
-local StarterPack = game:GetService("StarterPack")
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
@@ -159,8 +158,6 @@ local function removeToolFromPlayer(player, toolName)
 			found = true
 		end
 	end
-	local gearTool = player.StarterGear:FindFirstChild(toolName)
-	if gearTool then gearTool:Destroy() end
 	return found
 end
 
@@ -272,16 +269,12 @@ local function AttemptPlace(player, padObject, padPart, occupiedVal, linkedCarVa
 
 				if originalTool then
 					local backpackClone = originalTool:Clone()
-					local gearClone = originalTool:Clone()
-					for _, clone in ipairs({backpackClone, gearClone}) do
-						clone:SetAttribute("IssuedByServer", true)
-						clone:SetAttribute("IssuedAt", os.time())
-						clone:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
-						clone:SetAttribute("ToolId", originalTool.Name)
-						clone.CanBeDropped = false
-					end
+					backpackClone:SetAttribute("IssuedByServer", true)
+					backpackClone:SetAttribute("IssuedAt", os.time())
+					backpackClone:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
+					backpackClone:SetAttribute("ToolId", originalTool.Name)
+					backpackClone.CanBeDropped = false
 					backpackClone.Parent = player.Backpack
-					gearClone.Parent = player.StarterGear
 				else
 					warn("❌ CRITICAL: Could not find original tool to refund: " .. tostring(secureToolId))
 				end
@@ -308,16 +301,12 @@ local function AttemptPickup(player, padObject, padPart, occupiedVal, linkedCarV
 
 	if foundTool then
 		local backpackClone = foundTool:Clone()
-		local gearClone = foundTool:Clone()
-		for _, clone in ipairs({backpackClone, gearClone}) do
-			clone:SetAttribute("IssuedByServer", true)
-			clone:SetAttribute("IssuedAt", os.time())
-			clone:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
-			clone:SetAttribute("ToolId", foundTool.Name)
-			clone.CanBeDropped = false
-		end
+		backpackClone:SetAttribute("IssuedByServer", true)
+		backpackClone:SetAttribute("IssuedAt", os.time())
+		backpackClone:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
+		backpackClone:SetAttribute("ToolId", foundTool.Name)
+		backpackClone.CanBeDropped = false
 		backpackClone.Parent = player.Backpack
-		gearClone.Parent = player.StarterGear 
 
 		carToRemove:Destroy()
 
