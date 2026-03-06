@@ -1,6 +1,12 @@
--- [[ SERVER SCRIPT: TabletServerHandler (Secure & Fixed) ]]
--- Indicates what the script is for: Handles Tablet Owner Info, Secure Claiming, Cooldowns, SFX.
--- NOTE: DevProduct receipt handling is now moved to ReceiptRouter. ProcessReceipt below is commented out.
+-- Purpose: Handles Tablet Owner Info, Secure Claiming, Cooldowns, SFX, and Product Prompts.
+-- Runs on: Server
+-- Location: ServerScriptService
+-- Dependencies: Players, Workspace, ReplicatedStorage, MarketplaceService, Debris
+-- Public API: None
+-- Networking: TabletEvent (RemoteEvent) - Client requests Claim/Prompt2X, Server replies with ClaimResult.
+-- Security: Ownership verification, distance checks, strict type validation, API rate limiting.
+-- Performance: Cached UserId and Headshot lookups, early-exit validation on remotes.
+-- Notes: DevProduct receipt handling is moved to ReceiptRouter. ProcessReceipt is omitted here.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -12,6 +18,7 @@ local Debris = game:GetService("Debris")
 local DEV_PRODUCT_ID = 3509697462
 local TYCOON_FOLDER_NAME = "Tycoons"
 local CLAIM_COOLDOWN = 1.5
+local PROMPT_COOLDOWN_TIME = 2.5 -- 🛡️ SECURITY: DevProduct prompt rate limit
 local MAX_CLAIM_DISTANCE = 20 -- 🛡️ SECURITY: Max studs away to claim
 
 -- 🔊 SOUND CONFIGURATION
@@ -30,6 +37,7 @@ end
 
 -- 🛡️ STATE MANAGEMENT
 local playerCooldowns = {}
+local promptCooldowns = {} -- 🛡️ SECURITY: State tracking for API abuse prevention
 local nameToUserIdCache = {}
 local thumbnailCache = {}
 local pendingUserIdRequests = {}
@@ -239,6 +247,9 @@ TycoonFolder.ChildAdded:Connect(setupTablet)
 -- 📡 REMOTE HANDLING (CLAIM LOGIC)
 -- ============================================================================
 TabletEvent.OnServerEvent:Connect(function(player, action, plotName, requestId)
+	-- 🛡️ SECURITY: Strict Type Validation
+	if type(action) ~= "string" or type(plotName) ~= "string" then return end
+
 	local function respondClaim(success, payload)
 		TabletEvent:FireClient(player, "ClaimResult", plotName, success, payload, requestId)
 	end
@@ -303,8 +314,25 @@ TabletEvent.OnServerEvent:Connect(function(player, action, plotName, requestId)
 		end
 
 	elseif action == "Prompt2X" then
+		-- 🛡️ SECURITY: DevProduct Prompts Rate Limiter
+		local lastPrompt = promptCooldowns[player.UserId] or 0
+		if (os.clock() - lastPrompt) < PROMPT_COOLDOWN_TIME then
+			return -- Drop spam
+		end
+		promptCooldowns[player.UserId] = os.clock()
+
 		local amount = pendingVal.Value
 		if amount <= 0 then return end
-		MarketplaceService:PromptProductPurchase(player, DEV_PRODUCT_ID)
+
+		-- Use pcall in case MarketplaceService fails internally
+		pcall(function()
+			MarketplaceService:PromptProductPurchase(player, DEV_PRODUCT_ID)
+		end)
 	end
+end)
+
+-- 🧹 Memory Leak Prevention
+Players.PlayerRemoving:Connect(function(player)
+	playerCooldowns[player.UserId] = nil
+	promptCooldowns[player.UserId] = nil
 end)
