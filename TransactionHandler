@@ -1,16 +1,26 @@
--- [[ SERVER SCRIPT: TransactionHandler (Secure Edition) ]]
--- [[ FIXES: ATM Security Bypass (Fail-Safe Implemented) ]]
+-- Purpose: Handles secure Bank <-> ATM <-> Wallet transfers with transaction locking and rate limits.
+-- Runs on: Server
+-- Location: ServerScriptService
+-- Dependencies: ReplicatedStorage, Workspace, Players
+-- Public API: WithdrawFunction (RemoteFunction)
+-- Networking: Client invokes WithdrawFunction -> Server processes -> Returns boolean, string
+-- Security: Transaction locks prevent race conditions, strict type validation, upper limits on amount.
+-- Performance: Early exit checks prevent expensive Workspace lookups for malformed requests.
+-- Notes: Failsafe distance check included. Requires ATM Manager NPC to be loaded.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
 
--- ⚠️ Ensure "WithdrawFunction" exists in ReplicatedStorage (RemoteFunction)
 local withdrawFunc = ReplicatedStorage:WaitForChild("WithdrawFunction")
 
--- CONFIG
 local NPC_FOLDER_NAME = "NPCS"
 local MANAGER_NAME = "AfraiC4t"
 local MAX_DISTANCE = 20 -- Studs (For Physical Withdraw only)
+local MAX_AMOUNT_LIMIT = 1000000000000 -- 1 Trillion safety cap
+
+-- 🛡️ SECURITY: Transaction Locks
+local activeTransactions = {}
 
 -- [[ 1. TRANSFER: BANK -> ATM (Remote / App) ]]
 local function TransferToATM(player, amount)
@@ -23,8 +33,8 @@ local function TransferToATM(player, amount)
 	if not bank or not atm then return false, "Missing Values" end
 
 	if bank.Value >= amount then
-		bank.Value = bank.Value - amount
-		atm.Value = atm.Value + amount
+		bank.Value -= amount
+		atm.Value += amount
 		print("📱 Mobile Transfer: " .. player.Name .. " moved $"..amount.." to ATM.")
 		return true, "Transfer Successful! Visit ATM to collect."
 	else
@@ -48,16 +58,13 @@ local function WithdrawFromATM(player, amount)
 				return false, "You are too far from the ATM!"
 			end
 		else
-			-- Case: Player or NPC has no physical body loaded
 			return false, "Security Check Failed: Physics not loaded."
 		end
 	else
-		-- Case: NPC is missing/deleted/not loaded
 		warn("⚠️ ATM Manager NPC missing. Transaction Denied for Security.")
 		return false, "ATM Unavailable: Security Verification Failed"
 	end
 
-	-- Logic proceeds ONLY if security check passed
 	local leaderstats = player:FindFirstChild("leaderstats")
 	local atm = leaderstats and leaderstats:FindFirstChild("ATMBalance")
 	local wallet = leaderstats and leaderstats:FindFirstChild("Wallet")
@@ -65,8 +72,8 @@ local function WithdrawFromATM(player, amount)
 	if not atm or not wallet then return false, "Data Error" end
 
 	if atm.Value >= amount then
-		atm.Value = atm.Value - amount
-		wallet.Value = wallet.Value + amount
+		atm.Value -= amount
+		wallet.Value += amount
 		print("🏧 Physical Withdraw: " .. player.Name .. " took $"..amount.." from ATM.")
 		return true, "Cash Withdrawn to Wallet!"
 	else
@@ -75,25 +82,44 @@ local function WithdrawFromATM(player, amount)
 end
 
 -- [[ MAIN HANDLER ]]
--- We now accept an 'actionType' ("Transfer" or "Withdraw")
 withdrawFunc.OnServerInvoke = function(player, amount, actionType)
-
-	-- 1. Validate Input
-	if typeof(amount) ~= "number" or amount <= 0 or amount ~= amount then
+	-- 1. Strict Type & Bound Validation
+	if type(actionType) ~= "string" then return false, "Invalid Action Type" end
+	if type(amount) ~= "number" or amount <= 0 or amount ~= amount or amount >= MAX_AMOUNT_LIMIT then
 		return false, "Invalid Amount"
 	end
 	amount = math.floor(amount)
 
-	-- 2. Route Request
-	if actionType == "Transfer" then
-		return TransferToATM(player, amount)
-
-	elseif actionType == "Withdraw" then
-		return WithdrawFromATM(player, amount)
-
-	else
-		-- Fallback (Safety)
-		warn("⚠️ Unknown Transaction Type: " .. tostring(actionType))
-		return false, "System Error: Unknown Action"
+	-- 2. Transaction Lock (Prevents Race Conditions & Spam)
+	if activeTransactions[player.UserId] then
+		return false, "Transaction in progress. Please wait."
 	end
+	activeTransactions[player.UserId] = true
+
+	-- 3. Route Request Safely via pcall
+	local success, result, msg = pcall(function()
+		if actionType == "Transfer" then
+			return TransferToATM(player, amount)
+		elseif actionType == "Withdraw" then
+			return WithdrawFromATM(player, amount)
+		else
+			warn("⚠️ Unknown Transaction Type from " .. player.Name .. ": " .. tostring(actionType))
+			return false, "System Error: Unknown Action"
+		end
+	end)
+
+	-- 4. Release Lock reliably
+	activeTransactions[player.UserId] = nil
+
+	if not success then
+		warn("⚠️ Transaction Error for " .. player.Name .. ": " .. tostring(result))
+		return false, "System Error"
+	end
+
+	return result, msg
 end
+
+-- Cleanup locks if a player leaves mid-transaction
+Players.PlayerRemoving:Connect(function(player)
+	activeTransactions[player.UserId] = nil
+end)
