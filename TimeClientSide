@@ -1,0 +1,38 @@
+-- Purpose: Updates the UI TextLabel to display the current in-game time in a 12-hour AM/PM format.
+-- Runs on: Client
+-- Location: StarterPlayerScripts
+-- Dependencies: Lighting, Players, RunService
+-- Public API: None
+-- Networking: Reads natively replicated Lighting.ClockTime. No Remotes used.
+-- Security: Strictly visual UI update. Client cannot spoof the time for the server.
+-- Performance: Uses RenderStepped for UI updates to ensure smooth display without yielding.
+-- Notes: Safely converts 24-hour Lighting.ClockTime to a 12-hour string.
+
+local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local dayNightCycleUI = playerGui:WaitForChild("DayNightCycle")
+local timeLabel = dayNightCycleUI:WaitForChild("Time")
+
+-- Converts 0-24 decimal time to 12-hour AM/PM string
+local function formatClockTime(clockTime)
+	local totalHours = math.floor(clockTime)
+	local minutes = math.floor((clockTime - totalHours) * 60)
+
+	local suffix = (totalHours >= 12) and "PM" or "AM"
+
+	local displayHours = totalHours % 12
+	if displayHours == 0 then
+		displayHours = 12 -- Handles midnight (0) and noon (12)
+	end
+
+	return string.format("%d:%02d %s", displayHours, minutes, suffix)
+end
+
+-- Sync UI to Lighting every frame
+RunService.RenderStepped:Connect(function()
+	timeLabel.Text = formatClockTime(Lighting.ClockTime)
+end)
