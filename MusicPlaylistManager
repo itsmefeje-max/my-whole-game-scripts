@@ -1,4 +1,4 @@
--- Purpose: Manages the specific playlist of 5 songs and respects UI mute state.
+-- Purpose: Manages the specific playlist of 5 songs and respects UI mute state globally.
 -- Runs on: Client
 -- Location: StarterPlayerScripts / PlayerGui
 -- Dependencies: SoundService
@@ -6,7 +6,7 @@
 -- Networking: None
 -- Security: Client-side audio only.
 -- Performance: Minimal footprint, uses event-based song progression.
--- Notes: Checks if Volume is > 0 before resetting to respect SettingsClient mute state.
+-- Notes: Checks the global "MusicMuted" attribute set by SettingsClient.
 
 local SoundService = game:GetService("SoundService")
 
@@ -80,9 +80,11 @@ local function playNextSong()
 	-- Update the ID on the SAME object
 	musicObject.SoundId = nextId
 	musicObject.TimePosition = 0
-	
-	-- ✅ FIX: Only reset volume if the UI hasn't explicitly muted it to 0
-	if musicObject.Volume > 0 then
+
+	-- ✅ STRICT FIX: Check the global mute attribute instead of guessing based on current volume
+	if SoundService:GetAttribute("MusicMuted") == true then
+		musicObject.Volume = 0
+	else
 		musicObject.Volume = MASTER_VOLUME 
 	end
 
