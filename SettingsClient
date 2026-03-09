@@ -1,4 +1,4 @@
--- Purpose: Settings UI + Music Toggle + Center Pop Open / Instant Close
+-- Purpose: Settings UI + Music Toggle + SFX Toggle + Center Pop Open / Instant Close
 -- Runs on: Client
 -- Location: StarterGui/SettingsGui
 -- Dependencies: SoundService, TweenService, Debris, UserInputService
@@ -6,7 +6,7 @@
 -- Networking: None (Client-side UI logic only)
 -- Security: Client-side visuals only; no server validation needed.
 -- Performance: Tweens used for open animation only.
--- Notes: Close animation removed per request. Open animation retained. Initial music state synced on startup.
+-- Notes: SFX visual toggle implemented. Actual SFX volume control to be added later.
 
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
@@ -27,6 +27,10 @@ local closeButton = window:WaitForChild("CloseButton")
 local btnMusicOn = window:WaitForChild("MusicOnButton")
 local btnMusicOff = window:WaitForChild("MusicOffButton")
 
+-- 🔊 SFX BUTTONS (NEW)
+local btnSFXOn = window:WaitForChild("SFXOnButton")
+local btnSFXOff = window:WaitForChild("SFXOffButton")
+
 -- 🔊 MUSIC TARGET
 local gameTheme = SoundService:WaitForChild("GameTheme", 5)
 
@@ -44,7 +48,7 @@ local CONFIG = {
 
 	-- Animation Settings
 	Anim = {
-		OpenTime = 1.0,   -- [KEPT] 1 Second fade in
+		OpenTime = 1.0,   -- 1 Second fade in
 		StartScale = 0.0, -- Starts at 0 size
 		EasingStyle = Enum.EasingStyle.Exponential,
 	},
@@ -52,6 +56,9 @@ local CONFIG = {
 
 -- 🔊 SFX HELPER
 local function playUiSound(name)
+	-- Do not play UI sounds if SFX is muted
+	if SoundService:GetAttribute("SFXMuted") == true then return end
+
 	local id = CONFIG.Sounds[name]
 	if not id then return end
 
@@ -98,7 +105,6 @@ end
 local currentTween = nil
 
 local function setWindowVisible(isOpen)
-	-- Cancel any running animation immediately
 	if currentTween then 
 		currentTween:Cancel() 
 		currentTween = nil
@@ -107,31 +113,23 @@ local function setWindowVisible(isOpen)
 	local A = CONFIG.Anim
 
 	if isOpen then
-		-- >> OPENING LOGIC (ANIMATED) <<
-
-		-- 1. Setup Initial State
 		window.Visible = true
 		openButton.Visible = false
-		uiScale.Scale = A.StartScale -- Reset to 0 so it can pop up
+		uiScale.Scale = A.StartScale 
 		playUiSound("Open")
 		setOtherGuisEnabled(false)
 
-		-- 2. Animate Scale to 1
 		local info = TweenInfo.new(A.OpenTime, A.EasingStyle, Enum.EasingDirection.Out)
 		currentTween = TweenService:Create(uiScale, info, { Scale = 1 })
 		currentTween:Play()
 
 	else
-		-- >> CLOSING LOGIC (INSTANT) <<
-
 		playUiSound("Click")
 
-		-- 1. Instant Cleanup (No Tween)
 		window.Visible = false
 		openButton.Visible = true
-		uiScale.Scale = 1 -- Reset scale just in case
+		uiScale.Scale = 1 
 
-		-- 2. Restore other GUIs immediately
 		setOtherGuisEnabled(true)
 	end
 end
@@ -141,7 +139,6 @@ local function setMusicMuted(shouldBeMuted)
 	btnMusicOn.Visible = not shouldBeMuted
 	btnMusicOff.Visible = shouldBeMuted
 
-	-- Set the global mute flag for other scripts to read
 	SoundService:SetAttribute("MusicMuted", shouldBeMuted)
 
 	local vol = shouldBeMuted and 0 or CONFIG.DefaultVolume
@@ -150,8 +147,21 @@ local function setMusicMuted(shouldBeMuted)
 	local shopMusic = SoundService:FindFirstChild("ShopMusic_Internal")
 	if shopMusic then shopMusic.Volume = vol end
 
-	-- Only play sound if the window is actually visible (prevents spam on init)
 	if window.Visible then
+		playUiSound("Click")
+	end
+end
+
+-- 🔊 SFX TOGGLE LOGIC (NEW)
+local function setSFXMuted(shouldBeMuted)
+	btnSFXOn.Visible = not shouldBeMuted
+	btnSFXOff.Visible = shouldBeMuted
+
+	-- We set this attribute so other scripts (like car sounds, button clicks) can read it later
+	SoundService:SetAttribute("SFXMuted", shouldBeMuted)
+
+	-- If we are unmuting, we can play a click sound right away to confirm to the user
+	if window.Visible and not shouldBeMuted then
 		playUiSound("Click")
 	end
 end
@@ -178,14 +188,19 @@ end
 -- 🚀 INITIALIZATION
 setupButton(openButton, function() setWindowVisible(true) end)
 setupButton(closeButton, function() setWindowVisible(false) end)
+
+-- Connect Music Buttons
 setupButton(btnMusicOn, function() setMusicMuted(true) end)
 setupButton(btnMusicOff, function() setMusicMuted(false) end)
+
+-- Connect SFX Buttons (NEW)
+setupButton(btnSFXOn, function() setSFXMuted(true) end)
+setupButton(btnSFXOff, function() setSFXMuted(false) end)
 
 -- Default State
 window.Visible = false
 openButton.Visible = true
 
--- [FIXED] Sync initial music state immediately.
--- This ensures the buttons match the actual game volume right when the player joins,
--- eliminating the "double-click" bug on the first try.
+-- Sync initial states immediately so buttons reflect correct visual data
 setMusicMuted(false)
+setSFXMuted(false)
