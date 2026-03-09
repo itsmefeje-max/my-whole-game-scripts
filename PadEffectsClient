@@ -198,12 +198,14 @@ PadUnlockEvent.OnClientEvent:Connect(function(isSuccess, data)
 		explodeConfetti() 
 		playNotification(true, data)
 
-		local s = Instance.new("Sound")
-		s.SoundId = "rbxassetid://6042054006"
-		s.Volume = 0.6
-		s.Parent = playerGui
-		s:Play()
-		Debris:AddItem(s, 2)
+		if not game:GetService("SoundService"):GetAttribute("SFXMuted") then
+			local s = Instance.new("Sound")
+			s.SoundId = "rbxassetid://6042054006"
+			s.Volume = 0.6
+			s.Parent = playerGui
+			s:Play()
+			Debris:AddItem(s, 2)
+		end
 	else
 		playNotification(false, data)
 	end

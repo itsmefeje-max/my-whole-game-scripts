@@ -46,12 +46,14 @@ button.MouseButton1Click:Connect(function()
 	print("🖱️ CLICKED! Searching for plot owned by: " .. player.Name)
 
 	-- Play Sound
-	local sound = Instance.new("Sound")
-	sound.SoundId = SOUND_ID
-	sound.Volume = 0.5
-	sound.Parent = SoundService
-	sound:Play()
-	game.Debris:AddItem(sound, 2)
+	if not SoundService:GetAttribute("SFXMuted") then
+		local sound = Instance.new("Sound")
+		sound.SoundId = SOUND_ID
+		sound.Volume = 0.5
+		sound.Parent = SoundService
+		sound:Play()
+		game.Debris:AddItem(sound, 2)
+	end
 
 	-- 1. Find Tycoon Folder
 	local tycoonFolder = Workspace:FindFirstChild(TYCOON_FOLDER_NAME)

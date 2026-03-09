@@ -37,6 +37,7 @@ local isCoolingDown = false
 -- ============================================================================
 
 local function playSound(soundId)
+	if SoundService:GetAttribute("SFXMuted") then return end
 	local sound = Instance.new("Sound")
 	sound.SoundId = soundId
 	sound.Volume = 1

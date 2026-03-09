@@ -117,9 +117,11 @@ local function setupAnimatedButton(button, clickFunction)
 		button.MouseEnter:Connect(function()
 			isHoveringMap[button] = true
 			TweenService:Create(button, TweenInfo.new(ANIM_SPEED), {Size = hoverSize}):Play()
-			local s = Instance.new("Sound");
-			s.SoundId = HOVER_SOUND_ID; s.Volume = HOVER_VOLUME; s.Parent = SoundService; s:Play();
-			game.Debris:AddItem(s,1)
+			if not SoundService:GetAttribute("SFXMuted") then
+				local s = Instance.new("Sound");
+				s.SoundId = HOVER_SOUND_ID; s.Volume = HOVER_VOLUME; s.Parent = SoundService; s:Play();
+				game.Debris:AddItem(s,1)
+			end
 		end)
 
 		button.MouseLeave:Connect(function()
@@ -173,11 +175,13 @@ local function showClaimFailure(part, reason)
 		Unknown = "Claim Failed!",
 	}
 	local msg = labels[reason] or labels.Unknown
-	local sfx = Instance.new("Sound")
-	sfx.SoundId = FAIL_SOUND_ID
-	sfx.Parent = SoundService
-	sfx:Play()
-	game.Debris:AddItem(sfx, 1)
+	if not SoundService:GetAttribute("SFXMuted") then
+		local sfx = Instance.new("Sound")
+		sfx.SoundId = FAIL_SOUND_ID
+		sfx.Parent = SoundService
+		sfx:Play()
+		game.Debris:AddItem(sfx, 1)
+	end
 	if part then
 		spawnFloatingText(part, msg, Color3.fromRGB(255, 80, 80))
 	end
@@ -218,21 +222,27 @@ local function setupClientTablet(plot)
 
 			-- 🛡️ SECURITY FIX: Check if we own this plot
 			if ownerVal.Value ~= player.Name then
-				local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				if not SoundService:GetAttribute("SFXMuted") then
+					local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				end
 				spawnFloatingText(claimPart, "Access Denied!", Color3.fromRGB(255, 80, 80))
 				return
 			end
 
 			if pendingVal.Value <= 0 then
-				local s = Instance.new("Sound");
-				s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				if not SoundService:GetAttribute("SFXMuted") then
+					local s = Instance.new("Sound");
+					s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				end
 				spawnFloatingText(claimPart, "No Earnings!", Color3.fromRGB(255, 80, 80))
 				return
 			end
 
 			isClaiming = true
-			local s = Instance.new("Sound");
-			s.SoundId = CLICK_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+			if not SoundService:GetAttribute("SFXMuted") then
+				local s = Instance.new("Sound");
+				s.SoundId = CLICK_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+			end
 
 			claimRequestId += 1
 			local requestId = claimRequestId
@@ -257,13 +267,17 @@ local function setupClientTablet(plot)
 
 			-- 🛡️ SECURITY FIX: Check if we own this plot
 			if ownerVal.Value ~= player.Name then
-				local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				if not SoundService:GetAttribute("SFXMuted") then
+					local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				end
 				spawnFloatingText(claimPart, "Access Denied!", Color3.fromRGB(255, 80, 80))
 				return
 			end
 
 			if pendingVal and pendingVal.Value <= 0 then
-				local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				if not SoundService:GetAttribute("SFXMuted") then
+					local s = Instance.new("Sound"); s.SoundId = FAIL_SOUND_ID; s.Parent = SoundService; s:Play(); game.Debris:AddItem(s,1)
+				end
 				spawnFloatingText(claimPart, "No Earnings!", Color3.fromRGB(255, 80, 80))
 				return
 			end
@@ -287,11 +301,13 @@ TabletEvent.OnClientEvent:Connect(function(action, plotName, wasSuccessful, payl
 	local part = getClaimPartFromPlotName(plotName)
 	if wasSuccessful then
 		local amount = tonumber(payload) or 0
-		local sfx = Instance.new("Sound")
-		sfx.SoundId = SUCCESS_SOUND_ID
-		sfx.Parent = SoundService
-		sfx:Play()
-		game.Debris:AddItem(sfx, 1)
+		if not SoundService:GetAttribute("SFXMuted") then
+			local sfx = Instance.new("Sound")
+			sfx.SoundId = SUCCESS_SOUND_ID
+			sfx.Parent = SoundService
+			sfx:Play()
+			game.Debris:AddItem(sfx, 1)
+		end
 		if part then
 			spawnFloatingText(part, "+$" .. amount, Color3.fromRGB(85, 255, 127))
 		end
@@ -305,9 +321,11 @@ end)
 -- ============================================================================
 MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
 	if userId == player.UserId and productId == DEV_PRODUCT_ID and isPurchased then
-		local s = Instance.new("Sound");
-		s.SoundId = SUCCESS_SOUND_ID; s.Volume = 1; s.Parent = SoundService; s:Play();
-		game.Debris:AddItem(s, 2)
+		if not SoundService:GetAttribute("SFXMuted") then
+			local s = Instance.new("Sound");
+			s.SoundId = SUCCESS_SOUND_ID; s.Volume = 1; s.Parent = SoundService; s:Play();
+			game.Debris:AddItem(s, 2)
+		end
 
 		local myPlotName = player:GetAttribute("OccupiedPlot")
 		if myPlotName then

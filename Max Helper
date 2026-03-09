@@ -30,12 +30,14 @@ button.MouseButton1Click:Connect(function()
 	end
 
 	-- 2. Play Click Sound (Aesthetic)
-	local s = Instance.new("Sound")
-	s.SoundId = CLICK_SOUND_ID
-	s.Volume = 0.5
-	s.Parent = SoundService
-	s:Play()
-	game.Debris:AddItem(s, 2)
+	if not SoundService:GetAttribute("SFXMuted") then
+		local s = Instance.new("Sound")
+		s.SoundId = CLICK_SOUND_ID
+		s.Volume = 0.5
+		s.Parent = SoundService
+		s:Play()
+		game.Debris:AddItem(s, 2)
+	end
 
 	-- 3. Update Input Field ONLY
 	if AmountInput then

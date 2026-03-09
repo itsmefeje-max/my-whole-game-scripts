@@ -45,6 +45,7 @@ local SFX = {
 }
 
 local function playSfx(soundId, volume, parent)
+	if SoundService:GetAttribute("SFXMuted") then return end
 	local s = Instance.new("Sound")
 	s.SoundId = soundId
 	s.Volume = volume or 0.5

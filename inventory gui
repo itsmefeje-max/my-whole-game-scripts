@@ -87,6 +87,7 @@ if not shopMusic then
 end
 
 local function playSfx(soundObj)
+	if SoundService:GetAttribute("SFXMuted") then return end
 	if not soundObj then return end
 	if soundObj.IsPlaying then
 		local c = soundObj:Clone()

@@ -50,6 +50,7 @@ end
 -- ============================================================================
 
 local function playClickSound()
+	if SoundService:GetAttribute("SFXMuted") then return end
 	local sound = Instance.new("Sound")
 	sound.SoundId = CLICK_SOUND_ID
 	sound.Volume = 0.5

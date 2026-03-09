@@ -116,6 +116,7 @@ end
 
 -- 🔊 HELPER: PLAY SOUND
 local function playSound(part, soundId, volume)
+	if game:GetService("SoundService"):GetAttribute("SFXMuted") then return end
 	local sound = Instance.new("Sound")
 	sound.SoundId = soundId
 	sound.Volume = volume or 1

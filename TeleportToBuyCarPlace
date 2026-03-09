@@ -61,8 +61,12 @@ local function warpPlayer(character, targetPad, soundTemplate)
 	if soundTemplate then
 		local soundClone = soundTemplate:Clone()
 		soundClone.Parent = hrp
-		soundClone:Play()
-		Debris:AddItem(soundClone, math.max(soundClone.TimeLength, 5))
+		if not game:GetService("SoundService"):GetAttribute("SFXMuted") then
+			soundClone:Play()
+			Debris:AddItem(soundClone, math.max(soundClone.TimeLength, 5))
+		else
+			soundClone:Destroy()
+		end
 	end
 
 	-- 5. Tell client to fade back in

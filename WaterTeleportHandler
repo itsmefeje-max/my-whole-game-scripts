@@ -98,13 +98,15 @@ local function onWaterTouched(hit)
 	-- ✅ NOT SAFE - EXECUTE TELEPORT SEQUENCE
 	
 	-- 1. Sound
-	local sound = Instance.new("Sound")
-	sound.Name = "SplashSFX"
-	sound.SoundId = SPLASH_SOUND_ID
-	sound.Volume = SOUND_VOLUME
-	sound.Parent = rootPart
-	sound:Play()
-	Debris:AddItem(sound, 3)
+	if not game:GetService("SoundService"):GetAttribute("SFXMuted") then
+		local sound = Instance.new("Sound")
+		sound.Name = "SplashSFX"
+		sound.SoundId = SPLASH_SOUND_ID
+		sound.Volume = SOUND_VOLUME
+		sound.Parent = rootPart
+		sound:Play()
+		Debris:AddItem(sound, 3)
+	end
 
 	-- 2. Delay
 	task.wait(DELAY_TIME)
