@@ -1,0 +1,65 @@
+-- Purpose: Spawns the Rare/Sport NPC (Jacob) only during in-game night time.
+-- Runs on: Server
+-- Location: ServerScriptService
+-- Dependencies: Lighting, Workspace, ServerStorage
+-- Public API: None
+-- Networking: None
+-- Security: Server-authoritative spawning. Prevents clients from forcing the shop to appear.
+-- Performance: Lightweight boolean toggle on ClockTime change. Avoids cloning by reparenting.
+-- Notes: Assumes Jacob starts in Workspace.NPCS. He is hidden in ServerStorage during the day.
+
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local ServerStorage = game:GetService("ServerStorage")
+
+local NIGHT_START = 18 -- 18:00 (6:00 PM)
+local NIGHT_END = 6    -- 06:00 (6:00 AM)
+local TARGET_NPC_NAME = "Jacob"
+
+local npcFolder = Workspace:WaitForChild("NPCS")
+
+-- Create a secure holding area for offline NPCs
+local npcStorageFolder = ServerStorage:FindFirstChild("OfflineNPCs")
+if not npcStorageFolder then
+	npcStorageFolder = Instance.new("Folder")
+	npcStorageFolder.Name = "OfflineNPCs"
+	npcStorageFolder.Parent = ServerStorage
+end
+
+-- Secure Jacob on startup
+local jacobNPC = npcFolder:FindFirstChild(TARGET_NPC_NAME) or npcStorageFolder:FindFirstChild(TARGET_NPC_NAME)
+if not jacobNPC then
+	warn("⚠️ NightMarketManager: Could not find '" .. TARGET_NPC_NAME .. "' in Workspace.NPCS")
+end
+
+local isCurrentlyNight = false
+
+local function checkTime()
+	local time = Lighting.ClockTime
+
+	-- Determine if current time falls within night hours
+	local isNight = (time >= NIGHT_START) or (time < NIGHT_END)
+
+	-- Only execute if the state has actually changed
+	if isNight ~= isCurrentlyNight then
+		isCurrentlyNight = isNight
+
+		if not jacobNPC then return end
+
+		if isCurrentlyNight then
+			-- Spawn Jacob
+			print("🌙 Night Market Open: Spawning " .. TARGET_NPC_NAME)
+			jacobNPC.Parent = npcFolder
+		else
+			-- Despawn Jacob
+			print("☀️ Daybreak: Hiding " .. TARGET_NPC_NAME)
+			jacobNPC.Parent = npcStorageFolder
+		end
+	end
+end
+
+-- 1. Initialize state immediately on boot
+checkTime()
+
+-- 2. Hook into the TimeDayNightCycleManager's clock progression
+Lighting:GetPropertyChangedSignal("ClockTime"):Connect(checkTime)
