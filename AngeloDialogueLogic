@@ -1,4 +1,4 @@
--- Purpose: Handles Camera, Dialogue Logic, and UI for Monk3yDAngelo NPC with sequenced text and custom colors.
+-- Purpose: Handles Camera, Dialogue Logic, and UI for Monk3yDAngelo NPC with RootPart-locked interaction.
 -- Runs on: Client
 -- Location: StarterPlayerScripts
 -- Dependencies: TweenService, Players, Workspace, SoundService, UserInputService
@@ -372,11 +372,9 @@ local function startInteraction(npcModel)
 
 				local introText = "I'm " .. coloredAngelo .. ". I deal legendary cars at the main showroom."
 
-				-- ✅ UPDATED: Clarified to "other car dealers"
 				local padText = "Step onto that glowing pad to teleport over and meet other car dealers."
 
 				typewrite(dialogueLabel, introText, function()
-					-- ✅ UPDATED: Faster sequence flow (1 second)
 					task.wait(1) 
 
 					if not isInteracting or isLeaving then return end 
@@ -398,11 +396,18 @@ local function setupNPC()
 	local npc = folder:WaitForChild(TARGET_NPC, 10)
 
 	if npc then
-		local prompt = npc:FindFirstChild(PROMPT_NAME, true) 
+		-- 🎯 FIXED: Target the HumanoidRootPart directly for the prompt.
+		local hrp = npc:WaitForChild("HumanoidRootPart", 5)
+		if not hrp then
+			warn("❌ [AngeloDebug] Missing HumanoidRootPart in Angelo!")
+			return
+		end
+
+		local prompt = hrp:FindFirstChild(PROMPT_NAME) 
 		local retries = 0
 		while not prompt and retries < 10 do
 			task.wait(0.5)
-			prompt = npc:FindFirstChild(PROMPT_NAME, true)
+			prompt = hrp:FindFirstChild(PROMPT_NAME)
 			retries = retries + 1
 		end
 
@@ -410,6 +415,8 @@ local function setupNPC()
 			prompt.Triggered:Connect(function()
 				startInteraction(npc)
 			end)
+		else
+			warn("❌ [AngeloDebug] Could not find TalkPrompt inside Angelo's HumanoidRootPart!")
 		end
 	end
 end
