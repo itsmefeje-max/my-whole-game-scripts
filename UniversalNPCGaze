@@ -27,7 +27,8 @@ local VERTICAL_LIMIT = 40      -- Degrees: Max Up/Down angle
 -- We use a dictionary [Name] = true for instant O(1) lookup in the Render loop.
 local FULL_BODY_TRACKING_NPCS = {
 	["Monk3yDAngelo"] = true,
-	["AnotherNPC_NameHere"] = false, -- Example of how to add more
+	["ethourah"] = true,
+     ["Harley"] = true,
 }
 
 -- 🛠️ MATH HELPER: Normalize angles
