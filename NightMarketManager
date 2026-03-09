@@ -1,12 +1,12 @@
--- Purpose: Spawns the Rare/Sport NPC (Jacob) only during in-game night time.
+-- Purpose: Swaps between the Day NPC (Harley) and Night NPC (Jacob) based on in-game time.
 -- Runs on: Server
 -- Location: ServerScriptService
 -- Dependencies: Lighting, Workspace, ServerStorage
 -- Public API: None
 -- Networking: None
--- Security: Server-authoritative spawning. Prevents clients from forcing the shop to appear.
--- Performance: Lightweight boolean toggle on ClockTime change. Avoids cloning by reparenting.
--- Notes: Assumes Jacob starts in Workspace.NPCS. He is hidden in ServerStorage during the day.
+-- Security: Server-authoritative swapping to prevent client-side forcing.
+-- Performance: Lightweight reparenting on state change; zero cloning or destroying.
+-- Notes: Assumes both NPCs start in Workspace.NPCS or ServerStorage.OfflineNPCs.
 
 local Lighting = game:GetService("Lighting")
 local Workspace = game:GetService("Workspace")
@@ -14,7 +14,9 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local NIGHT_START = 18 -- 18:00 (6:00 PM)
 local NIGHT_END = 6    -- 06:00 (6:00 AM)
-local TARGET_NPC_NAME = "Jacob"
+
+local TARGET_NPC_NIGHT = "Jacob"
+local TARGET_NPC_DAY = "Harley"
 
 local npcFolder = Workspace:WaitForChild("NPCS")
 
@@ -26,13 +28,14 @@ if not npcStorageFolder then
 	npcStorageFolder.Parent = ServerStorage
 end
 
--- Secure Jacob on startup
-local jacobNPC = npcFolder:FindFirstChild(TARGET_NPC_NAME) or npcStorageFolder:FindFirstChild(TARGET_NPC_NAME)
-if not jacobNPC then
-	warn("⚠️ NightMarketManager: Could not find '" .. TARGET_NPC_NAME .. "' in Workspace.NPCS")
-end
+-- Secure NPCs on startup
+local jacobNPC = npcFolder:FindFirstChild(TARGET_NPC_NIGHT) or npcStorageFolder:FindFirstChild(TARGET_NPC_NIGHT)
+local harleyNPC = npcFolder:FindFirstChild(TARGET_NPC_DAY) or npcStorageFolder:FindFirstChild(TARGET_NPC_DAY)
 
-local isCurrentlyNight = false
+if not jacobNPC then warn("⚠️ DayNightNPCManager: Could not find '" .. TARGET_NPC_NIGHT .. "'") end
+if not harleyNPC then warn("⚠️ DayNightNPCManager: Could not find '" .. TARGET_NPC_DAY .. "'") end
+
+local isCurrentlyNight = nil -- Set to nil initially to force the first update
 
 local function checkTime()
 	local time = Lighting.ClockTime
@@ -44,16 +47,16 @@ local function checkTime()
 	if isNight ~= isCurrentlyNight then
 		isCurrentlyNight = isNight
 
-		if not jacobNPC then return end
-
 		if isCurrentlyNight then
-			-- Spawn Jacob
-			print("🌙 Night Market Open: Spawning " .. TARGET_NPC_NAME)
-			jacobNPC.Parent = npcFolder
+			-- Night: Spawn Jacob, Hide Harley
+			print("🌙 Night Time: Spawning " .. TARGET_NPC_NIGHT .. " | Hiding " .. TARGET_NPC_DAY)
+			if harleyNPC then harleyNPC.Parent = npcStorageFolder end
+			if jacobNPC then jacobNPC.Parent = npcFolder end
 		else
-			-- Despawn Jacob
-			print("☀️ Daybreak: Hiding " .. TARGET_NPC_NAME)
-			jacobNPC.Parent = npcStorageFolder
+			-- Day: Spawn Harley, Hide Jacob
+			print("☀️ Day Time: Spawning " .. TARGET_NPC_DAY .. " | Hiding " .. TARGET_NPC_NIGHT)
+			if jacobNPC then jacobNPC.Parent = npcStorageFolder end
+			if harleyNPC then harleyNPC.Parent = npcFolder end
 		end
 	end
 end
