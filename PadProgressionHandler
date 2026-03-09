@@ -1,7 +1,12 @@
--- [[ SERVER SCRIPT: PadProgressionHandler (Visual Fix + Success/Fail Logic) ]]
--- -- Purpose: Handles Pad Unlocking, Visibility, Purchasing, and triggers Client Effects.
--- -- Runs on: Server
--- -- Location: ServerScriptService
+-- Purpose: Handles Pad Unlocking, Visibility, Purchasing, and triggers Client Effects. Includes anti-spam debounce.
+-- Runs on: Server
+-- Location: ServerScriptService
+-- Dependencies: Players, Workspace, ReplicatedStorage, Debris
+-- Public API: None
+-- Networking: PadUnlockEvent (Server -> Client)
+-- Security: Wallet validation, strict sequential progression check, and per-player transaction locks.
+-- Performance: Lightweight O(1) table lookup for debounces; cleans up memory on player leave.
+-- Notes: Fixes the Touched chain-reaction bug that allowed purchasing multiple pads in a single frame.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -12,7 +17,6 @@ local TycoonFolder = Workspace:WaitForChild("Tycoons")
 -- ============================================================================
 -- 📡 REMOTE EVENT SETUP (Communication to Client)
 -- ============================================================================
--- We create this event so we can tell the Client to play the FOV/UI effects
 local PadUnlockEvent = ReplicatedStorage:FindFirstChild("PadUnlockEvent")
 if not PadUnlockEvent then
 	PadUnlockEvent = Instance.new("RemoteEvent")
@@ -21,16 +25,24 @@ if not PadUnlockEvent then
 end
 
 -- ============================================================================
--- 🔊 SOUND CONFIGURATION
+-- 🔊 SOUND CONFIGURATION & 🛡️ DEBOUNCE STATE
 -- ============================================================================
 local PURCHASE_SOUND_ID = "rbxassetid://14810387808" 
 local PURCHASE_VOLUME = 0.5
-local ERROR_SOUND_ID = "rbxassetid://4612375233" -- Sound for being broke (Optional)
+local ERROR_SOUND_ID = "rbxassetid://4612375233" 
+
+-- 🛡️ Track active transactions/cooldowns per player
+local playerPurchaseDebounce = {}
+
+-- Clean up memory when a player leaves
+Players.PlayerRemoving:Connect(function(player)
+	playerPurchaseDebounce[player.UserId] = nil
+end)
 
 print("🟢 PadProgressionHandler: Loaded & Ready")
 
 -- ============================================================================
--- 1. VISUAL HANDLER (Recursive Fix Preserved)
+-- 1. VISUAL HANDLER
 -- ============================================================================
 local function toggleVisual(obj, isVisible, canTouch)
 	local transparency = isVisible and 0 or 1
@@ -43,16 +55,13 @@ local function toggleVisual(obj, isVisible, canTouch)
 			part.CanTouch = canTouch
 			part.CanQuery = canTouch
 			part.Anchored = true 
-			-- ✅ FIX: Handles BillboardGui (BuyInfo/LockedLabel) and SurfaceGui
 		elseif part:IsA("BillboardGui") or part:IsA("SurfaceGui") then
 			part.Enabled = isVisible
 		end
 	end
 
-	-- 1. Apply to the main object itself
 	applyToPart(obj)
 
-	-- 2. Apply to ALL descendants (Finds BuyInfo/LockedLabel inside the Part)
 	for _, child in pairs(obj:GetDescendants()) do 
 		applyToPart(child) 
 	end
@@ -89,7 +98,7 @@ local function updatePadVisuals(plot, unlockedLevel)
 end
 
 -- ============================================================================
--- 2. BUY FUNCTION (Updated with Success/Fail Logic)
+-- 2. BUY FUNCTION
 -- ============================================================================
 local function setupBuyButton(plot, padModel, padNumber)
 	local buyButton = padModel:FindFirstChild("BuyButton")
@@ -99,6 +108,9 @@ local function setupBuyButton(plot, padModel, padNumber)
 	buyButton:SetAttribute("Connected", true)
 
 	local function attemptBuy(player)
+		-- 🛡️ Anti-Spam Check: Abort if player is on cooldown
+		if playerPurchaseDebounce[player.UserId] then return end
+
 		if plot.Owner.Value ~= player.Name then return end
 
 		local currentLevel = tonumber(player:GetAttribute("HighestUnlockedPad")) or 1
@@ -109,6 +121,9 @@ local function setupBuyButton(plot, padModel, padNumber)
 		local wallet = leaderstats and leaderstats:FindFirstChild("Wallet")
 
 		if wallet then
+			-- 🔒 Lock the transaction state
+			playerPurchaseDebounce[player.UserId] = true
+
 			if wallet.Value >= cost then
 				-- ✅ SUCCESS: Rich enough!
 				wallet.Value -= cost 
@@ -141,6 +156,13 @@ local function setupBuyButton(plot, padModel, padNumber)
 				-- ✨ TRIGGER CLIENT: FAIL (Red Text + Missing Amount)
 				PadUnlockEvent:FireClient(player, false, missing)
 			end
+
+			-- 🔓 Release the lock after a 0.5 second cooldown
+			task.delay(0.5, function()
+				if playerPurchaseDebounce[player.UserId] then
+					playerPurchaseDebounce[player.UserId] = nil
+				end
+			end)
 		end
 	end
 
@@ -166,11 +188,9 @@ local function setupPlot(plot)
 		local ownerVal = plot:WaitForChild("Owner", 10)
 		if not ownerVal then return end
 
-		-- ✅ MEMORY FIX: Local scope connection (No Global Table)
 		local currentConnection = nil
 
 		local function onOwnerChange(newOwner)
-			-- 1. Always cleanup previous connection immediately
 			if currentConnection then
 				currentConnection:Disconnect()
 				currentConnection = nil
@@ -182,15 +202,12 @@ local function setupPlot(plot)
 				local player = Players:FindFirstChild(newOwner)
 				local retries = 0
 				while not player and retries < 20 do
-					-- 🛡️ RACE FIX: Abort if owner changed while waiting
 					if ownerVal.Value ~= newOwner then return end
-
 					task.wait(0.25)
 					player = Players:FindFirstChild(newOwner)
 					retries += 1
 				end
 
-				-- 🛡️ FINAL CHECK: Abort if owner changed
 				if ownerVal.Value ~= newOwner then return end
 
 				if player then
