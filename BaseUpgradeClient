@@ -69,6 +69,7 @@ local isProcessingTransaction = false
 -- 🔊 SOUND ENGINE
 -- ============================================================================
 local function PlaySound(name)
+	if SoundService:GetAttribute("SFXMuted") then return end
 	local s = Sounds[name]
 	if s then s:Play() end
 end

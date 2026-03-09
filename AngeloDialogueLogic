@@ -160,6 +160,7 @@ local function setFocusMode(active)
 end
 
 local function playSound(id, vol)
+	if SoundService:GetAttribute("SFXMuted") then return end
 	local s = Instance.new("Sound")
 	s.SoundId = id
 	s.Volume = vol or 0.5
@@ -192,11 +193,13 @@ local function typewrite(label, text, onComplete)
 			if not isInteracting and not isLeaving then break end
 			label.MaxVisibleGraphemes = i
 			if i % 3 == 0 then 
-				local s = Instance.new("Sound", SoundService)
-				s.SoundId = TYPING_SOUND_ID
-				s.Volume = 0.1
-				s.PlayOnRemove = true
-				s:Destroy()
+				if not SoundService:GetAttribute("SFXMuted") then
+					local s = Instance.new("Sound", SoundService)
+					s.SoundId = TYPING_SOUND_ID
+					s.Volume = 0.1
+					s.PlayOnRemove = true
+					s:Destroy()
+				end
 			end
 			task.wait(TYPEWRITER_SPEED)
 		end

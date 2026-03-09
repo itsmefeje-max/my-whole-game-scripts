@@ -132,12 +132,14 @@ local function setupBuyButton(plot, padModel, padNumber)
 				print("✅ " .. player.Name .. " Purchased Pad " .. padNumber)
 
 				-- 🔊 Play Ca-ching!
-				local s = Instance.new("Sound")
-				s.SoundId = PURCHASE_SOUND_ID 
-				s.Volume = PURCHASE_VOLUME
-				s.Parent = buyButton:IsA("BasePart") and buyButton or buyButton.PrimaryPart
-				s:Play()
-				Debris:AddItem(s, 2)
+				if not game:GetService("SoundService"):GetAttribute("SFXMuted") then
+					local s = Instance.new("Sound")
+					s.SoundId = PURCHASE_SOUND_ID
+					s.Volume = PURCHASE_VOLUME
+					s.Parent = buyButton:IsA("BasePart") and buyButton or buyButton.PrimaryPart
+					s:Play()
+					Debris:AddItem(s, 2)
+				end
 
 				-- ✨ TRIGGER CLIENT: SUCCESS (Green Text + FX)
 				PadUnlockEvent:FireClient(player, true, padNumber)
@@ -146,12 +148,14 @@ local function setupBuyButton(plot, padModel, padNumber)
 				local missing = cost - wallet.Value
 
 				-- 🔊 Play Error Noise (Optional)
-				local s = Instance.new("Sound")
-				s.SoundId = ERROR_SOUND_ID 
-				s.Volume = 0.5
-				s.Parent = buyButton:IsA("BasePart") and buyButton or buyButton.PrimaryPart
-				s:Play()
-				Debris:AddItem(s, 1)
+				if not game:GetService("SoundService"):GetAttribute("SFXMuted") then
+					local s = Instance.new("Sound")
+					s.SoundId = ERROR_SOUND_ID
+					s.Volume = 0.5
+					s.Parent = buyButton:IsA("BasePart") and buyButton or buyButton.PrimaryPart
+					s:Play()
+					Debris:AddItem(s, 1)
+				end
 
 				-- ✨ TRIGGER CLIENT: FAIL (Red Text + Missing Amount)
 				PadUnlockEvent:FireClient(player, false, missing)

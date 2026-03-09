@@ -43,6 +43,7 @@ local SFX_MAP = {
 }
 
 local function playInstance(id, vol, pitch, variance)
+	if SoundService:GetAttribute("SFXMuted") then return end
 	local s = Instance.new("Sound")
 	s.SoundId = id
 	s.Volume = vol or 0.5
