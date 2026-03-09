@@ -1,4 +1,4 @@
--- Purpose: Handles Camera, Dialogue Logic, and UI for Harley NPC. Prompt is a direct child of the model.
+-- Purpose: Handles Camera, Dialogue Logic, and UI for Harley NPC with strict ProximityPrompt placement.
 -- Runs on: Client
 -- Location: StarterPlayerScripts
 -- Dependencies: TweenService, Players, Workspace, SoundService, UserInputService
@@ -427,12 +427,18 @@ local function setupNPC()
 	local npc = folder:WaitForChild(TARGET_NPC, 10)
 
 	if npc then
-		-- ✅ UPDATED: Looks directly inside the Harley model, NOT recursively.
-		local prompt = npc:FindFirstChild(PROMPT_NAME) 
+		-- ✅ UPDATED: Enforces looking directly inside the HumanoidRootPart for the prompt
+		local hrp = npc:WaitForChild("HumanoidRootPart", 5)
+		if not hrp then
+			warn("❌ [HarleyDebug] Missing HumanoidRootPart in Harley!")
+			return
+		end
+
+		local prompt = hrp:FindFirstChild(PROMPT_NAME) 
 		local retries = 0
 		while not prompt and retries < 10 do
 			task.wait(0.5)
-			prompt = npc:FindFirstChild(PROMPT_NAME)
+			prompt = hrp:FindFirstChild(PROMPT_NAME)
 			retries = retries + 1
 		end
 
@@ -441,7 +447,7 @@ local function setupNPC()
 				startInteraction(npc)
 			end)
 		else
-			warn("❌ [HarleyDebug] Could not find TalkPrompt directly inside the Harley model!")
+			warn("❌ [HarleyDebug] Could not find TalkPrompt inside Harley's HumanoidRootPart!")
 		end
 	end
 end
