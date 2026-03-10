@@ -17,7 +17,27 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 
 -- 💾 DATASTORE FOR RECEIPT HISTORY
-local PurchaseHistory = DataStoreService:GetDataStore("PurchaseHistory")
+local PURCHASE_HISTORY_STORES = {"PurchaseHistory", "PurchaseHistory_V2"}
+local activePurchaseStoreIndex = 1
+local PurchaseHistory = DataStoreService:GetDataStore(PURCHASE_HISTORY_STORES[activePurchaseStoreIndex])
+
+local function rotatePurchaseStore()
+	if activePurchaseStoreIndex >= #PURCHASE_HISTORY_STORES then
+		return false
+	end
+
+	activePurchaseStoreIndex += 1
+	local storeName = PURCHASE_HISTORY_STORES[activePurchaseStoreIndex]
+	PurchaseHistory = DataStoreService:GetDataStore(storeName)
+	warn("⚠️ PurchaseHistory datastore unavailable. Switched to fallback store: " .. storeName)
+	return true
+end
+
+local function isDeletedStoreError(err)
+	local msg = tostring(err):lower()
+	return string.find(msg, "data store is deleted", 1, true) ~= nil
+		or string.find(msg, "datastore is deleted", 1, true) ~= nil
+end
 
 -- ⚙️ EXISTING PRODUCT IDs
 local TABLET_2X_ID = 3509697462 -- Tablet ID
@@ -51,6 +71,74 @@ pcall(function()
 	BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats"))
 end)
 
+local function wasPurchaseProcessed(purchaseKey)
+	for _ = 1, 2 do
+		local success, result = pcall(function()
+			return PurchaseHistory:GetAsync(purchaseKey)
+		end)
+
+		if success then
+			return result == true
+		end
+
+		if isDeletedStoreError(result) and rotatePurchaseStore() then
+			continue
+		end
+
+		warn("⚠️ DataStore Error during receipt check. Retrying... " .. tostring(result))
+		return nil
+	end
+
+	return nil
+end
+
+local function markPurchaseProcessed(purchaseKey)
+	for _ = 1, 2 do
+		local success, err = pcall(function()
+			PurchaseHistory:UpdateAsync(purchaseKey, function(current)
+				if current == true then
+					return true
+				end
+				return true
+			end)
+		end)
+
+		if success then
+			return true
+		end
+
+		if isDeletedStoreError(err) and rotatePurchaseStore() then
+			continue
+		end
+
+		warn("⚠️ Critical Datastore Error saving receipt: " .. tostring(err))
+		return false
+	end
+
+	return false
+end
+
+local function playerHasTool(player, toolName)
+	if not player or not toolName then return false end
+
+	local function hasToolIn(container)
+		if not container then return false end
+		for _, item in ipairs(container:GetChildren()) do
+			if item:IsA("Tool") then
+				local toolId = item:GetAttribute("ToolId")
+				if item.Name == toolName or toolId == toolName then
+					return true
+				end
+			end
+		end
+		return false
+	end
+
+	return hasToolIn(player:FindFirstChild("Backpack"))
+		or hasToolIn(player:FindFirstChild("StarterGear"))
+		or hasToolIn(player.Character)
+end
+
 -- ============================================================================
 -- 🧾 MAIN RECEIPT PROCESSOR
 -- ============================================================================
@@ -81,12 +169,8 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 
 	-- 🛡️ SECURITY: IDEMPOTENCY CHECK
 	local purchaseKey = buyerId .. "_" .. receiptInfo.PurchaseId
-	local success, alreadyProcessed = pcall(function()
-		return PurchaseHistory:GetAsync(purchaseKey)
-	end)
-
-	if not success then 
-		warn("⚠️ DataStore Error during receipt check. Retrying...")
+	local alreadyProcessed = wasPurchaseProcessed(purchaseKey)
+	if alreadyProcessed == nil then
 		return Enum.ProductPurchaseDecision.NotProcessedYet 
 	end
 
@@ -153,31 +237,30 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
 
 		if tool then
-			-- 🛑 SECURE DATASORE WRITE: Lock the purchase ID before granting
-			local dataSuccess, err = pcall(function()
-				PurchaseHistory:SetAsync(purchaseKey, true)
-			end)
-
-			if not dataSuccess then
-				warn("⚠️ Datastore down. Halting grant to prevent dupe. " .. tostring(err))
-				return Enum.ProductPurchaseDecision.NotProcessedYet
-			end
-
-			local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
-			if TycoonAdminAPI then
-				TycoonAdminAPI:Invoke("GiveTool", targetPlayer, tool.Name, {
-					IssuedByServer = true,
-					IssuedAt = os.time(),
-					ToolId = tool.Name
-				})
+			if playerHasTool(targetPlayer, tool.Name) then
+				purchaseSuccess = true
 			else
-				warn("⚠️ TycoonAdminAPI not found. Failed to give tool.")
-			end
+				local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+				if not TycoonAdminAPI then
+					warn("⚠️ TycoonAdminAPI not found. Failed to give tool.")
+					return Enum.ProductPurchaseDecision.NotProcessedYet
+				end
 
-			if isGift then
-				print("✅ Gift successfully delivered to " .. targetPlayer.Name)
+				local granted, grantError = pcall(function()
+					return TycoonAdminAPI:Invoke("GiveTool", targetPlayer, tool.Name, {
+						IssuedByServer = true,
+						IssuedAt = os.time(),
+						ToolId = tool.Name
+					})
+				end)
+
+				if not granted or not grantError then
+					warn("⚠️ Failed to grant Robux car '" .. carName .. "' to " .. targetPlayer.Name)
+					return Enum.ProductPurchaseDecision.NotProcessedYet
+				end
+
+				purchaseSuccess = true
 			end
-			return Enum.ProductPurchaseDecision.PurchaseGranted
 		else
 			warn("❌ Critical: Tool missing for Robux Car: " .. carName)
 		end
@@ -212,12 +295,7 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	-- 🏁 FINALIZE PURCHASE (For non-car items)
 	-- ====================================================
 	if purchaseSuccess then
-		local dataSuccess, dataErr = pcall(function()
-			PurchaseHistory:SetAsync(purchaseKey, true)
-		end)
-
-		if not dataSuccess then
-			warn("⚠️ Critical Datastore Error saving receipt: " .. tostring(dataErr))
+		if not markPurchaseProcessed(purchaseKey) then
 			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 
