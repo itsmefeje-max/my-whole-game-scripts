@@ -377,20 +377,13 @@ FuncBuyCar.OnServerInvoke = function(player, carName)
 		-- We use THIS name for the persistent ID so TycoonDataHandler finds it later.
 		local realToolName = toolSource.Name 
 
-		-- Grant Tool (Backpack)
-		local backpack = player:FindFirstChildOfClass("Backpack")
-		if backpack then
-			local backpackTool = toolSource:Clone()
-			tagIssued(backpackTool, realToolName) -- ✅ Uses "Delta Item"
-			backpackTool.Parent = backpack
-		end
-
-		-- Grant Tool (StarterGear) - DEDUPLICATED
-		local sg = player:FindFirstChild("StarterGear")
-		if sg and not starterGearHasToolId(player, realToolName) then
-			local gearTool = toolSource:Clone()
-			tagIssued(gearTool, realToolName) -- ✅ Uses "Delta Item"
-			gearTool.Parent = sg
+		-- Delegate to Server-Authoritative Handler
+		local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+		if TycoonAdminAPI then
+			TycoonAdminAPI:Invoke("GiveTool", player, realToolName)
+		else
+			warn("⚠️ TycoonAdminAPI not found. Could not grant tool.")
+			return false, "System Error: Inventory Grant Failed"
 		end
 
 		-- Update State
