@@ -172,9 +172,10 @@ local function generateCarGUID(player)
 end
 
 -- ----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
 -- 🎁 GIVE TOOL
 -- ----------------------------------------------------------------------------
-local function giveTool(player, toolName)
+local function giveTool(player, toolName, customAttributes)
 	if not player or not player.Parent then return end
 	local sourceTool = CarTools:FindFirstChild(toolName)
 	if not sourceTool then 
@@ -191,10 +192,39 @@ local function giveTool(player, toolName)
 		local gearTool = sourceTool:Clone()
 		tagIssued(backpackTool, sourceTool.Name)
 		tagIssued(gearTool, sourceTool.Name)
-		backpackTool.Parent = player.Backpack
-		if player:FindFirstChild("StarterGear") then
-			gearTool.Parent = player.StarterGear
+
+		if type(customAttributes) == "table" then
+			for k, v in pairs(customAttributes) do
+				backpackTool:SetAttribute(k, v)
+				gearTool:SetAttribute(k, v)
+			end
 		end
+
+		if player:FindFirstChild("Backpack") then
+			backpackTool.Parent = player.Backpack
+		else
+			warn("⚠️ Receiver dead/respawning. Item added to StarterGear only.")
+			backpackTool:Destroy()
+		end
+
+		if player:FindFirstChild("StarterGear") then
+			-- Prevent duplication by checking if it already exists
+			local exists = false
+			for _, child in ipairs(player.StarterGear:GetChildren()) do
+				if child:GetAttribute("ToolId") == sourceTool.Name then
+					exists = true
+					break
+				end
+			end
+			if not exists then
+				gearTool.Parent = player.StarterGear
+			else
+				gearTool:Destroy()
+			end
+		else
+			gearTool:Destroy()
+		end
+
 		markDirty(player)
 	else
 		warn("⚠️ [DATA] Invalid tool requested: " .. tostring(toolName))
@@ -290,7 +320,7 @@ local AdminAPI = Instance.new("BindableFunction")
 AdminAPI.Name = "TycoonAdminAPI"
 AdminAPI.Parent = ServerStorage
 
-AdminAPI.OnInvoke = function(action, player)
+AdminAPI.OnInvoke = function(action, player, ...)
 	if action == "ForceWipe" and player and SessionData[player] then
 		-- ✅ THIS FLAG PREVENTS ANTI-WIPE FROM TRIGGERING
 		SessionData[player].ExplicitClear = true
@@ -299,6 +329,13 @@ AdminAPI.OnInvoke = function(action, player)
 		if player:FindFirstChild("Backpack") then player.Backpack:ClearAllChildren() end
 		markDirty(player)
 		print("⚠️ FORCE WIPE INITIATED FOR: " .. player.Name)
+		return true
+	elseif action == "GiveTool" and player then
+		local toolName, customAttributes = ...
+		giveTool(player, toolName, customAttributes)
+		return true
+	elseif action == "MarkDirty" and player then
+		markDirty(player)
 		return true
 	end
 	return false

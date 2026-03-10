@@ -163,22 +163,15 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 				return Enum.ProductPurchaseDecision.NotProcessedYet
 			end
 
-			local newTool = tool:Clone()
-			newTool:SetAttribute("IssuedByServer", true)
-			newTool:SetAttribute("IssuedAt", os.time())
-			newTool:SetAttribute("ToolId", tool.Name) 
-
-			local backpack = targetPlayer:FindFirstChild("Backpack")
-			if backpack then
-				newTool.Parent = backpack
+			local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+			if TycoonAdminAPI then
+				TycoonAdminAPI:Invoke("GiveTool", targetPlayer, tool.Name, {
+					IssuedByServer = true,
+					IssuedAt = os.time(),
+					ToolId = tool.Name
+				})
 			else
-				warn("⚠️ Receiver dead/respawning. Item added to StarterGear only.")
-			end
-
-			local starterGear = targetPlayer:FindFirstChild("StarterGear")
-			if starterGear then
-				local gearClone = newTool:Clone()
-				gearClone.Parent = starterGear
+				warn("⚠️ TycoonAdminAPI not found. Failed to give tool.")
 			end
 
 			if isGift then
