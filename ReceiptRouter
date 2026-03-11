@@ -366,6 +366,13 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 
+		local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+		if TycoonAdminAPI then
+			pcall(function()
+				TycoonAdminAPI:Invoke("MarkDirty", targetPlayer)
+			end)
+		end
+
 		if isGift then
 			print("✅ Gift successfully delivered to " .. targetPlayer.Name)
 		end

@@ -381,6 +381,9 @@ FuncBuyCar.OnServerInvoke = function(player, carName)
 		local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
 		if TycoonAdminAPI then
 			TycoonAdminAPI:Invoke("GiveTool", player, realToolName)
+			pcall(function()
+				TycoonAdminAPI:Invoke("MarkDirty", player)
+			end)
 		else
 			warn("⚠️ TycoonAdminAPI not found. Could not grant tool.")
 			return false, "System Error: Inventory Grant Failed"
@@ -400,7 +403,7 @@ FuncBuyCar.OnServerInvoke = function(player, carName)
 		return false, "Internal System Error"
 	end
 
-	if logicOk then LastPurchaseTime[uid] = os.clock() end
+	if logicOk == true then LastPurchaseTime[uid] = os.clock() end
 	return logicOk, msg
 end
 
