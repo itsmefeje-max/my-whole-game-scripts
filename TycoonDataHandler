@@ -18,7 +18,7 @@ local HttpService = game:GetService("HttpService")
 -- ----------------------------------------------------------------------------
 -- ⚙️ CONFIGURATION & CONSTANTS
 -- ----------------------------------------------------------------------------
-local DATA_KEY = "Testingv1" 
+local DATA_KEY = "Testingv2" 
 local PlayerDataStore = DataStoreService:GetDataStore(DATA_KEY)
 
 local AUTOSAVE_INTERVAL = 180        
@@ -316,9 +316,12 @@ end
 -- ----------------------------------------------------------------------------
 -- 🔄 ADMIN API (BindableFunction)
 -- ----------------------------------------------------------------------------
-local AdminAPI = Instance.new("BindableFunction")
-AdminAPI.Name = "TycoonAdminAPI"
-AdminAPI.Parent = ServerStorage
+local AdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+if not AdminAPI then
+	AdminAPI = Instance.new("BindableFunction")
+	AdminAPI.Name = "TycoonAdminAPI"
+	AdminAPI.Parent = ServerStorage
+end
 
 AdminAPI.OnInvoke = function(action, player, ...)
 	if action == "ForceWipe" and player and SessionData[player] then
