@@ -1,12 +1,6 @@
 -- Purpose: Centralizes MarketplaceService.ProcessReceipt with IDEMPOTENCY, GIFTING, and VFX.
 -- Runs on: Server
 -- Location: ServerScriptService
--- Dependencies: MarketplaceService, DataStoreService, ServerStorage, ReplicatedStorage, GiftIntentHandler
--- Public API: MarketplaceService.ProcessReceipt (Callback)
--- Networking: Server -> Client via PadUnlockEvent
--- Security: Strict datastore error handling prevents duplicate rewards; safe container checks prevent infinite yields.
--- Performance: Pre-evaluates conditions to ensure clean O(1) or safe O(N) control flow routing.
--- Notes: Assumes GiftIntentHandler (_G.GetGiftReceiver) handles invalid/offline user IDs gracefully.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local DataStoreService = game:GetService("DataStoreService")
@@ -16,17 +10,12 @@ local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 
--- 💾 DATASTORE FOR RECEIPT HISTORY
--- NOTE: "PurchaseHistory" was previously deleted in production.
--- Keep a fallback name so receipt processing can recover safely.
-local PURCHASE_HISTORY_NAMES = {"PurchaseHistory", "PurchaseHistory_V2"}
+local PURCHASE_HISTORY_NAMES = {"ReceiptHistory_V3"}
 local ActivePurchaseHistory = nil
 
--- ⚙️ EXISTING PRODUCT IDs
-local TABLET_2X_ID = 3509697462 -- Tablet ID
-local SHOP_REROLL_ID = 3520990584 -- Reroll ID
+local TABLET_2X_ID = 3509697462
+local SHOP_REROLL_ID = 3520990584
 
--- 🚗 CAR PRODUCT IDs
 local CAR_PRODUCT_IDS = {
 	[3524326648] = "Delta",
 	[3524327150] = "Iva",
@@ -36,11 +25,9 @@ local CAR_PRODUCT_IDS = {
 	[3524328713] = "Riva"
 }
 
--- 🔗 REFERENCES
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 local ShopRerollFunc = ServerStorage:WaitForChild("ShopRerollFunction")
 
--- 📡 NEW: VFX Event Connection
 local PadUnlockEvent = ReplicatedStorage:FindFirstChild("PadUnlockEvent")
 if not PadUnlockEvent then
 	PadUnlockEvent = Instance.new("RemoteEvent")
@@ -48,27 +35,47 @@ if not PadUnlockEvent then
 	PadUnlockEvent.Parent = ReplicatedStorage
 end
 
--- ✅ Base Skin Module Reference
 local BaseSkinStats
 pcall(function()
 	BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats"))
 end)
 
-local function getPurchaseHistoryStore()
-	if ActivePurchaseHistory then
-		return ActivePurchaseHistory
+-- ============================================================================
+-- ⏱️ TIMEOUT UTILITY
+-- ============================================================================
+local function safeInvoke(bindable, timeout, ...)
+	local args = table.pack(...)
+	local result = nil
+	local finished = false
+
+	task.spawn(function()
+		result = table.pack(pcall(function()
+			return bindable:Invoke(table.unpack(args, 1, args.n))
+		end))
+		finished = true
+	end)
+
+	local start = os.clock()
+	while not finished and (os.clock() - start) < timeout do
+		task.wait()
 	end
 
+	if not finished then return false, "Timeout" end
+	if not result[1] then return false, result[2] end
+
+	return true, table.unpack(result, 2, result.n)
+end
+
+local function getPurchaseHistoryStore()
+	if ActivePurchaseHistory then return ActivePurchaseHistory end
+
 	for _, name in ipairs(PURCHASE_HISTORY_NAMES) do
-		local ok, store = pcall(function()
-			return DataStoreService:GetDataStore(name)
-		end)
+		local ok, store = pcall(function() return DataStoreService:GetDataStore(name) end)
 		if ok and store then
 			ActivePurchaseHistory = store
 			return ActivePurchaseHistory
 		end
 	end
-
 	return nil
 end
 
@@ -83,11 +90,10 @@ local function playerHasTool(player, toolName)
 	local function hasToolIn(container)
 		if not container then return false end
 		for _, item in ipairs(container:GetChildren()) do
-			if item:IsA("Tool") then
-				local toolId = item:GetAttribute("ToolId")
-				if item.Name == toolName or toolId == toolName then
-					return true
-				end
+			-- ✅ FIX: Removed item:IsA("Tool") strict check so Models are accepted
+			local toolId = item:GetAttribute("ToolId")
+			if item.Name == toolName or toolId == toolName then
+				return true
 			end
 		end
 		return false
@@ -104,10 +110,7 @@ local function grantToolDirectly(player, sourceTool)
 	local backpack = player:FindFirstChild("Backpack")
 	local starterGear = player:FindFirstChild("StarterGear")
 
-	if not backpack and not starterGear then
-		warn("⚠️ Cannot grant tool: Backpack and StarterGear are missing for " .. player.Name)
-		return false
-	end
+	if not backpack and not starterGear then return false end
 
 	local function tag(tool)
 		tool:SetAttribute("IssuedByServer", true)
@@ -117,22 +120,17 @@ local function grantToolDirectly(player, sourceTool)
 		return tool
 	end
 
-	if backpack then
-		tag(sourceTool:Clone()).Parent = backpack
-	end
+	if backpack then tag(sourceTool:Clone()).Parent = backpack end
 
 	if starterGear then
 		local alreadyInStarterGear = false
 		for _, child in ipairs(starterGear:GetChildren()) do
-			if child:IsA("Tool") and child:GetAttribute("ToolId") == sourceTool.Name then
+			if child:GetAttribute("ToolId") == sourceTool.Name then
 				alreadyInStarterGear = true
 				break
 			end
 		end
-
-		if not alreadyInStarterGear then
-			tag(sourceTool:Clone()).Parent = starterGear
-		end
+		if not alreadyInStarterGear then tag(sourceTool:Clone()).Parent = starterGear end
 	end
 
 	return playerHasTool(player, sourceTool.Name)
@@ -140,25 +138,14 @@ end
 
 local function wasPurchaseProcessed(purchaseKey)
 	local store = getPurchaseHistoryStore()
-	if not store then
-		warn("⚠️ PurchaseHistory DataStore unavailable.")
-		return nil
-	end
+	if not store then return nil end
 
 	for attempt = 1, 3 do
-		local success, result = pcall(function()
-			return store:GetAsync(purchaseKey)
-		end)
-
-		if success then
-			return result == true
-		end
+		local success, result = pcall(function() return store:GetAsync(purchaseKey) end)
+		if success then return result == true end
 
 		if isDeletedStoreError(result) then
-			warn("⚠️ Receipt DataStore was deleted. Switching to fallback store.")
-			local fallbackOk, fallbackStore = pcall(function()
-				return DataStoreService:GetDataStore("PurchaseHistory_V2")
-			end)
+			local fallbackOk, fallbackStore = pcall(function() return DataStoreService:GetDataStore("PurchaseHistory_V2") end)
 			if fallbackOk and fallbackStore then
 				ActivePurchaseHistory = fallbackStore
 				store = ActivePurchaseHistory
@@ -166,35 +153,21 @@ local function wasPurchaseProcessed(purchaseKey)
 				return nil
 			end
 		else
-			warn("⚠️ DataStore Error during receipt check. Retrying... Attempt " .. attempt)
 			task.wait(0.25 * attempt)
 		end
 	end
-
 	return nil
 end
 
 local function markPurchaseProcessed(purchaseKey)
 	local store = getPurchaseHistoryStore()
-	if not store then
-		warn("⚠️ PurchaseHistory DataStore unavailable during save.")
-		return false
-	end
+	if not store then return false end
 
 	local success, err = pcall(function()
-		store:UpdateAsync(purchaseKey, function(current)
-			if current == true then
-				return true
-			end
-			return true
-		end)
+		store:UpdateAsync(purchaseKey, function(current) return true end)
 	end)
 
-	if not success then
-		warn("⚠️ Critical Datastore Error saving receipt: " .. tostring(err))
-		return false
-	end
-
+	if not success then return false end
 	return true
 end
 
@@ -205,11 +178,9 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	local buyerId = receiptInfo.PlayerId
 	local buyerPlayer = Players:GetPlayerByUserId(buyerId)
 
-	-- 1. Handle Buyer Leaving/Crashing
 	if not buyerPlayer then return Enum.ProductPurchaseDecision.NotProcessedYet end
 
-	-- 🎁 GIFTING LOGIC: Determine the Recipient
-	local targetPlayer = buyerPlayer -- Default to buyer
+	local targetPlayer = buyerPlayer
 	local isGift = false
 
 	if _G.GetGiftReceiver then
@@ -219,14 +190,10 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			if receiver then
 				targetPlayer = receiver
 				isGift = true
-				print("🎁 GIFT DETECTED! From " .. buyerPlayer.Name .. " to " .. targetPlayer.Name)
-			else
-				warn("⚠️ Gift Receiver (ID: " .. tostring(receiverId) .. ") is offline. Defaulting item to Buyer.")
 			end
 		end
 	end
 
-	-- 🛡️ SECURITY: IDEMPOTENCY CHECK
 	local purchaseKey = buyerId .. "_" .. receiptInfo.PurchaseId
 	local alreadyProcessed = wasPurchaseProcessed(purchaseKey)
 	if alreadyProcessed == nil then
@@ -234,17 +201,12 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	end
 
 	if alreadyProcessed then
-		print("♻️ Duplicate Purchase ID detected. Skipping reward.")
 		return Enum.ProductPurchaseDecision.PurchaseGranted
 	end
 
-	-- Proceed with Purchase Logic
 	local pid = receiptInfo.ProductId
 	local purchaseSuccess = false 
 
-	print("🛒 Processing Purchase for ProductID: " .. pid .. " | Receiver: " .. targetPlayer.Name)
-
-	-- 🛑 FIX: Pre-evaluate Skin Match to avoid control flow hijacking
 	local skinFound = nil
 	if BaseSkinStats then
 		for name, data in pairs(BaseSkinStats) do
@@ -255,9 +217,6 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		end
 	end
 
-	-- ====================================================
-	-- 1️⃣ PRODUCT: TABLET 2X EARNINGS
-	-- ====================================================
 	if pid == TABLET_2X_ID then
 		local myPlotName = targetPlayer:GetAttribute("OccupiedPlot")
 		local plot = myPlotName and TycoonFolder:FindFirstChild(myPlotName)
@@ -276,20 +235,12 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			purchaseSuccess = true
 		end
 
-		-- ====================================================
-		-- 2️⃣ PRODUCT: SHOP REROLL (Restock)
-		-- ====================================================
 	elseif pid == SHOP_REROLL_ID then
 		if ShopRerollFunc then
 			ShopRerollFunc:Invoke(targetPlayer) 
 			purchaseSuccess = true
-		else
-			warn("⚠️ Critical: ShopRerollFunction missing!")
 		end
 
-		-- ====================================================
-		-- 3️⃣ PRODUCT: BUY CAR WITH ROBUX
-		-- ====================================================
 	elseif CAR_PRODUCT_IDS[pid] then
 		local carName = CAR_PRODUCT_IDS[pid]
 		local CarTools = ServerStorage:FindFirstChild("CarTools")
@@ -303,38 +254,29 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 				local grantWorked = false
 
 				if TycoonAdminAPI then
-					local invokeOk, invokeResult = pcall(function()
-						return TycoonAdminAPI:Invoke("GiveTool", targetPlayer, tool.Name, {
-							IssuedByServer = true,
-							IssuedAt = os.time(),
-							ToolId = tool.Name
-						})
-					end)
+					local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", targetPlayer, tool.Name, {
+						IssuedByServer = true,
+						IssuedAt = os.time(),
+						ToolId = tool.Name
+					})
 
-					if invokeOk and invokeResult == true and playerHasTool(targetPlayer, tool.Name) then
+					if invokeOk and giveResult == true and playerHasTool(targetPlayer, tool.Name) then
 						grantWorked = true
 					end
 				end
 
 				if not grantWorked then
-					warn("⚠️ TycoonAdminAPI grant failed/unavailable. Using direct fallback grant for " .. targetPlayer.Name)
 					grantWorked = grantToolDirectly(targetPlayer, tool)
 				end
 
 				if not grantWorked then
-					warn("⚠️ Failed to grant Robux car '" .. carName .. "' to " .. targetPlayer.Name)
 					return Enum.ProductPurchaseDecision.NotProcessedYet
 				end
 
 				purchaseSuccess = true
 			end
-		else
-			warn("❌ Critical: Tool missing for Robux Car: " .. carName)
 		end
 
-		-- ====================================================
-		-- 4️⃣ PRODUCT: BASE SKINS (Silver/Gold/Diamond/Rainbow)
-		-- ====================================================
 	elseif skinFound then
 		local ownedRaw = targetPlayer:GetAttribute("OwnedBaseSkins") or "[]"
 		local ownedTable = {}
@@ -349,18 +291,11 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		targetPlayer:SetAttribute("EquippedSkin", skinFound)
 		purchaseSuccess = true
 
-		-- ✨ NEW: TRIGGER CLIENT SUCCESS FOR ROBUX PURCHASES
 		if PadUnlockEvent then
 			PadUnlockEvent:FireClient(targetPlayer, true, skinFound .. " Base")
 		end
-
-	else
-		warn("⚠️ Unknown ProductID Purchased: " .. pid)
 	end
 
-	-- ====================================================
-	-- 🏁 FINALIZE PURCHASE (For non-car items)
-	-- ====================================================
 	if purchaseSuccess then
 		if not markPurchaseProcessed(purchaseKey) then
 			return Enum.ProductPurchaseDecision.NotProcessedYet
@@ -368,13 +303,9 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 
 		local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
 		if TycoonAdminAPI then
-			pcall(function()
-				TycoonAdminAPI:Invoke("MarkDirty", targetPlayer)
+			task.spawn(function()
+				safeInvoke(TycoonAdminAPI, 2, "MarkDirty", targetPlayer)
 			end)
-		end
-
-		if isGift then
-			print("✅ Gift successfully delivered to " .. targetPlayer.Name)
 		end
 
 		return Enum.ProductPurchaseDecision.PurchaseGranted
