@@ -266,26 +266,14 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			local pendingVal = plot.PendingEarnings
 			local amount = pendingVal.Value
 
-			-- 🛡️ SECURITY FIX: Do not take Robux if amount is 0
-			if amount <= 0 then
-				warn("⚠️ Player " .. targetPlayer.Name .. " attempted 2x purchase with 0 pending. Canceling.")
-				return Enum.ProductPurchaseDecision.NotProcessedYet
+			if amount > 0 then
+				pendingVal.Value = 0
+				local ls = targetPlayer:FindFirstChild("leaderstats")
+				if ls and ls:FindFirstChild("Cash") then
+					ls.Cash.Value += (amount * 2)
+				end
 			end
-
-			local ls = targetPlayer:FindFirstChild("leaderstats")
-			local cashObj = ls and ls:FindFirstChild("Cash")
-
-			-- 🛡️ SECURITY FIX: Ensure Cash exists before wiping pending
-			if not cashObj then
-				warn("⚠️ Player " .. targetPlayer.Name .. " missing Cash object. Canceling.")
-				return Enum.ProductPurchaseDecision.NotProcessedYet
-			end
-
-			pendingVal.Value = 0
-			cashObj.Value += (amount * 2)
 			purchaseSuccess = true
-		else
-			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 
 		-- ====================================================
@@ -308,8 +296,9 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
 
 		if tool then
-				-- 🛡️ SECURITY FIX: Bypass physical inventory checks to prevent pad-placement dupe exploits.
-				-- We trust the alreadyProcessed check strictly.
+			if playerHasTool(targetPlayer, tool.Name) then
+				purchaseSuccess = true
+			else
 				local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
 				local grantWorked = false
 
@@ -322,23 +311,25 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 						})
 					end)
 
-					if invokeOk and invokeResult == true then grantWorked = true end
+					if invokeOk and invokeResult == true and playerHasTool(targetPlayer, tool.Name) then
+						grantWorked = true
+					end
 				end
 
 				if not grantWorked then
-					warn("⚠️ TycoonAdminAPI grant failed. Using direct fallback grant for " .. targetPlayer.Name)
+					warn("⚠️ TycoonAdminAPI grant failed/unavailable. Using direct fallback grant for " .. targetPlayer.Name)
 					grantWorked = grantToolDirectly(targetPlayer, tool)
 				end
 
 				if not grantWorked then
 					warn("⚠️ Failed to grant Robux car '" .. carName .. "' to " .. targetPlayer.Name)
 					return Enum.ProductPurchaseDecision.NotProcessedYet
-			end
+				end
 
 				purchaseSuccess = true
+			end
 		else
 			warn("❌ Critical: Tool missing for Robux Car: " .. carName)
-				return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 
 		-- ====================================================
@@ -373,12 +364,6 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	if purchaseSuccess then
 		if not markPurchaseProcessed(purchaseKey) then
 			return Enum.ProductPurchaseDecision.NotProcessedYet
-		end
-
-		-- 🛡️ SECURITY FIX: Force an immediate sync to the main profile to prevent Split-Brain datastore item loss.
-		local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
-		if TycoonAdminAPI then
-			pcall(function() TycoonAdminAPI:Invoke("MarkDirty", targetPlayer) end)
 		end
 
 		if isGift then
