@@ -2,8 +2,6 @@
 -- Currency: leaderstats.Wallet
 -- Global rotation: deterministic per RESTOCK_INTERVAL
 -- Local reroll: per-player seed
--- Security: UserId mutex locks, success-only cooldown, pcall wrapper
--- Reliability: Persistence Interface added (Fixes Rejoin Stock Bypass)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
@@ -86,6 +84,32 @@ local function normalizePurchased(raw)
 end
 
 -- =========================
+-- TIMEOUT UTILITY (Upgraded to prevent "massive error" crashes)
+-- =========================
+local function safeInvoke(bindable, timeout, ...)
+	local args = table.pack(...)
+	local result = nil
+	local finished = false
+
+	task.spawn(function()
+		result = table.pack(pcall(function()
+			return bindable:Invoke(table.unpack(args, 1, args.n))
+		end))
+		finished = true
+	end)
+
+	local start = os.clock()
+	while not finished and (os.clock() - start) < timeout do
+		task.wait()
+	end
+
+	if not finished then return false, "Timeout" end
+	if not result[1] then return false, result[2] end
+
+	return true, table.unpack(result, 2, result.n)
+end
+
+-- =========================
 -- TOOL TAGGING + PERSISTENT ID
 -- =========================
 local PERSIST_ID_NAME = "__ShopToolId"
@@ -116,17 +140,6 @@ local function tagIssued(tool, toolId)
 	tool:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
 	tool.CanBeDropped = false
 	setPersistentToolId(tool, toolId)
-end
-
-local function starterGearHasToolId(player, toolId)
-	local sg = player:FindFirstChild("StarterGear")
-	if not sg then return false end
-	for _, child in ipairs(sg:GetChildren()) do
-		if getPersistentToolId(child) == toolId then
-			return true
-		end
-	end
-	return false
 end
 
 -- =========================
@@ -266,13 +279,11 @@ end
 -- =========================
 -- DATA HANDLER INTEGRATION
 -- =========================
--- TycoonDataHandler calls this via BindableFunction
 PersistenceBindable.OnInvoke = function(action, player, data)
 	if not player then return end
 	local uid = player.UserId
 
 	if action == "Load" then
-		-- RESTORE purchased counts from DataStore
 		local session, didReset = getSession(player)
 		if type(data) == "table" then
 			if data.SeedVersion and data.SeedVersion ~= session.SeedVersion then
@@ -302,18 +313,15 @@ PersistenceBindable.OnInvoke = function(action, player, data)
 		end
 
 	elseif action == "Get" then
-		-- RETURN purchased counts to be saved
-		if PlayerSessions[uid] then
-			return {
-				SeedVersion = PlayerSessions[uid].SeedVersion,
-				LocalSeed = PlayerSessions[uid].LocalSeed,
-				Purchased = PlayerSessions[uid].Purchased,
-			}
-		end
-		return {}
+		-- ✅ FIX: Initialize session if it doesn't exist to prevent Datastore Wipe / Restock Bug
+		local session, _ = getSession(player)
+		return {
+			SeedVersion = session.SeedVersion,
+			LocalSeed = session.LocalSeed,
+			Purchased = session.Purchased,
+		}
 
 	elseif action == "Close" then
-		-- CLEANUP after save is complete
 		PlayerSessions[uid] = nil
 		PurchaseLocks[uid] = nil
 		LastPurchaseTime[uid] = nil
@@ -358,40 +366,36 @@ FuncBuyCar.OnServerInvoke = function(player, carName)
 		local limit = config.Limits[carName] or 0
 		if bought >= limit then return false, "Out of Stock" end
 
-		-- Currency: WALLET
 		local ls = player:FindFirstChild("leaderstats")
 		local wallet = ls and ls:FindFirstChild("Wallet")
 		if not wallet then return false, "Wallet Not Found" end
 		if wallet.Value < carData.Price then return false, "Insufficient Cash (Withdraw from ATM)" end
 
-		-- Tool Check
 		local toolsFolder = ServerStorage:FindFirstChild("CarTools")
 		local toolSource = toolsFolder and (toolsFolder:FindFirstChild(carName) or toolsFolder:FindFirstChild(carName .. " Item"))
 		if not toolSource then return false, "System Error: Tool Missing" end
 
-		-- Transaction
-		wallet.Value -= carData.Price
-
-		-- [[ CRITICAL FIX ]] 
-		-- Capture the exact Name from ServerStorage (e.g., "Delta Item")
-		-- We use THIS name for the persistent ID so TycoonDataHandler finds it later.
 		local realToolName = toolSource.Name 
 
-		-- Delegate to Server-Authoritative Handler
 		local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
-		if TycoonAdminAPI then
-			TycoonAdminAPI:Invoke("GiveTool", player, realToolName)
-			pcall(function()
-				TycoonAdminAPI:Invoke("MarkDirty", player)
-			end)
-		else
-			warn("⚠️ TycoonAdminAPI not found. Could not grant tool.")
+		if not TycoonAdminAPI then
+			return false, "System Error: Admin API Missing"
+		end
+
+		local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", player, realToolName)
+		if not invokeOk then
+			warn("⚠️ TycoonAdminAPI grant failed or timed out for", player.Name)
 			return false, "System Error: Inventory Grant Failed"
 		end
 
-		-- Update State
+		wallet.Value -= carData.Price
+
 		session.Purchased[carName] = bought + 1
 		pushUpdate(player, session, "Purchase")
+
+		task.spawn(function()
+			safeInvoke(TycoonAdminAPI, 2, "MarkDirty", player)
+		end)
 
 		return true, "Success"
 	end)
@@ -438,6 +442,3 @@ task.spawn(function()
 		end
 	end
 end)
-
--- Note: Session cleanup is now handled via "Close" action in PersistenceBindable
--- This ensures data isn't wiped before TycoonDataHandler saves it.
