@@ -17,7 +17,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 
 -- 💾 DATASTORE FOR RECEIPT HISTORY
-local PurchaseHistory = DataStoreService:GetDataStore("PurchaseHistory")
+-- NOTE: "PurchaseHistory" was previously deleted in production.
+-- Keep a fallback name so receipt processing can recover safely.
+local PURCHASE_HISTORY_NAMES = {"PurchaseHistory", "PurchaseHistory_V2"}
+local ActivePurchaseHistory = nil
 
 -- ⚙️ EXISTING PRODUCT IDs
 local TABLET_2X_ID = 3509697462 -- Tablet ID
@@ -50,6 +53,50 @@ local BaseSkinStats
 pcall(function()
 	BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats"))
 end)
+
+local function getPurchaseHistoryStore()
+	if ActivePurchaseHistory then
+		return ActivePurchaseHistory
+	end
+
+	for _, name in ipairs(PURCHASE_HISTORY_NAMES) do
+		local ok, store = pcall(function()
+			return DataStoreService:GetDataStore(name)
+		end)
+		if ok and store then
+			ActivePurchaseHistory = store
+			return ActivePurchaseHistory
+		end
+	end
+
+	return nil
+end
+
+local function isDeletedStoreError(err)
+	err = string.lower(tostring(err or ""))
+	return string.find(err, "data store is deleted", 1, true) ~= nil
+end
+
+local function playerHasTool(player, toolName)
+	if not player or not toolName then return false end
+
+	local function hasToolIn(container)
+		if not container then return false end
+		for _, item in ipairs(container:GetChildren()) do
+			if item:IsA("Tool") then
+				local toolId = item:GetAttribute("ToolId")
+				if item.Name == toolName or toolId == toolName then
+					return true
+				end
+			end
+		end
+		return false
+	end
+
+	return hasToolIn(player:FindFirstChild("Backpack"))
+		or hasToolIn(player:FindFirstChild("StarterGear"))
+		or hasToolIn(player.Character)
+end
 
 local function grantToolDirectly(player, sourceTool)
 	if not player or not sourceTool then return false end
@@ -92,21 +139,50 @@ local function grantToolDirectly(player, sourceTool)
 end
 
 local function wasPurchaseProcessed(purchaseKey)
-	local success, result = pcall(function()
-		return PurchaseHistory:GetAsync(purchaseKey)
-	end)
-
-	if not success then
-		warn("⚠️ DataStore Error during receipt check. Retrying...")
+	local store = getPurchaseHistoryStore()
+	if not store then
+		warn("⚠️ PurchaseHistory DataStore unavailable.")
 		return nil
 	end
 
-	return result == true
+	for attempt = 1, 3 do
+		local success, result = pcall(function()
+			return store:GetAsync(purchaseKey)
+		end)
+
+		if success then
+			return result == true
+		end
+
+		if isDeletedStoreError(result) then
+			warn("⚠️ Receipt DataStore was deleted. Switching to fallback store.")
+			local fallbackOk, fallbackStore = pcall(function()
+				return DataStoreService:GetDataStore("PurchaseHistory_V2")
+			end)
+			if fallbackOk and fallbackStore then
+				ActivePurchaseHistory = fallbackStore
+				store = ActivePurchaseHistory
+			else
+				return nil
+			end
+		else
+			warn("⚠️ DataStore Error during receipt check. Retrying... Attempt " .. attempt)
+			task.wait(0.25 * attempt)
+		end
+	end
+
+	return nil
 end
 
 local function markPurchaseProcessed(purchaseKey)
+	local store = getPurchaseHistoryStore()
+	if not store then
+		warn("⚠️ PurchaseHistory DataStore unavailable during save.")
+		return false
+	end
+
 	local success, err = pcall(function()
-		PurchaseHistory:UpdateAsync(purchaseKey, function(current)
+		store:UpdateAsync(purchaseKey, function(current)
 			if current == true then
 				return true
 			end
@@ -120,27 +196,6 @@ local function markPurchaseProcessed(purchaseKey)
 	end
 
 	return true
-end
-
-local function playerHasTool(player, toolName)
-	if not player or not toolName then return false end
-
-	local function hasToolIn(container)
-		if not container then return false end
-		for _, item in ipairs(container:GetChildren()) do
-			if item:IsA("Tool") then
-				local toolId = item:GetAttribute("ToolId")
-				if item.Name == toolName or toolId == toolName then
-					return true
-				end
-			end
-		end
-		return false
-	end
-
-	return hasToolIn(player:FindFirstChild("Backpack"))
-		or hasToolIn(player:FindFirstChild("StarterGear"))
-		or hasToolIn(player.Character)
 end
 
 -- ============================================================================
