@@ -382,15 +382,19 @@ local function save(player, isClosing)
 		local inventory = {}
 		local invCount = 0
 		local seenInstances = {}
+		local capturedToolIds = {} -- 🛡️ SECURITY FIX: Prevent ghost-item duplication via Set tracking
 
 		local function scanContainer(container)
 			if not container then return end
 			for _, tool in pairs(container:GetChildren()) do
 				if validateTool(tool) and not seenInstances[tool] then
 					seenInstances[tool] = true
-					if invCount < MAX_INVENTORY_SIZE then
-						local id = tool:GetAttribute("ToolId")
-						if id then
+
+					local id = tool:GetAttribute("ToolId")
+					-- 🛡️ SECURITY FIX: Only save the ToolId if we haven't seen it yet.
+					if id and not capturedToolIds[id] then
+						if invCount < MAX_INVENTORY_SIZE then
+							capturedToolIds[id] = true
 							table.insert(inventory, id)
 							invCount += 1
 						end
@@ -399,11 +403,10 @@ local function save(player, isClosing)
 			end
 		end
 
-		-- ✅ PRIMARY: Backpack + Character capture all owned copies.
+		-- ✅ PRIMARY: Capture all owned copies across all states safely.
 		scanContainer(player:FindFirstChild("Backpack"))
 		scanContainer(player.Character)
-
-		-- 🛑 FIX: StarterGear fallback removed to prevent ghost-item duplication exploits.
+		scanContainer(player:FindFirstChild("StarterGear")) -- 🛡️ FIX: Re-enabled safely!
 
 		local layout = {}
 		local plotName = player:GetAttribute("OccupiedPlot")
