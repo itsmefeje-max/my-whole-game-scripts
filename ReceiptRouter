@@ -51,6 +51,46 @@ pcall(function()
 	BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats"))
 end)
 
+local function grantToolDirectly(player, sourceTool)
+	if not player or not sourceTool then return false end
+
+	local backpack = player:FindFirstChild("Backpack")
+	local starterGear = player:FindFirstChild("StarterGear")
+
+	if not backpack and not starterGear then
+		warn("⚠️ Cannot grant tool: Backpack and StarterGear are missing for " .. player.Name)
+		return false
+	end
+
+	local function tag(tool)
+		tool:SetAttribute("IssuedByServer", true)
+		tool:SetAttribute("IssuedAt", os.time())
+		tool:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
+		tool:SetAttribute("ToolId", sourceTool.Name)
+		return tool
+	end
+
+	if backpack then
+		tag(sourceTool:Clone()).Parent = backpack
+	end
+
+	if starterGear then
+		local alreadyInStarterGear = false
+		for _, child in ipairs(starterGear:GetChildren()) do
+			if child:IsA("Tool") and child:GetAttribute("ToolId") == sourceTool.Name then
+				alreadyInStarterGear = true
+				break
+			end
+		end
+
+		if not alreadyInStarterGear then
+			tag(sourceTool:Clone()).Parent = starterGear
+		end
+	end
+
+	return playerHasTool(player, sourceTool.Name)
+end
+
 local function wasPurchaseProcessed(purchaseKey)
 	local success, result = pcall(function()
 		return PurchaseHistory:GetAsync(purchaseKey)
@@ -205,20 +245,28 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 				purchaseSuccess = true
 			else
 				local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
-				if not TycoonAdminAPI then
-					warn("⚠️ TycoonAdminAPI not found. Failed to give tool.")
-					return Enum.ProductPurchaseDecision.NotProcessedYet
+				local grantWorked = false
+
+				if TycoonAdminAPI then
+					local invokeOk, invokeResult = pcall(function()
+						return TycoonAdminAPI:Invoke("GiveTool", targetPlayer, tool.Name, {
+							IssuedByServer = true,
+							IssuedAt = os.time(),
+							ToolId = tool.Name
+						})
+					end)
+
+					if invokeOk and invokeResult == true and playerHasTool(targetPlayer, tool.Name) then
+						grantWorked = true
+					end
 				end
 
-				local granted, grantError = pcall(function()
-					return TycoonAdminAPI:Invoke("GiveTool", targetPlayer, tool.Name, {
-						IssuedByServer = true,
-						IssuedAt = os.time(),
-						ToolId = tool.Name
-					})
-				end)
+				if not grantWorked then
+					warn("⚠️ TycoonAdminAPI grant failed/unavailable. Using direct fallback grant for " .. targetPlayer.Name)
+					grantWorked = grantToolDirectly(targetPlayer, tool)
+				end
 
-				if not granted or not grantError then
+				if not grantWorked then
 					warn("⚠️ Failed to grant Robux car '" .. carName .. "' to " .. targetPlayer.Name)
 					return Enum.ProductPurchaseDecision.NotProcessedYet
 				end
