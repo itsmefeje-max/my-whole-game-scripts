@@ -374,14 +374,16 @@ local function init()
 				-- ✅ CAR PURCHASE SUCCESS
 				showFeedback("Purchase Success", FEEDBACK_COLORS.Success)
 
-				local s = Instance.new("Sound")
-				s.Name = "CarPurchaseSFX"
-				s.SoundId = SPECIAL_SFX_ID
-				s.Volume = 1.5 
-				s.Pitch = 1.0
-				s.Parent = SoundService
-				s:Play()
-				Debris:AddItem(s, 5)
+				if not game:GetService("SoundService"):GetAttribute("SFXMuted") then
+					local s = Instance.new("Sound")
+					s.Name = "CarPurchaseSFX"
+					s.SoundId = SPECIAL_SFX_ID
+					s.Volume = 1.5
+					s.Pitch = 1.0
+					s.Parent = SoundService
+					s:Play()
+					Debris:AddItem(s, 5)
+				end
 			end
 		else
 			-- ❌ ROBUX FAIL/CANCEL
