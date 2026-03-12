@@ -84,58 +84,6 @@ local function isDeletedStoreError(err)
 	return string.find(err, "data store is deleted", 1, true) ~= nil
 end
 
-local function playerHasTool(player, toolName)
-	if not player or not toolName then return false end
-
-	local function hasToolIn(container)
-		if not container then return false end
-		for _, item in ipairs(container:GetChildren()) do
-			-- ✅ FIX: Removed item:IsA("Tool") strict check so Models are accepted
-			local toolId = item:GetAttribute("ToolId")
-			if item.Name == toolName or toolId == toolName then
-				return true
-			end
-		end
-		return false
-	end
-
-	return hasToolIn(player:FindFirstChild("Backpack"))
-		or hasToolIn(player:FindFirstChild("StarterGear"))
-		or hasToolIn(player.Character)
-end
-
-local function grantToolDirectly(player, sourceTool)
-	if not player or not sourceTool then return false end
-
-	local backpack = player:FindFirstChild("Backpack")
-	local starterGear = player:FindFirstChild("StarterGear")
-
-	if not backpack and not starterGear then return false end
-
-	local function tag(tool)
-		tool:SetAttribute("IssuedByServer", true)
-		tool:SetAttribute("IssuedAt", os.time())
-		tool:SetAttribute("IssuedId", HttpService:GenerateGUID(false))
-		tool:SetAttribute("ToolId", sourceTool.Name)
-		return tool
-	end
-
-	if backpack then tag(sourceTool:Clone()).Parent = backpack end
-
-	if starterGear then
-		local alreadyInStarterGear = false
-		for _, child in ipairs(starterGear:GetChildren()) do
-			if child:GetAttribute("ToolId") == sourceTool.Name then
-				alreadyInStarterGear = true
-				break
-			end
-		end
-		if not alreadyInStarterGear then tag(sourceTool:Clone()).Parent = starterGear end
-	end
-
-	return playerHasTool(player, sourceTool.Name)
-end
-
 local function wasPurchaseProcessed(purchaseKey)
 	local store = getPurchaseHistoryStore()
 	if not store then return nil end
@@ -247,33 +195,17 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
 
 		if tool then
-			if playerHasTool(targetPlayer, tool.Name) then
-				purchaseSuccess = true
-			else
-				local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
-				local grantWorked = false
+			local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+			if TycoonAdminAPI then
+				local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", targetPlayer, tool.Name, {
+					IssuedByServer = true,
+					IssuedAt = os.time(),
+					ToolId = tool.Name
+				})
 
-				if TycoonAdminAPI then
-					local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", targetPlayer, tool.Name, {
-						IssuedByServer = true,
-						IssuedAt = os.time(),
-						ToolId = tool.Name
-					})
-
-					if invokeOk and giveResult == true and playerHasTool(targetPlayer, tool.Name) then
-						grantWorked = true
-					end
+				if invokeOk and giveResult == true then
+					purchaseSuccess = true
 				end
-
-				if not grantWorked then
-					grantWorked = grantToolDirectly(targetPlayer, tool)
-				end
-
-				if not grantWorked then
-					return Enum.ProductPurchaseDecision.NotProcessedYet
-				end
-
-				purchaseSuccess = true
 			end
 		end
 
