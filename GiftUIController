@@ -1,12 +1,7 @@
--- Purpose: Gift UI brain with Bank UI flow: hide other GUIs, lock movement, dim hover, optional FOV tween.
+-- Purpose: Gift UI brain with Bank UI flow. Prevents gifting items the target already owns.
 -- Runs on: Client
 -- Location: StarterPlayerScripts
--- Dependencies: Players, ReplicatedStorage, MarketplaceService, TweenService, Workspace, Debris
--- Public API: _G.OpenGiftMenu (Consider refactoring to a ModuleScript export)
--- Networking: Fires 'SetGiftIntent' to server to map buyer to receiver.
--- Security: Client authority is zero. Server must validate intent, verify target is in-game, and rate-limit remote calls.
--- Performance: Utilizes event connection pooling. Pre-initializes on load to prevent first-click delay.
--- Notes: Implemented state-guards, auto-hide on load, and an animated empty-server indicator that hides the normal indicator.
+-- Dependencies: Players, ReplicatedStorage, MarketplaceService, TweenService, Workspace, Debris, HttpService
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,9 +9,16 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 local Debris = game:GetService("Debris")
+local HttpService = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- 📚 MODULES
+local BaseSkinStats
+pcall(function()
+	BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats", 5))
+end)
 
 -- 📡 REMOTES
 local Remotes = ReplicatedStorage:WaitForChild("GiftRemotes", 10)
@@ -40,7 +42,7 @@ local MIN_OPEN_FOV = 40
 local SFX = {
 	Open = "rbxassetid://6895079853",
 	Click = "rbxassetid://4210586953",
-	Success = "rbxassetid://2619623062",
+	Success = "rbxassetid://73743814975286", -- 🎵 FINAL SFX SYNC
 	Error = "rbxassetid://1526487928"
 }
 
@@ -73,6 +75,34 @@ local openFov = nil
 
 local savedWalkSpeed = nil
 local savedJumpPower = nil
+
+-- ============================================================================
+-- 🔍 OWNERSHIP CHECK LOGIC
+-- ============================================================================
+local function GetSkinNameFromProductId(productId)
+	if not BaseSkinStats or not productId then return nil end
+	for skinName, data in pairs(BaseSkinStats) do
+		if data.ProductId == productId then
+			return skinName
+		end
+	end
+	return nil
+end
+
+local function DoesPlayerOwnSkin(targetPlayer, skinName)
+	if not skinName then return false end
+	local ownedRaw = targetPlayer:GetAttribute("OwnedBaseSkins")
+	if not ownedRaw then return false end
+
+	local success, ownedTable = pcall(function()
+		return HttpService:JSONDecode(ownedRaw)
+	end)
+
+	if success and type(ownedTable) == "table" then
+		return table.find(ownedTable, skinName) ~= nil
+	end
+	return false
+end
 
 -- ============================================================================
 -- 👁️ GUI HIDING
@@ -268,26 +298,19 @@ local function UpdateSlots()
 
 	local standardIndicator = mainFrame:FindFirstChild("Indicator")
 
-	-- Check if server is empty
 	if #validPlayers == 0 then
 		if emptyIndicator then
 			ensureEmptyFX(emptyIndicator)
 			emptyIndicator.Text = "No One To Gift In THIS SERVER :("
 			emptyIndicator.Visible = true
 		end
-		-- 🛡️ Hide the standard indicator if no players exist
-		if standardIndicator then
-			standardIndicator.Visible = false
-		end
+		if standardIndicator then standardIndicator.Visible = false end
 	else
-		if emptyIndicator then
-			emptyIndicator.Visible = false
-		end
-		-- 🛡️ Ensure standard indicator is visible if players exist
-		if standardIndicator then
-			standardIndicator.Visible = true
-		end
+		if emptyIndicator then emptyIndicator.Visible = false end
+		if standardIndicator then standardIndicator.Visible = true end
 	end
+
+	local targetSkinName = GetSkinNameFromProductId(currentProductId)
 
 	for i = 1, 5 do
 		local slotFrame = mainFrame:FindFirstChild("Player" .. i)
@@ -299,13 +322,19 @@ local function UpdateSlots()
 				local nameLbl = slotFrame:FindFirstChild("PlayerName")
 				local avatarImg = slotFrame:FindFirstChild("PlayerAvatar")
 				local giftBtn = slotFrame:FindFirstChild("GiftThePlayer")
+				local alreadyOwnedBtn = slotFrame:FindFirstChild("AlreadyOwned")
 
 				if nameLbl then nameLbl.Text = target.Name end
 				if avatarImg then
 					avatarImg.Image = "rbxthumb://type=AvatarHeadShot&id=" .. target.UserId .. "&w=150&h=150"
 				end
 
-				if giftBtn then
+				local alreadyOwnsIt = DoesPlayerOwnSkin(target, targetSkinName)
+
+				if alreadyOwnedBtn then alreadyOwnedBtn.Visible = alreadyOwnsIt end
+				if giftBtn then giftBtn.Visible = not alreadyOwnsIt end
+
+				if giftBtn and not alreadyOwnsIt then
 					addHover(giftBtn)
 
 					if btnConnections[i] then
@@ -326,6 +355,9 @@ local function UpdateSlots()
 						SetIntentEvent:FireServer(target.UserId)
 						MarketplaceService:PromptProductPurchase(player, currentProductId)
 					end)
+				elseif btnConnections[i] then
+					btnConnections[i]:Disconnect()
+					btnConnections[i] = nil
 				end
 			else
 				slotFrame.Visible = false
@@ -382,7 +414,6 @@ local function Init()
 		emptyIndicator = mainFrame:FindFirstChild("EmptyServerIndicator")
 	end
 
-	-- 🛡️ STRICT HIDE: Overrides any properties set in Studio immediately on load
 	screenGui.Enabled = false
 	if mainFrame then mainFrame.Visible = false end
 
@@ -438,7 +469,6 @@ _G.OpenGiftMenu = function(productId)
 	setFocusMode(true)
 end
 
--- 🛡️ AUTO-RUN ON START: Forces the UI to hide the moment the player loads in
 task.spawn(Init)
 
 return {}
