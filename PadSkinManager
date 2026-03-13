@@ -179,3 +179,26 @@ for _, p in pairs(Players:GetPlayers()) do SetupPlayer(p) end
 
 -- 🚑 EMERGENCY CLEANUP
 for _, p in pairs(Players:GetPlayers()) do SetupPlayer(p) end
+-- Purpose: Visual Handler. Paints Silver/Gold/Diamond/Rainbow.
+-- Runs on: Server
+-- Location: ServerScriptService
+-- Dependencies: Players, Workspace, ReplicatedStorage, CollectionService
+-- Public API: N/A
+-- Networking: N/A
+-- Security: Safe attribute storage and state management.
+-- Performance: Uses CollectionService for optimized tagging.
+-- Notes: Includes the PlayerRemoving cleanup fix.
+
+-- [Keep all your existing code above this point]
+
+-- 🧹 CLEANUP: Revert skin to default when player leaves
+Players.PlayerRemoving:Connect(function(player)
+	local plotName = player:GetAttribute("OccupiedPlot")
+	if plotName then
+		local plot = TycoonFolder:FindFirstChild(plotName)
+		if plot then
+			print("🧹 PadSkinManager: Restoring " .. plotName .. " to Default")
+			PaintPlot(plot, "Default")
+		end
+	end
+end)
