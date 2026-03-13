@@ -1,6 +1,12 @@
--- Purpose: Centralizes MarketplaceService.ProcessReceipt with IDEMPOTENCY, GIFTING, and VFX.
+-- Purpose: Centralizes MarketplaceService.ProcessReceipt with IDEMPOTENCY, GIFTING, VFX, and Anti-Exploit guards.
 -- Runs on: Server
 -- Location: ServerScriptService
+-- Dependencies: MarketplaceService, DataStoreService, Players, Workspace, ServerStorage, ReplicatedStorage, HttpService
+-- Public API: N/A
+-- Networking: Listens to ProcessReceipt. Fires 'NotifyGiftReceived' to clients when gifted.
+-- Security: Verifies target doesn't already own the item before granting to prevent wasted Robux via exploits.
+-- Performance: Uses caching and pcalls for DataStore resilience.
+-- Notes: Implemented strict ownership checks for Base Skins and prevents double-popups for gifts.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local DataStoreService = game:GetService("DataStoreService")
@@ -28,11 +34,26 @@ local CAR_PRODUCT_IDS = {
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 local ShopRerollFunc = ServerStorage:WaitForChild("ShopRerollFunction")
 
+-- 📡 REMOTES SETUP
 local PadUnlockEvent = ReplicatedStorage:FindFirstChild("PadUnlockEvent")
 if not PadUnlockEvent then
 	PadUnlockEvent = Instance.new("RemoteEvent")
 	PadUnlockEvent.Name = "PadUnlockEvent"
 	PadUnlockEvent.Parent = ReplicatedStorage
+end
+
+local Remotes = ReplicatedStorage:FindFirstChild("GiftRemotes")
+if not Remotes then
+	Remotes = Instance.new("Folder")
+	Remotes.Name = "GiftRemotes"
+	Remotes.Parent = ReplicatedStorage
+end
+
+local NotifyGiftReceived = Remotes:FindFirstChild("NotifyGiftReceived")
+if not NotifyGiftReceived then
+	NotifyGiftReceived = Instance.new("RemoteEvent")
+	NotifyGiftReceived.Name = "NotifyGiftReceived"
+	NotifyGiftReceived.Parent = Remotes
 end
 
 local BaseSkinStats
@@ -215,16 +236,26 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		local decodeSuccess, _ = pcall(function() ownedTable = HttpService:JSONDecode(ownedRaw) end)
 		if not decodeSuccess then ownedTable = {} end
 
-		if not table.find(ownedTable, skinFound) then
+		-- 🛑 ANTI-EXPLOIT GUARD: Verify target doesn't already own it
+		if table.find(ownedTable, skinFound) then
+			warn("🛡️ Security: Blocked purchase! " .. targetPlayer.Name .. " already owns the " .. skinFound .. " pad.")
+			return Enum.ProductPurchaseDecision.NotProcessedYet -- Cancel transaction entirely
+		else
+			-- ✅ VALID PURCHASE
 			table.insert(ownedTable, skinFound)
 			targetPlayer:SetAttribute("OwnedBaseSkins", HttpService:JSONEncode(ownedTable))
-		end
+			targetPlayer:SetAttribute("EquippedSkin", skinFound)
+			purchaseSuccess = true
 
-		targetPlayer:SetAttribute("EquippedSkin", skinFound)
-		purchaseSuccess = true
+			-- 🛑 FIX: Prevent the standard screen from overriding the gift notification
+			if PadUnlockEvent and not isGift then
+				PadUnlockEvent:FireClient(targetPlayer, true, skinFound .. " Base")
+			end
 
-		if PadUnlockEvent then
-			PadUnlockEvent:FireClient(targetPlayer, true, skinFound .. " Base")
+			-- 🎁 SIGNAL THE RECEIVER
+			if isGift then
+				NotifyGiftReceived:FireClient(targetPlayer, buyerPlayer.Name, skinFound)
+			end
 		end
 	end
 
