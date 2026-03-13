@@ -1,0 +1,164 @@
+-- Purpose: Listens for incoming gifts and triggers a clean fade-in notification with Confetti and highly stylized RichText.
+-- Runs on: Client
+-- Location: StarterPlayerScripts
+-- Dependencies: Players, ReplicatedStorage, TweenService, Debris
+-- Public API: N/A
+-- Networking: Listens to 'NotifyGiftReceived' RemoteEvent.
+-- Security: Client-side visuals only.
+-- Performance: Lightweight fading, no size manipulation, auto-cleaning confetti.
+-- Notes: Points to Notifications > GiftReceived.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- 📚 MODULES
+local BaseSkinStats
+pcall(function()
+	BaseSkinStats = require(ReplicatedStorage:WaitForChild("BaseSkinStats", 5))
+end)
+
+-- 📡 REMOTES
+local Remotes = ReplicatedStorage:WaitForChild("GiftRemotes", 10)
+local NotifyGiftReceived = Remotes:WaitForChild("NotifyGiftReceived", 10)
+
+-- ⚙️ CONFIG
+local UI_NAME = "Notifications"
+local NOTIFICATION_NAME = "GiftReceived"
+local DISPLAY_TIME = 5.0
+local TADA_SFX_ID = "rbxassetid://73743814975286" 
+
+-- 🎨 COLOR CODING
+local DEFAULT_COLOR_HEX = "#A3A2A5" -- Silver/Default Gray for unknown pads
+local PLAYER_COLOR_HEX = "#55FF55"  -- Bright Neon Green for the Sender's Name
+
+-- ============================================================================
+-- 🛠️ HELPER FUNCTIONS
+-- ============================================================================
+local function Color3ToHex(color)
+	return string.format("#%02X%02X%02X", color.R * 255, color.G * 255, color.B * 255)
+end
+
+local function GetSkinHexColor(skinName)
+	if BaseSkinStats and BaseSkinStats[skinName] and BaseSkinStats[skinName].Color then
+		return Color3ToHex(BaseSkinStats[skinName].Color)
+	end
+	return DEFAULT_COLOR_HEX
+end
+
+local function PlayPopSound()
+	local s = Instance.new("Sound")
+	s.SoundId = TADA_SFX_ID
+	s.Volume = 0.6
+	s.Parent = PlayerGui
+	s:Play()
+	Debris:AddItem(s, 3)
+end
+
+-- ============================================================================
+-- 🎊 CONFETTI ENGINE
+-- ============================================================================
+local function SpawnConfetti(parentUI)
+	local colors = {
+		Color3.fromRGB(255, 215, 0),   -- Gold
+		Color3.fromRGB(85, 255, 255),  -- Diamond
+		Color3.fromRGB(255, 85, 127),  -- Pink
+		Color3.fromRGB(85, 255, 127),  -- Green
+		Color3.fromRGB(170, 85, 255),  -- Purple
+		Color3.fromRGB(255, 255, 255)  -- White
+	}
+
+	for i = 1, 50 do
+		local p = Instance.new("Frame")
+		p.Name = "ConfettiParticle"
+		p.Size = UDim2.new(0, math.random(6, 12), 0, math.random(6, 12))
+		p.Position = UDim2.new(0.5, 0, 0.5, 0)
+		p.AnchorPoint = Vector2.new(0.5, 0.5)
+		p.BackgroundColor3 = colors[math.random(1, #colors)]
+		p.Rotation = math.random(0, 360)
+		p.BorderSizePixel = 0
+		p.ZIndex = 99
+		p.Parent = parentUI
+
+		local angle = math.rad(math.random(0, 360))
+		local burstDistance = math.random(150, 450)
+
+		local targetXOffset = math.cos(angle) * burstDistance
+		local targetYOffset = (math.sin(angle) * burstDistance) + 250 
+
+		local tInfo = TweenInfo.new(math.random(15, 25) / 10, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
+		local tween = TweenService:Create(p, tInfo, {
+			Position = UDim2.new(0.5, targetXOffset, 0.5, targetYOffset),
+			Rotation = p.Rotation + math.random(-360, 360),
+			BackgroundTransparency = 1
+		})
+
+		tween:Play()
+		Debris:AddItem(p, 3)
+	end
+end
+
+-- ============================================================================
+-- ✨ ANIMATION LOGIC (FADE + CONFETTI)
+-- ============================================================================
+local activeHideTask = nil
+
+local function ShowNotification(buyerName, skinName)
+	local screenGui = PlayerGui:FindFirstChild(UI_NAME)
+	if not screenGui then return end
+
+	local notificationLbl = screenGui:WaitForChild(NOTIFICATION_NAME, 3)
+	if not notificationLbl then return end
+
+	-- 1. Setup Maximum Rich Text Formatting
+	local padHexColor = GetSkinHexColor(skinName)
+	notificationLbl.RichText = true
+
+	-- 🎨 NEW FORMAT: Emojis + Bright Green Player Name + Colored Pad Name + Bold Tags
+	notificationLbl.Text = string.format(
+		"🎁 <b><font color='%s'>%s</font></b> gifted you the <b><font color='%s'>%s Pad</font></b>! 🎁", 
+		PLAYER_COLOR_HEX, 
+		buyerName, 
+		padHexColor, 
+		skinName
+	)
+
+	-- 2. Reset State for Fade In
+	notificationLbl.Visible = true
+	notificationLbl.TextTransparency = 1
+	local stroke = notificationLbl:FindFirstChildOfClass("UIStroke")
+	if stroke then stroke.Transparency = 1 end
+
+	if activeHideTask then
+		task.cancel(activeHideTask)
+		activeHideTask = nil
+	end
+
+	-- 3. Simple Fade In & Confetti
+	PlayPopSound()
+	SpawnConfetti(notificationLbl)
+
+	local fadeInInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	TweenService:Create(notificationLbl, fadeInInfo, {TextTransparency = 0}):Play()
+	if stroke then TweenService:Create(stroke, fadeInInfo, {Transparency = 0}):Play() end
+
+	-- 4. Schedule Fade Out
+	activeHideTask = task.delay(DISPLAY_TIME, function()
+		local fadeOutInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		local fadeTween = TweenService:Create(notificationLbl, fadeOutInfo, {TextTransparency = 1})
+
+		fadeTween:Play()
+		if stroke then TweenService:Create(stroke, fadeOutInfo, {Transparency = 1}):Play() end
+
+		fadeTween.Completed:Wait()
+		notificationLbl.Visible = false
+	end)
+end
+
+if NotifyGiftReceived then
+	NotifyGiftReceived.OnClientEvent:Connect(ShowNotification)
+end
