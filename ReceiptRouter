@@ -6,7 +6,7 @@
 -- Networking: Listens to ProcessReceipt. Fires 'NotifyGiftReceived' to clients when gifted.
 -- Security: Verifies target doesn't already own the item before granting to prevent wasted Robux via exploits.
 -- Performance: Uses caching and pcalls for DataStore resilience.
--- Notes: Implemented strict ownership checks for Base Skins and prevents double-popups for gifts.
+-- Notes: Updated to support UNCOMMON SHOP tier purchases and rerolls.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local DataStoreService = game:GetService("DataStoreService")
@@ -19,6 +19,7 @@ local HttpService = game:GetService("HttpService")
 local PURCHASE_HISTORY_NAMES = {"ReceiptHistory_V3"}
 local ActivePurchaseHistory = nil
 
+-- 🟢 COMMON SHOP CONFIG
 local TABLET_2X_ID = 3509697462
 local SHOP_REROLL_ID = 3520990584
 
@@ -31,8 +32,22 @@ local CAR_PRODUCT_IDS = {
 	[3524328713] = "Riva"
 }
 
+-- 🔵 UNCOMMON SHOP CONFIG (NEW)
+local UNCOMMON_SHOP_REROLL_ID = 3555934441
+
+local UNCOMMON_CAR_PRODUCT_IDS = {
+	[3555929015] = "Raiju",
+	[3555929595] = "Ironclad",
+	[3555930076] = "Vapid",
+	[3555930681] = "Galadriel",
+	[3555931766] = "Kingston"
+}
+
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 local ShopRerollFunc = ServerStorage:WaitForChild("ShopRerollFunction")
+
+-- ✅ NEW: Fetch the Uncommon Reroll Bindable
+local UncommonShopRerollFunc = ServerStorage:WaitForChild("UncommonShopRerollFunction", 30)
 
 -- 📡 REMOTES SETUP
 local PadUnlockEvent = ReplicatedStorage:FindFirstChild("PadUnlockEvent")
@@ -210,6 +225,16 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			purchaseSuccess = true
 		end
 
+		-- ✅ NEW: UNCOMMON REROLL LOGIC
+	elseif pid == UNCOMMON_SHOP_REROLL_ID then
+		if UncommonShopRerollFunc then
+			UncommonShopRerollFunc:Invoke(targetPlayer)
+			purchaseSuccess = true
+		else
+			warn("⚠️ UncommonShopRerollFunction missing!")
+		end
+
+		-- 🚗 COMMON CAR PURCHASE LOGIC
 	elseif CAR_PRODUCT_IDS[pid] then
 		local carName = CAR_PRODUCT_IDS[pid]
 		local CarTools = ServerStorage:FindFirstChild("CarTools")
@@ -230,29 +255,49 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			end
 		end
 
+		-- 🏎️ NEW: UNCOMMON CAR PURCHASE LOGIC
+	elseif UNCOMMON_CAR_PRODUCT_IDS[pid] then
+		local carName = UNCOMMON_CAR_PRODUCT_IDS[pid]
+		local CarTools = ServerStorage:FindFirstChild("CarTools")
+		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
+
+		if tool then
+			local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+			if TycoonAdminAPI then
+				-- Grant the tool exactly like the Common shop does
+				local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", targetPlayer, tool.Name, {
+					IssuedByServer = true,
+					IssuedAt = os.time(),
+					ToolId = tool.Name
+				})
+
+				if invokeOk and giveResult == true then
+					purchaseSuccess = true
+				end
+			end
+		else
+			warn("⚠️ Uncommon Car Tool missing from ServerStorage: " .. carName)
+		end
+
 	elseif skinFound then
 		local ownedRaw = targetPlayer:GetAttribute("OwnedBaseSkins") or "[]"
 		local ownedTable = {}
 		local decodeSuccess, _ = pcall(function() ownedTable = HttpService:JSONDecode(ownedRaw) end)
 		if not decodeSuccess then ownedTable = {} end
 
-		-- 🛑 ANTI-EXPLOIT GUARD: Verify target doesn't already own it
 		if table.find(ownedTable, skinFound) then
 			warn("🛡️ Security: Blocked purchase! " .. targetPlayer.Name .. " already owns the " .. skinFound .. " pad.")
-			return Enum.ProductPurchaseDecision.NotProcessedYet -- Cancel transaction entirely
+			return Enum.ProductPurchaseDecision.NotProcessedYet 
 		else
-			-- ✅ VALID PURCHASE
 			table.insert(ownedTable, skinFound)
 			targetPlayer:SetAttribute("OwnedBaseSkins", HttpService:JSONEncode(ownedTable))
 			targetPlayer:SetAttribute("EquippedSkin", skinFound)
 			purchaseSuccess = true
 
-			-- 🛑 FIX: Prevent the standard screen from overriding the gift notification
 			if PadUnlockEvent and not isGift then
 				PadUnlockEvent:FireClient(targetPlayer, true, skinFound .. " Base")
 			end
 
-			-- 🎁 SIGNAL THE RECEIVER
 			if isGift then
 				NotifyGiftReceived:FireClient(targetPlayer, buyerPlayer.Name, skinFound)
 			end
