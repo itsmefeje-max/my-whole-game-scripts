@@ -1,12 +1,12 @@
 -- Purpose: Handles all DataStore operations, Security Validation, Session Management, and prevents item duplication.
 -- Runs on: Server
--- Location: ServerScriptService
+-- Location: ServerScriptService > TycoonDataHandler
 -- Dependencies: Players, ServerStorage, DataStoreService, Workspace, ReplicatedStorage, HttpService, CarStats, BaseSkinStats
 -- Public API: TycoonAdminAPI (BindableFunction)
 -- Networking: TycoonAdminLog (RemoteEvent), ShopRemotes (via Bindable)
 -- Security: Server-authoritative tool validation, anti-wipe protection, fixed StarterGear duplication exploit.
 -- Performance: Batched saving, lock-based pad restoration to prevent race conditions.
--- Notes: Updated to support UNCOMMON SHOP Persistence.
+-- Notes: Updated to support UNCOMMON and RARE SHOP Persistence.
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
@@ -439,11 +439,18 @@ local function save(player, isClosing)
 			currentShopData = shopBindable:Invoke("Get", player) or {}
 		end
 
-		-- [[ 🟢 NEW: UNCOMMON SHOP SYNC ]]
+		-- [[ 🟢 UNCOMMON SHOP SYNC ]]
 		local uncommonShopBindable = ServerStorage:FindFirstChild("UncommonShopPersistenceFunction")
 		local currentUncommonShopData = {}
 		if uncommonShopBindable then
 			currentUncommonShopData = uncommonShopBindable:Invoke("Get", player) or {}
+		end
+
+		-- [[ 🟣 NEW: RARE SHOP SYNC ]]
+		local rareShopBindable = ServerStorage:FindFirstChild("RareShopPersistenceFunction")
+		local currentRareShopData = {}
+		if rareShopBindable then
+			currentRareShopData = rareShopBindable:Invoke("Get", player) or {}
 		end
 
 		for attempt = 1, MAX_RETRIES do
@@ -498,7 +505,8 @@ local function save(player, isClosing)
 
 					-- ✅ SAVING SHOP STATES
 					oldData.ShopPurchases = currentShopData
-					oldData.UncommonShopPurchases = currentUncommonShopData -- 🟢 UNCOMMON SAVE INJECTED
+					oldData.UncommonShopPurchases = currentUncommonShopData
+					oldData.RareShopPurchases = currentRareShopData -- 🟣 RARE SAVE INJECTED
 
 					oldData.OwnedBaseSkins = currentOwnedSkins
 					oldData.EquippedSkin = currentEquippedSkin
@@ -530,15 +538,14 @@ local function save(player, isClosing)
 	-- [[ SHOP CLEANUP ]]
 	if isClosing then
 		local shopBindable = ServerStorage:FindFirstChild("ShopPersistenceFunction")
-		if shopBindable then
-			shopBindable:Invoke("Close", player)
-		end
+		if shopBindable then shopBindable:Invoke("Close", player) end
 
-		-- 🟢 UNCOMMON CLEANUP
 		local uncommonShopBindable = ServerStorage:FindFirstChild("UncommonShopPersistenceFunction")
-		if uncommonShopBindable then
-			uncommonShopBindable:Invoke("Close", player)
-		end
+		if uncommonShopBindable then uncommonShopBindable:Invoke("Close", player) end
+
+		-- 🟣 RARE CLEANUP
+		local rareShopBindable = ServerStorage:FindFirstChild("RareShopPersistenceFunction")
+		if rareShopBindable then rareShopBindable:Invoke("Close", player) end
 	end
 
 	session.IsSaving = false 
@@ -575,17 +582,18 @@ local function InitializePlayer(player)
 
 	if not success then player:Kick("Data Load Error. Rejoin.") return end
 
-	-- ✅ INITIALIZE DEFAULT DATA (Now includes UncommonShopPurchases)
+	-- ✅ INITIALIZE DEFAULT DATA
 	data = data or { 
 		Inventory = {}, Layout = {}, PendingEarnings = 0, HighestUnlockedPad = 1, 
-		ShopPurchases = {}, UncommonShopPurchases = {}, 
+		ShopPurchases = {}, UncommonShopPurchases = {}, RareShopPurchases = {}, 
 		OwnedBaseSkins = {"Default"}, EquippedSkin = "Default" 
 	}
 
 	data.Inventory = data.Inventory or {}
 	data.Layout = data.Layout or {}
 	data.ShopPurchases = data.ShopPurchases or {}
-	data.UncommonShopPurchases = data.UncommonShopPurchases or {} -- 🟢 UNCOMMON DATA DEFAULT
+	data.UncommonShopPurchases = data.UncommonShopPurchases or {} 
+	data.RareShopPurchases = data.RareShopPurchases or {} -- 🟣 RARE DATA DEFAULT
 	data.OwnedBaseSkins = data.OwnedBaseSkins or {"Default"}
 	data.EquippedSkin = data.EquippedSkin or "Default"
 
@@ -599,10 +607,16 @@ local function InitializePlayer(player)
 		shopBindable:Invoke("Load", player, data.ShopPurchases)
 	end
 
-	-- [[ 🟢 NEW: UNCOMMON SHOP RESTORE ]]
+	-- [[ 🟢 UNCOMMON SHOP RESTORE ]]
 	local uncommonShopBindable = ServerStorage:FindFirstChild("UncommonShopPersistenceFunction")
 	if uncommonShopBindable then
 		uncommonShopBindable:Invoke("Load", player, data.UncommonShopPurchases)
+	end
+
+	-- [[ 🟣 NEW: RARE SHOP RESTORE ]]
+	local rareShopBindable = ServerStorage:FindFirstChild("RareShopPersistenceFunction")
+	if rareShopBindable then
+		rareShopBindable:Invoke("Load", player, data.RareShopPurchases)
 	end
 
 	-- ✅ APPLY ATTRIBUTES
