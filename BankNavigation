@@ -1,25 +1,20 @@
--- ( LOCAL SCRIPT: BankNavigation - SUFFIX UPDATE )
+-- Purpose: Solely handles updating the Transfer window's BalanceLabelv2 with formatted suffixes.
+-- Runs on: Client
+-- Location: PlayerGui -> BankGui -> BankNavigation
+-- Dependencies: Players
+-- Public API: None
+-- Networking: None
+-- Security: Client-side visual update only.
+-- Performance: Lightweight.
+-- Notes: All navigation, hover, and audio logic has been removed to prevent double-audio overlaps with "Local Script for Bank".
+
 local Players = game:GetService("Players")
-local SoundService = game:GetService("SoundService") 
-local TweenService = game:GetService("TweenService") 
 local player = Players.LocalPlayer
 local gui = script.Parent 
 
--- 🔊 CONFIG
-local CLICK_SOUND_ID = "rbxassetid://9083627113" 
-local DIM_COLOR = Color3.new(0.7, 0.7, 0.7) 
-
--- 1. FIND FRAMES & BUTTONS
-local bankFrame = gui:FindFirstChild("BankFrame")
-local transferFrame = gui:FindFirstChild("TransferFrame")
-local openTransferBtn, backBtn, withdrawBtn
-
-if bankFrame then openTransferBtn = bankFrame:FindFirstChild("OpenTransferButton") end
-if transferFrame then 
-	backBtn = transferFrame:FindFirstChild("BackButton") 
-	withdrawBtn = transferFrame:FindFirstChild("WithdrawButton") 
-end
-local balanceLabelV2 = if transferFrame then transferFrame:FindFirstChild("BalanceLabelv2") else nil
+-- 1. FIND FRAMES
+local transferFrame = gui:WaitForChild("TransferFrame", 5)
+local balanceLabelV2 = transferFrame and transferFrame:FindFirstChild("BalanceLabelv2")
 
 -- ============================================================================
 -- 📊 ABBREVIATION HELPER
@@ -49,46 +44,11 @@ end
 -- 🛠️ LOGIC
 -- ============================================================================
 
-local function playClickSound()
-	local sound = Instance.new("Sound")
-	sound.SoundId = CLICK_SOUND_ID
-	sound.Volume = 0.5
-	sound.Parent = SoundService
-	sound:Play()
-	game.Debris:AddItem(sound, 1)
+-- Wait for leaderstats to load, then connect the update function
+if player:WaitForChild("leaderstats", 10) then
+	local cash = player.leaderstats:WaitForChild("Cash", 10)
+	if cash then
+		cash.Changed:Connect(updateBalance)
+		updateBalance() -- Initialize display immediately
+	end
 end
-
-local function setupHover(button)
-	if not button then return end
-	local originalColor = button.ImageColor3
-	button.MouseEnter:Connect(function() TweenService:Create(button, TweenInfo.new(0.2), {ImageColor3 = DIM_COLOR}):Play() end)
-	button.MouseLeave:Connect(function() TweenService:Create(button, TweenInfo.new(0.2), {ImageColor3 = originalColor}):Play() end)
-end
-
-local function openTransfer()
-	playClickSound()
-	if bankFrame then bankFrame.Visible = false end
-	if transferFrame then transferFrame.Visible = true end
-	updateBalance() 
-end
-
-local function closeTransfer()
-	playClickSound()
-	if transferFrame then transferFrame.Visible = false end
-	if bankFrame then bankFrame.Visible = true end
-end
-
--- CONNECT
-setupHover(openTransferBtn)
-setupHover(backBtn)
-setupHover(withdrawBtn)
-
-if openTransferBtn then openTransferBtn.MouseButton1Click:Connect(openTransfer) end
-if backBtn then backBtn.MouseButton1Click:Connect(closeTransfer) end
-if withdrawBtn then withdrawBtn.MouseButton1Click:Connect(function() playClickSound() end) end
-
-if player:WaitForChild("leaderstats", 5) then
-	player.leaderstats.Cash.Changed:Connect(updateBalance)
-end
-
-if transferFrame then transferFrame.Visible = false end
