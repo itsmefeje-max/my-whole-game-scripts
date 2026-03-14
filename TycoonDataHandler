@@ -6,7 +6,7 @@
 -- Networking: TycoonAdminLog (RemoteEvent), ShopRemotes (via Bindable)
 -- Security: Server-authoritative tool validation, anti-wipe protection, fixed StarterGear duplication exploit.
 -- Performance: Batched saving, lock-based pad restoration to prevent race conditions.
--- Notes: Assumes tools placed on pads are removed from the Backpack. StarterGear is intentionally ignored during save to prevent ghost-dupes.
+-- Notes: Updated to support UNCOMMON SHOP Persistence.
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
@@ -18,7 +18,7 @@ local HttpService = game:GetService("HttpService")
 -- ----------------------------------------------------------------------------
 -- ⚙️ CONFIGURATION & CONSTANTS
 -- ----------------------------------------------------------------------------
-local DATA_KEY = "Testingv2" 
+local DATA_KEY = "Testingv5" 
 local PlayerDataStore = DataStoreService:GetDataStore(DATA_KEY)
 
 local AUTOSAVE_INTERVAL = 180        
@@ -325,9 +325,7 @@ end
 
 AdminAPI.OnInvoke = function(action, player, ...)
 	if action == "ForceWipe" and player and SessionData[player] then
-		-- ✅ THIS FLAG PREVENTS ANTI-WIPE FROM TRIGGERING
 		SessionData[player].ExplicitClear = true
-
 		if player:FindFirstChild("StarterGear") then player.StarterGear:ClearAllChildren() end
 		if player:FindFirstChild("Backpack") then player.Backpack:ClearAllChildren() end
 		markDirty(player)
@@ -374,10 +372,7 @@ local function save(player, isClosing)
 	local function executeSave()
 		print("💾 Saving data for " .. player.Name .. "...")
 
-		-- ✅ SAFETY FIX: Capture Attribute BEFORE entering UpdateAsync
 		local currentUnlockedPad = player:GetAttribute("HighestUnlockedPad") or 1
-
-		-- ✅ SKINS CAPTURE: Capture Skins BEFORE entering UpdateAsync
 		local currentOwnedRaw = player:GetAttribute("OwnedBaseSkins") or "[]"
 		local currentOwnedSkins = HttpService:JSONDecode(currentOwnedRaw)
 		local currentEquippedSkin = player:GetAttribute("EquippedSkin") or "Default"
@@ -402,11 +397,8 @@ local function save(player, isClosing)
 			end
 		end
 
-		-- ✅ PRIMARY: Backpack + Character capture all owned copies.
 		scanContainer(player:FindFirstChild("Backpack"))
 		scanContainer(player.Character)
-
-		-- 🛑 FIX: StarterGear fallback removed to prevent ghost-item duplication exploits.
 
 		local layout = {}
 		local plotName = player:GetAttribute("OccupiedPlot")
@@ -440,11 +432,18 @@ local function save(player, isClosing)
 			end
 		end
 
-		-- [[ SHOP SYNC ]] Retrieve Shop Data before saving
+		-- [[ COMMON SHOP SYNC ]]
 		local shopBindable = ServerStorage:FindFirstChild("ShopPersistenceFunction")
 		local currentShopData = {}
 		if shopBindable then
 			currentShopData = shopBindable:Invoke("Get", player) or {}
+		end
+
+		-- [[ 🟢 NEW: UNCOMMON SHOP SYNC ]]
+		local uncommonShopBindable = ServerStorage:FindFirstChild("UncommonShopPersistenceFunction")
+		local currentUncommonShopData = {}
+		if uncommonShopBindable then
+			currentUncommonShopData = uncommonShopBindable:Invoke("Get", player) or {}
 		end
 
 		for attempt = 1, MAX_RETRIES do
@@ -454,7 +453,6 @@ local function save(player, isClosing)
 
 					local finalInventory = inventory
 
-					-- 🛡️ ANTI-DATA ROT (INVENTORY)
 					if #inventory == 0 and (oldData.Inventory and #oldData.Inventory > 0) and not session.ExplicitClear then
 						warn("⚠️ Anti-Wipe (Inventory): Preserving for " .. player.Name)
 						finalInventory = {}
@@ -463,7 +461,6 @@ local function save(player, isClosing)
 						end
 					end
 
-					-- 🛡️ SMART ANTI-WIPE (LAYOUT)
 					local finalLayout = layout
 					local isSuspiciousLayoutWipe = (#layout == 0) and (oldData.Layout and #oldData.Layout > 0)
 
@@ -499,14 +496,12 @@ local function save(player, isClosing)
 					oldData.Layout = finalLayout
 					oldData.PendingEarnings = finalPending
 
-					-- ✅ SHOP DATA
+					-- ✅ SAVING SHOP STATES
 					oldData.ShopPurchases = currentShopData
+					oldData.UncommonShopPurchases = currentUncommonShopData -- 🟢 UNCOMMON SAVE INJECTED
 
-					-- ✅ SKINS DATA (New)
 					oldData.OwnedBaseSkins = currentOwnedSkins
 					oldData.EquippedSkin = currentEquippedSkin
-
-					-- ✅ SAVING: Use captured variable instead of player object
 					oldData.HighestUnlockedPad = currentUnlockedPad
 
 					oldData.LastUpdated = os.time()
@@ -531,11 +526,18 @@ local function save(player, isClosing)
 
 	session.IsDirty = false
 	session.LastSave = os.time()
-	-- [[ SHOP SYNC ]] Cleanup session if player is leaving
+
+	-- [[ SHOP CLEANUP ]]
 	if isClosing then
 		local shopBindable = ServerStorage:FindFirstChild("ShopPersistenceFunction")
 		if shopBindable then
 			shopBindable:Invoke("Close", player)
+		end
+
+		-- 🟢 UNCOMMON CLEANUP
+		local uncommonShopBindable = ServerStorage:FindFirstChild("UncommonShopPersistenceFunction")
+		if uncommonShopBindable then
+			uncommonShopBindable:Invoke("Close", player)
 		end
 	end
 
@@ -544,7 +546,6 @@ local function save(player, isClosing)
 	local syncEvent = game.ServerStorage:FindFirstChild("TycoonSaveCompleted")
 	if syncEvent then syncEvent:Fire(player.Name) end
 
-	-- ✅ SIGNAL: Use attribute for reliable cross-script synchronization
 	player:SetAttribute("DataSaved", true)
 end
 
@@ -574,11 +575,17 @@ local function InitializePlayer(player)
 
 	if not success then player:Kick("Data Load Error. Rejoin.") return end
 
-	-- ✅ INITIALIZE DEFAULT DATA (Now includes OwnedBaseSkins)
-	data = data or { Inventory = {}, Layout = {}, PendingEarnings = 0, HighestUnlockedPad = 1, ShopPurchases = {}, OwnedBaseSkins = {"Default"}, EquippedSkin = "Default" }
+	-- ✅ INITIALIZE DEFAULT DATA (Now includes UncommonShopPurchases)
+	data = data or { 
+		Inventory = {}, Layout = {}, PendingEarnings = 0, HighestUnlockedPad = 1, 
+		ShopPurchases = {}, UncommonShopPurchases = {}, 
+		OwnedBaseSkins = {"Default"}, EquippedSkin = "Default" 
+	}
+
 	data.Inventory = data.Inventory or {}
 	data.Layout = data.Layout or {}
 	data.ShopPurchases = data.ShopPurchases or {}
+	data.UncommonShopPurchases = data.UncommonShopPurchases or {} -- 🟢 UNCOMMON DATA DEFAULT
 	data.OwnedBaseSkins = data.OwnedBaseSkins or {"Default"}
 	data.EquippedSkin = data.EquippedSkin or "Default"
 
@@ -586,26 +593,28 @@ local function InitializePlayer(player)
 	wallet.Value = data.Wallet or 0
 	atm.Value = data.ATMBalance or 0
 
-	-- [[ SHOP SYNC ]] Restore shop purchases
+	-- [[ COMMON SHOP RESTORE ]]
 	local shopBindable = ServerStorage:FindFirstChild("ShopPersistenceFunction")
 	if shopBindable then
-		shopBindable:Invoke("Load", player, data.ShopPurchases or {})
+		shopBindable:Invoke("Load", player, data.ShopPurchases)
 	end
 
-	-- ✅ APPLY ATTRIBUTES (New Skins Logic)
-	player:SetAttribute("HighestUnlockedPad", data.HighestUnlockedPad or 1)
+	-- [[ 🟢 NEW: UNCOMMON SHOP RESTORE ]]
+	local uncommonShopBindable = ServerStorage:FindFirstChild("UncommonShopPersistenceFunction")
+	if uncommonShopBindable then
+		uncommonShopBindable:Invoke("Load", player, data.UncommonShopPurchases)
+	end
 
-	-- Sync Skins to Client via Attributes
+	-- ✅ APPLY ATTRIBUTES
+	player:SetAttribute("HighestUnlockedPad", data.HighestUnlockedPad or 1)
 	local ownedJson = HttpService:JSONEncode(data.OwnedBaseSkins)
 	player:SetAttribute("OwnedBaseSkins", ownedJson)
 	player:SetAttribute("EquippedSkin", data.EquippedSkin)
 
-	-- ✅ MARK DIRTY ON CHANGE
 	player:GetAttributeChangedSignal("HighestUnlockedPad"):Connect(setDirty)
 	player:GetAttributeChangedSignal("OwnedBaseSkins"):Connect(setDirty)
 	player:GetAttributeChangedSignal("EquippedSkin"):Connect(setDirty)
 
-	-- 🛑 CLEAR DUPLICATE ITEMS
 	if player:FindFirstChild("Backpack") then player.Backpack:ClearAllChildren() end
 	if player:FindFirstChild("StarterGear") then player.StarterGear:ClearAllChildren() end
 
@@ -647,7 +656,6 @@ local function InitializePlayer(player)
 		local amount = player:GetAttribute("RestoredPending")
 
 		if plotName and amount and amount > 0 then
-			-- 🛡️ RACE CONDITION FIX: Set to 0 BEFORE yielding to prevent double-spending
 			player:SetAttribute("RestoredPending", 0)
 
 			local plot = TycoonFolder:FindFirstChild(plotName)
@@ -658,7 +666,6 @@ local function InitializePlayer(player)
 				markDirty(player)
 				print("✅ RESTORED PENDING: $" .. amount .. " to " .. plot.Name)
 			else
-				-- ⚠️ FAILED: Restore the amount if plot/value missing
 				warn("⚠️ Failed to restore pending earnings. Reverting amount.")
 				player:SetAttribute("RestoredPending", amount)
 			end
@@ -690,4 +697,3 @@ game:BindToClose(function()
 	for _, p in pairs(Players:GetPlayers()) do threads += 1; task.spawn(function() save(p, true); threads -= 1 end) end
 	local s = os.clock(); while threads > 0 and (os.clock() - s) < 25 do task.wait(0.1) end
 end)
-
