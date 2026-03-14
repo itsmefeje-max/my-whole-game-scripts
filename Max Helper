@@ -1,8 +1,14 @@
--- [[ LOCAL SCRIPT: WithdrawMax (UPDATED - INPUT ONLY) ]]
--- Indicating what the script is for: Updates the AmountInput with the maximum available balance.
--- NOTE: This button now strictly performs UI updates and DOES NOT trigger a withdrawal.
+-- Purpose: Updates the AmountInput with the maximum available balance, or toggles to 0 if already at max.
+-- Runs on: Client
+-- Location: StarterGui / PlayerGui -> BankGui -> MaxButton
+-- Dependencies: Players, SoundService
+-- Public API: None
+-- Networking: None (UI display only)
+-- Security: Completely safe; relies entirely on server validation for actual transfers.
+-- Performance: Minimal memory footprint.
+-- Notes: Uses stateless toggle logic to prevent desyncs if the user manually types in the box.
 
-print("✅ Max Button Script Loaded (Input Only)")
+print("✅ Max Button Script Loaded (Toggle Edition)")
 
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
@@ -10,10 +16,9 @@ local SoundService = game:GetService("SoundService")
 local player = Players.LocalPlayer
 local leaderstats = player:WaitForChild("leaderstats", 10)
 local button = script.Parent
-local mainWindow = button.Parent -- Assuming the button is inside the main frame
+local mainWindow = button.Parent 
 
 -- 📂 UI REFERENCES
--- We look for the sibling input box named "AmountInput"
 local AmountInput = mainWindow:WaitForChild("AmountInput", 5)
 
 -- 🔊 SOUND CONFIG
@@ -22,14 +27,14 @@ local CLICK_SOUND_ID = "rbxassetid://9083627113"
 button.MouseButton1Click:Connect(function()
 	print("🖱️ MAX Button Clicked")
 
-	-- 1. Get Current Bank Balance (Cash source)
+	-- 1. Get Current Bank Balance
 	local currentBank = 0
 	local cashValue = leaderstats and leaderstats:FindFirstChild("Cash")
 	if cashValue then
-		currentBank = cashValue.Value
+		currentBank = math.floor(cashValue.Value)
 	end
 
-	-- 2. Play Click Sound (Aesthetic)
+	-- 2. Play Click Sound
 	local s = Instance.new("Sound")
 	s.SoundId = CLICK_SOUND_ID
 	s.Volume = 0.5
@@ -37,17 +42,24 @@ button.MouseButton1Click:Connect(function()
 	s:Play()
 	game.Debris:AddItem(s, 2)
 
-	-- 3. Update Input Field ONLY
+	-- 3. Toggle Logic
 	if AmountInput then
-		if currentBank > 0 then
-			-- Use math.floor to ensure clean integer values
-			AmountInput.Text = tostring(math.floor(currentBank))
-			print("✅ Input auto-filled with: " .. AmountInput.Text)
-		else
+		local maxBankString = tostring(currentBank)
+
+		-- If the input box already matches the max amount exactly, toggle it to 0
+		if AmountInput.Text == maxBankString and currentBank > 0 then
 			AmountInput.Text = "0"
+			print("🔄 Toggled back to 0")
+		else
+			-- Otherwise, fill it with the max amount
+			if currentBank > 0 then
+				AmountInput.Text = maxBankString
+				print("✅ Input auto-filled with: " .. AmountInput.Text)
+			else
+				AmountInput.Text = "0"
+			end
 		end
 	else
 		warn("⚠️ AmountInput not found in parent frame! Cannot auto-fill.")
 	end
 end)
-
