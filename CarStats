@@ -111,21 +111,21 @@ CarStats.Cars = {
 		Name = "Mercedes-Benz A-Class", --
 		CPS = 310,
 		Rarity = "Rare",
-		Price = 210000,
+		Price = 300000,
 		Image = "rbxassetid://88968213019639"
 	},
 	["Maverick"] = {
 		Name = "Chevrolet Tahoe",--
 		CPS = 220, 
 		Rarity = "Rare",
-		Price = 210000,
+		Price = 450000,
 		Image = "rbxassetid://121698252761159"
 	},
 	["Velocity"] = {
 		Name = "Toyota Supra Mk4 (A80)", --
 		CPS = 360,
 		Rarity = "Rare",
-		Price = 280000,
+		Price = 899999,
 		Image = "rbxassetid://114377925255065"
 	},
 
@@ -135,21 +135,21 @@ CarStats.Cars = {
 		Name = "Nissan GT-R (R35)",
 		CPS = 520,
 		Rarity = "Epic",
-		Price = 500000,
+		Price = 1000000,
 		Image = "rbxassetid://83107430147728"
 	},
 	["Sirene"] = {
 		Name = "Porsche 911 Turbo S",
 		CPS = 680,
 		Rarity = "Epic",
-		Price = 750000,
+		Price = 15000000,
 		Image = "rbxassetid://97404803961967"
 	},
 	["Vortex"] = {
 		Name = "BMW i8 Roadster",
 		CPS = 850,
 		Rarity = "Epic",
-		Price = 1200000,
+		Price = 35000000,
 		Image = "rbxassetid://90844371628055"
 	},
 
@@ -159,14 +159,14 @@ CarStats.Cars = {
 		Name = "McLaren Senna",
 		CPS = 1600,
 		Rarity = "Legendary",
-		Price = 15000000,
+		Price = 90000000,
 		Image = "rbxassetid://77553801737410"
 	},
 	["La Rossa"] = {
 		Name = "Ferrari Daytona SP3",
 		CPS = 2400,
 		Rarity = "Legendary",
-		Price = 35000000,
+		Price = 150000000,
 		Image = "rbxassetid://131128028318430"
 	},
 
@@ -176,7 +176,7 @@ CarStats.Cars = {
 		Name = "Bugatti Chiron",
 		CPS = 5500, 
 		Rarity = "Mythic",
-		Price = 150000000,
+		Price = 199999999,
 		Image = "rbxassetid://119034017910791"
 	}
 }
