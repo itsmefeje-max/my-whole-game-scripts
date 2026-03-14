@@ -1,6 +1,12 @@
--- [[ LOCAL SCRIPT: WithdrawLogic (Synced + Max + Suffix Support) ]]
--- VERSION: Pulse Animation + RemoteFunction Sync + Smart Input (K/M/B)
--- LOCATION: Inside the "Withdraw" Button (Child of the Frame)
+-- Purpose: Handles UI verification, animations, and remote communication for withdrawing bank funds.
+-- Runs on: Client
+-- Location: PlayerGui -> BankGui -> Withdraw Button
+-- Dependencies: ReplicatedStorage, TweenService, SoundService, Players
+-- Public API: None
+-- Networking: Invokes "WithdrawFunction" (RemoteFunction)
+-- Security: Client-side validation prevents negative or excessive requests before invoking the server.
+-- Performance: Uses single Tween instances and cleans up temporary sounds using Debris.
+-- Notes: Click sound is safely integrated after the cooldown check to prevent audio spam.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -9,7 +15,7 @@ local Players = game:GetService("Players")
 
 local player = Players.LocalPlayer
 local withdrawBtn = script.Parent
-local mainWindow = withdrawBtn.Parent -- The Frame holding the buttons
+local mainWindow = withdrawBtn.Parent 
 
 -- 🔄 REMOTE FUNCTION
 local withdrawFunc = ReplicatedStorage:WaitForChild("WithdrawFunction")
@@ -19,9 +25,6 @@ local amountInput = mainWindow:WaitForChild("AmountInput", 5)
 local VerifyLabel = mainWindow:WaitForChild("VerifyLabel", 5) 
 local SuccessLabel = mainWindow:WaitForChild("SuccessLabel", 5)
 local ErrorLabel = mainWindow:WaitForChild("ErrorLabel", 5)
-
--- 🆕 MAX BUTTON REFERENCE
-local maxBtn = mainWindow:FindFirstChild("MaxButton") 
 
 -- 🔊 SOUND CONFIG
 local CASH_SOUND_ID = "rbxassetid://140072726814802"
@@ -45,17 +48,17 @@ local function playSound(soundId)
 	game.Debris:AddItem(sound, 3)
 end
 
--- ✅ NEW: Parses "10k", "5.5m", "1,000" into numbers
+-- ✅ Parses "10k", "5.5m", "1,000" into numbers
 local function parseAmount(text)
 	if not text then return 0 end
-	text = text:lower():gsub(",", "") -- Remove commas
+	text = text:lower():gsub(",", "") 
 
 	local multiplier = 1
 	if text:match("k") then multiplier = 1000 end
 	if text:match("m") then multiplier = 1000000 end
 	if text:match("b") then multiplier = 1000000000 end
 
-	local cleanNum = tonumber(text:match("[%d%.]+")) -- Extract number
+	local cleanNum = tonumber(text:match("[%d%.]+")) 
 	if cleanNum then 
 		return math.floor(cleanNum * multiplier) 
 	end
@@ -116,27 +119,6 @@ local function stopVerifying()
 end
 
 -- ============================================================================
--- 🆕 MAX BUTTON LOGIC
--- ============================================================================
-if maxBtn then
-	maxBtn.MouseButton1Click:Connect(function()
-		local currentBank = 0
-		if player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash") then
-			currentBank = player.leaderstats.Cash.Value
-		end
-
-		playSound(CLICK_SOUND_ID)
-
-		if currentBank > 0 then
-			amountInput.Text = tostring(math.floor(currentBank))
-			print("✅ Max Amount Set: " .. amountInput.Text)
-		else
-			amountInput.Text = "0"
-		end
-	end)
-end
-
--- ============================================================================
 -- 🟢 MAIN TRANSFER BUTTON LOGIC
 -- ============================================================================
 withdrawBtn.MouseButton1Click:Connect(function()
@@ -144,6 +126,9 @@ withdrawBtn.MouseButton1Click:Connect(function()
 	-- 🛑 1. CHECK COOLDOWN
 	if isCoolingDown then return end
 	isCoolingDown = true 
+
+	-- 🔊 1.5 PLAY INITIAL CLICK SOUND
+	playSound(CLICK_SOUND_ID)
 
 	-- 2. DISABLE BUTTON VISUALLY
 	withdrawBtn.Active = false
@@ -154,7 +139,7 @@ withdrawBtn.MouseButton1Click:Connect(function()
 	task.wait(1.5) -- "Thinking" Time
 
 	-- 4. PREPARE DATA
-	local amount = parseAmount(amountInput.Text) -- ✅ Uses new parser
+	local amount = parseAmount(amountInput.Text) 
 	local currentBank = player.leaderstats.Cash.Value
 
 	-- 5. VALIDATION
