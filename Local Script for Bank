@@ -1,6 +1,12 @@
--- ( LOCAL SCRIPT: Bank UI - SILENT VERSION / NO MUSIC )
--- ( Updated to match Inventory GUI's sound & logic )
--- -- Indicating what the script is for, its function and use.
+-- Purpose: Handles main Bank UI visuals, FOV camera tweens, sounds, player avatar, focus mode, and hover effects.
+-- Runs on: Client
+-- Location: PlayerGui -> BankGui -> Local Script for Bank
+-- Dependencies: Players, TweenService, SoundService, Workspace
+-- Public API: None
+-- Networking: None (Visuals only)
+-- Security: Client-side UI logic only.
+-- Performance: Optimized camera tweens. 
+-- Notes: Added WithdrawButton to the hover effect logic.
 
 print("---------------------------------------------------------")
 print("🛠️ STARTING BANK UI SCRIPT (SILENT MODE)...")
@@ -45,7 +51,9 @@ local closeButton = debugFind(mainWindow, "CloseButton")
 local balanceLabel = debugFind(mainWindow, "BalanceLabel")
 local headerContainer = debugFind(mainWindow, "HeaderContainer")
 local transferButton = mainWindow:FindFirstChild("TransferButton", true)
+
 local backButton = transferFrame and transferFrame:FindFirstChild("BackButton", true)
+local withdrawButton = transferFrame and transferFrame:FindFirstChild("WithdrawButton", true) -- ✅ Found the Confirm button
 local transferExitButton = transferFrame and (
 	transferFrame:FindFirstChild("ExitButton", true)
 		or transferFrame:FindFirstChild("CloseButton", true)
@@ -65,7 +73,6 @@ local NORMAL_FOV = 70
 local CAM_TWEEN_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
 local HOVER_TWEEN = TweenInfo.new(0.2)
 
--- We will use these for BOTH image buttons and normal buttons (see addHover below)
 local NORMAL_COLOR = Color3.fromRGB(255, 255, 255)
 local DIM_COLOR = Color3.fromRGB(200, 200, 200)
 
@@ -74,17 +81,6 @@ local SOUND_ID = "rbxassetid://9083627113"
 
 -- 🛡️ TRACKING VARIABLES
 local hiddenGuis = {}
-
--- 3. SETUP CLICK DETECTOR
-local detector = Instance.new("TextButton")
-detector.Name = "OutsideDetector"
-detector.Parent = myScreenGui
-detector.Size = UDim2.new(1, 0, 1, 0)
-detector.BackgroundTransparency = 1
-detector.Text = ""
-detector.ZIndex = mainWindow.ZIndex - 1
-detector.Visible = false
-detector.Active = true
 
 -- 4. MONEY VARIABLES
 local leaderstats = player:WaitForChild("leaderstats", 10)
@@ -100,7 +96,7 @@ local function playSfx(soundId, volume)
 	local s = Instance.new("Sound")
 	s.SoundId = soundId
 	s.Volume = volume or 0.5
-	s.Parent = openButton -- Parent to GUI ensures reliability
+	s.Parent = openButton 
 	s:Play()
 	game.Debris:AddItem(s, 3)
 end
@@ -168,24 +164,18 @@ local function getRandomHex()
 end
 
 local function setFocusMode(isFocused)
-	detector.Visible = isFocused
 	openButton.Visible = not isFocused
 
 	if isFocused then
 		mainWindow.Visible = true
 		if transferFrame then transferFrame.Visible = false end
-
-		-- 👁️ Hide others
 		toggleOtherGuis(true)
 	else
 		mainWindow.Visible = false
 		if transferFrame then transferFrame.Visible = false end
-
-		-- 👁️ Show others
 		toggleOtherGuis(false)
 	end
 
-	-- Lock Movement
 	local character = player.Character
 	if character then
 		local humanoid = character:FindFirstChild("Humanoid")
@@ -202,7 +192,6 @@ end
 openButton.MouseButton1Click:Connect(function()
 	playSfx(SOUND_ID, 0.5)
 
-	-- 1. UI LOGIC
 	local colorHex = getRandomHex()
 	greetingLabel.Text = "<font color='#" .. colorHex .. "'>" .. player.Name .. "</font>"
 	updateDisplay()
@@ -223,10 +212,8 @@ local function openTransferFrame()
 		warn("⚠️ TransferFrame not found. Make sure it exists inside BankGui.")
 		return
 	end
-
 	mainWindow.Visible = false
 	transferFrame.Visible = true
-	detector.Visible = true
 	openButton.Visible = false
 end
 
@@ -234,7 +221,6 @@ local function returnToMainFrame()
 	if not transferFrame then return end
 	transferFrame.Visible = false
 	mainWindow.Visible = true
-	detector.Visible = true
 	openButton.Visible = false
 end
 
@@ -248,8 +234,6 @@ if transferButton then
 		playSfx(SOUND_ID, 0.5)
 		openTransferFrame()
 	end)
-else
-	warn("⚠️ TransferButton not found in BankFrame. Transfer navigation disabled.")
 end
 
 if backButton then
@@ -259,16 +243,10 @@ if backButton then
 	end)
 end
 
-detector.MouseButton1Click:Connect(function()
-	playSfx(SOUND_ID, 0.5) -- Optional: Click sound when clicking outside
-	performClose()
-end)
-
 -- ============================================================================
--- ✨ HOVER DIM EFFECT (NOW WORKS FOR MAX BUTTON TOO)
+-- ✨ HOVER DIM EFFECT
 -- ============================================================================
 local function addHover(btn)
-	-- Supports ImageButton (ImageColor3) and TextButton (BackgroundColor3)
 	local prop = nil
 	if btn:IsA("ImageButton") or btn:IsA("ImageLabel") then
 		prop = "ImageColor3"
@@ -290,19 +268,16 @@ end
 addHover(openButton)
 addHover(closeButton)
 if transferButton then addHover(transferButton) end
-if transferFrame then addHover(transferFrame) end
 if backButton then addHover(backButton) end
+if withdrawButton then addHover(withdrawButton) end -- ✅ Applied to Confirm button
 if transferExitButton then addHover(transferExitButton) end
 
--- ✅ Apply hover to Max button too (does NOT touch click behavior)
 local maxButton =
 	mainWindow:FindFirstChild("MaxButton", true)
 	or (transferFrame and transferFrame:FindFirstChild("MaxButton", true))
 
 if maxButton then
 	addHover(maxButton)
-else
-	warn("⚠️ MaxButton not found (expected name: 'MaxButton')")
 end
 
 -- ============================================================================
@@ -310,4 +285,3 @@ end
 -- ============================================================================
 if cash then cash.Changed:Connect(updateDisplay) end
 task.spawn(loadAvatar)
-
