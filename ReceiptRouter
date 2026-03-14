@@ -1,12 +1,12 @@
 -- Purpose: Centralizes MarketplaceService.ProcessReceipt with IDEMPOTENCY, GIFTING, VFX, and Anti-Exploit guards.
 -- Runs on: Server
--- Location: ServerScriptService
+-- Location: ServerScriptService > ReceiptRouter
 -- Dependencies: MarketplaceService, DataStoreService, Players, Workspace, ServerStorage, ReplicatedStorage, HttpService
 -- Public API: N/A
 -- Networking: Listens to ProcessReceipt. Fires 'NotifyGiftReceived' to clients when gifted.
 -- Security: Verifies target doesn't already own the item before granting to prevent wasted Robux via exploits.
 -- Performance: Uses caching and pcalls for DataStore resilience.
--- Notes: Updated to support UNCOMMON SHOP tier purchases and rerolls.
+-- Notes: Updated to support UNCOMMON and RARE SHOP tier purchases and rerolls.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local DataStoreService = game:GetService("DataStoreService")
@@ -32,7 +32,7 @@ local CAR_PRODUCT_IDS = {
 	[3524328713] = "Riva"
 }
 
--- 🔵 UNCOMMON SHOP CONFIG (NEW)
+-- 🔵 UNCOMMON SHOP CONFIG
 local UNCOMMON_SHOP_REROLL_ID = 3555934441
 
 local UNCOMMON_CAR_PRODUCT_IDS = {
@@ -43,11 +43,22 @@ local UNCOMMON_CAR_PRODUCT_IDS = {
 	[3555931766] = "Kingston"
 }
 
-local TycoonFolder = Workspace:WaitForChild("Tycoons")
-local ShopRerollFunc = ServerStorage:WaitForChild("ShopRerollFunction")
+-- 🟣 RARE SHOP CONFIG (NEW)
+local RARE_SHOP_REROLL_ID = 3556132134
 
--- ✅ NEW: Fetch the Uncommon Reroll Bindable
+local RARE_CAR_PRODUCT_IDS = {
+	[3556129501] = "Maverick",
+	[3556127982] = "Javelin",
+	[3556128765] = "Stuttgart",
+	[3556130011] = "Velocity"
+}
+
+local TycoonFolder = Workspace:WaitForChild("Tycoons")
+
+-- Bindable Functions Reference Setup
+local ShopRerollFunc = ServerStorage:WaitForChild("ShopRerollFunction", 30)
 local UncommonShopRerollFunc = ServerStorage:WaitForChild("UncommonShopRerollFunction", 30)
+local RareShopRerollFunc = ServerStorage:WaitForChild("RareShopRerollFunction", 30) -- ✅ NEW
 
 -- 📡 REMOTES SETUP
 local PadUnlockEvent = ReplicatedStorage:FindFirstChild("PadUnlockEvent")
@@ -225,7 +236,6 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			purchaseSuccess = true
 		end
 
-		-- ✅ NEW: UNCOMMON REROLL LOGIC
 	elseif pid == UNCOMMON_SHOP_REROLL_ID then
 		if UncommonShopRerollFunc then
 			UncommonShopRerollFunc:Invoke(targetPlayer)
@@ -234,7 +244,16 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			warn("⚠️ UncommonShopRerollFunction missing!")
 		end
 
-		-- 🚗 COMMON CAR PURCHASE LOGIC
+		-- ✅ NEW: RARE REROLL LOGIC
+	elseif pid == RARE_SHOP_REROLL_ID then
+		if RareShopRerollFunc then
+			RareShopRerollFunc:Invoke(targetPlayer)
+			purchaseSuccess = true
+		else
+			warn("⚠️ RareShopRerollFunction missing!")
+		end
+
+		-- 🚗 COMMON CAR PURCHASE
 	elseif CAR_PRODUCT_IDS[pid] then
 		local carName = CAR_PRODUCT_IDS[pid]
 		local CarTools = ServerStorage:FindFirstChild("CarTools")
@@ -255,7 +274,7 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			end
 		end
 
-		-- 🏎️ NEW: UNCOMMON CAR PURCHASE LOGIC
+		-- 🏎️ UNCOMMON CAR PURCHASE
 	elseif UNCOMMON_CAR_PRODUCT_IDS[pid] then
 		local carName = UNCOMMON_CAR_PRODUCT_IDS[pid]
 		local CarTools = ServerStorage:FindFirstChild("CarTools")
@@ -264,7 +283,6 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 		if tool then
 			local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
 			if TycoonAdminAPI then
-				-- Grant the tool exactly like the Common shop does
 				local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", targetPlayer, tool.Name, {
 					IssuedByServer = true,
 					IssuedAt = os.time(),
@@ -277,6 +295,29 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			end
 		else
 			warn("⚠️ Uncommon Car Tool missing from ServerStorage: " .. carName)
+		end
+
+		-- 💎 NEW: RARE CAR PURCHASE LOGIC
+	elseif RARE_CAR_PRODUCT_IDS[pid] then
+		local carName = RARE_CAR_PRODUCT_IDS[pid]
+		local CarTools = ServerStorage:FindFirstChild("CarTools")
+		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
+
+		if tool then
+			local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+			if TycoonAdminAPI then
+				local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", targetPlayer, tool.Name, {
+					IssuedByServer = true,
+					IssuedAt = os.time(),
+					ToolId = tool.Name
+				})
+
+				if invokeOk and giveResult == true then
+					purchaseSuccess = true
+				end
+			end
+		else
+			warn("⚠️ Rare Car Tool missing from ServerStorage: " .. carName)
 		end
 
 	elseif skinFound then
