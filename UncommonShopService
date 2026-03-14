@@ -1,0 +1,393 @@
+-- Purpose: Handles Uncommon Car Shop logic. Strictly 1 car, 1 stock, every 30 minutes.
+-- Runs on: Server
+-- Location: ServerScriptService > UncommonShopService
+-- Dependencies: ReplicatedStorage.CarStats, ServerStorage.TycoonAdminAPI
+-- Public API: None (Event/Bindable driven)
+-- Networking: OpenUncommonShop, UncommonShopUpdate, GetUncommonShopState, BuyUncommonCar
+-- Security: Server authority on cash, strict 1-stock limits, and debounce locks.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+
+-- =========================
+-- UNCOMMON CONFIG (BRUTAL RARITY)
+-- =========================
+local CAR_WEIGHTS = {Raiju = 50, Ironclad = 28, Vapid = 14, Galadriel = 6, Kingston = 2}
+local ALWAYS_STOCK = {} -- DISABLED: Nothing is guaranteed
+
+local RESTOCK_INTERVAL = 1800 -- 30 Minutes (1800 seconds)
+local PURCHASE_COOLDOWN = 1.0 -- Cooldown to prevent spam
+local MAX_STOCK = 1 -- Only 1 available per restock
+
+-- =========================
+-- MODULES
+-- =========================
+local CarStats = require(ReplicatedStorage:WaitForChild("CarStats"))
+
+-- =========================
+-- REMOTES (ISOLATED)
+-- =========================
+local Remotes = ReplicatedStorage:FindFirstChild("ShopRemotes")
+if not Remotes then
+	Remotes = Instance.new("Folder")
+	Remotes.Name = "ShopRemotes"
+	Remotes.Parent = ReplicatedStorage
+end
+
+local function getRemote(name, className)
+	local r = Remotes:FindFirstChild(name)
+	if not r then
+		r = Instance.new(className)
+		r.Name = name
+		r.Parent = Remotes
+	end
+	return r
+end
+
+local RemoteOpen = getRemote("OpenUncommonShop", "RemoteEvent")         
+local RemoteUpdate = getRemote("UncommonShopUpdate", "RemoteEvent")          
+local FuncGetState = getRemote("GetUncommonShopState", "RemoteFunction")     
+local FuncBuyCar = getRemote("BuyUncommonCar", "RemoteFunction")        
+
+-- =========================
+-- BINDABLES (ISOLATED)
+-- =========================
+local RerollBindable = ServerStorage:FindFirstChild("UncommonShopRerollFunction")
+if not RerollBindable then
+	RerollBindable = Instance.new("BindableFunction")
+	RerollBindable.Name = "UncommonShopRerollFunction"
+	RerollBindable.Parent = ServerStorage
+end
+
+local PersistenceBindable = ServerStorage:FindFirstChild("UncommonShopPersistenceFunction")
+if not PersistenceBindable then
+	PersistenceBindable = Instance.new("BindableFunction")
+	PersistenceBindable.Name = "UncommonShopPersistenceFunction"
+	PersistenceBindable.Parent = ServerStorage
+end
+
+-- =========================
+-- STATE
+-- =========================
+local PlayerSessions = {}       
+local PurchaseLocks = {}        
+local LastPurchaseTime = {}     
+
+local function normalizePurchased(raw)
+	if type(raw) ~= "table" then return {} end
+	local normalized = {}
+	for car, count in pairs(raw) do
+		if type(count) == "number" and count > 0 then
+			normalized[car] = math.floor(count)
+		end
+	end
+	return normalized
+end
+
+-- =========================
+-- TIMEOUT UTILITY
+-- =========================
+local function safeInvoke(bindable, timeout, ...)
+	local args = table.pack(...)
+	local result = nil
+	local finished = false
+
+	task.spawn(function()
+		result = table.pack(pcall(function()
+			return bindable:Invoke(table.unpack(args, 1, args.n))
+		end))
+		finished = true
+	end)
+
+	local start = os.clock()
+	while not finished and (os.clock() - start) < timeout do
+		task.wait()
+	end
+
+	if not finished then return false, "Timeout" end
+	if not result[1] then return false, result[2] end
+
+	return true, table.unpack(result, 2, result.n)
+end
+
+-- =========================
+-- SHOP LOGIC (STRICT 1 CAR, 1 STOCK)
+-- =========================
+local function getGlobalSeedID()
+	return math.floor(os.time() / RESTOCK_INTERVAL)
+end
+
+local function generateStockConfiguration(seedValue)
+	local rng = Random.new(seedValue)
+	local featuredFlags = {}
+	local stockLimits = {}
+
+	local poolKeys = {}
+	local poolWeights = {}
+	local totalWeight = 0
+
+	for name, weight in pairs(CAR_WEIGHTS) do
+		table.insert(poolKeys, name)
+		poolWeights[name] = weight
+		totalWeight += weight
+	end
+
+	if totalWeight <= 0 or #poolKeys == 0 then
+		return { Featured = featuredFlags, Limits = stockLimits }
+	end
+
+	-- Pick EXACTLY 1 car based on weights
+	local roll = rng:NextInteger(1, totalWeight)
+	local current = 0
+	local picked = nil
+	for _, car in ipairs(poolKeys) do
+		current += poolWeights[car]
+		if roll <= current then
+			picked = car
+			break
+		end
+	end
+
+	-- Apply the strict limits
+	if picked then
+		featuredFlags[picked] = true
+		stockLimits[picked] = MAX_STOCK -- Set to exactly 1
+	end
+
+	return { Featured = featuredFlags, Limits = stockLimits }
+end
+
+local function calculateCurrentStock(limits, purchasedCounts)
+	local current = {}
+	for car, limit in pairs(limits) do
+		local bought = purchasedCounts[car] or 0
+		local left = limit - bought
+		if left < 0 then left = 0 end
+		current[car] = left
+	end
+	return current
+end
+
+local function getSession(player)
+	local uid = player.UserId
+	local currentGlobalID = getGlobalSeedID()
+
+	if not PlayerSessions[uid] then
+		PlayerSessions[uid] = {
+			SeedVersion = currentGlobalID,
+			LocalSeed = nil,
+			Purchased = {},
+			Cache = nil,
+		}
+	end
+
+	local session = PlayerSessions[uid]
+	local didReset = false
+
+	if session.SeedVersion ~= currentGlobalID then
+		session.SeedVersion = currentGlobalID
+		session.LocalSeed = nil
+		session.Purchased = {} 
+		session.Cache = generateStockConfiguration(session.SeedVersion)
+		didReset = true
+	end
+
+	if not session.Cache then
+		local seed = session.LocalSeed or session.SeedVersion
+		session.Cache = generateStockConfiguration(seed)
+	end
+
+	return session, didReset
+end
+
+local function buildStatePayload(session)
+	local config = session.Cache
+	local currentStock = calculateCurrentStock(config.Limits, session.Purchased)
+	return {
+		Featured = config.Featured,
+		StockLimit = config.Limits,
+		Stock = currentStock,
+		Purchased = session.Purchased,
+		NextRestock = (getGlobalSeedID() + 1) * RESTOCK_INTERVAL,
+		IsGlobal = (session.LocalSeed == nil),
+	}
+end
+
+local function pushUpdate(player, session, reason)
+	local payload = buildStatePayload(session)
+	payload.Reason = reason
+	RemoteUpdate:FireClient(player, payload)
+end
+
+-- =========================
+-- DATA HANDLER INTEGRATION
+-- =========================
+PersistenceBindable.OnInvoke = function(action, player, data)
+	if not player then return end
+	local uid = player.UserId
+
+	if action == "Load" then
+		local session, didReset = getSession(player)
+		if type(data) == "table" then
+			if data.SeedVersion and data.SeedVersion ~= session.SeedVersion then
+				session.Purchased = {}
+				session.LocalSeed = nil
+				session.Cache = generateStockConfiguration(session.SeedVersion)
+			else
+				if type(data.Purchased) == "table" then
+					session.Purchased = normalizePurchased(data.Purchased)
+				else
+					session.Purchased = normalizePurchased(data)
+				end
+
+				if type(data.LocalSeed) == "number" then
+					session.LocalSeed = data.LocalSeed
+					session.Cache = generateStockConfiguration(session.LocalSeed)
+				else
+					session.LocalSeed = nil
+					session.Cache = generateStockConfiguration(session.SeedVersion)
+				end
+			end
+			print("✅ [UncommonShop] Loaded purchases for " .. player.Name)
+		elseif didReset then
+			session.Purchased = {}
+			session.LocalSeed = nil
+			session.Cache = generateStockConfiguration(session.SeedVersion)
+		end
+
+	elseif action == "Get" then
+		local session, _ = getSession(player)
+		return {
+			SeedVersion = session.SeedVersion,
+			LocalSeed = session.LocalSeed,
+			Purchased = session.Purchased,
+		}
+
+	elseif action == "Close" then
+		PlayerSessions[uid] = nil
+		PurchaseLocks[uid] = nil
+		LastPurchaseTime[uid] = nil
+	end
+end
+
+-- =========================
+-- CLIENT REQUESTS
+-- =========================
+FuncGetState.OnServerInvoke = function(player)
+	local session, didReset = getSession(player)
+	return buildStatePayload(session)
+end
+
+RemoteOpen.OnServerEvent:Connect(function(player)
+	local session = getSession(player)
+	pushUpdate(player, session, "Open")
+end)
+
+FuncBuyCar.OnServerInvoke = function(player, carName)
+	if typeof(carName) ~= "string" then return false, "Invalid Car" end
+	if not player or not player.Parent then return false, "Player missing" end
+
+	-- SECURITY: Ensure the car requested is actually part of the Uncommon pool
+	if not CAR_WEIGHTS[carName] and not ALWAYS_STOCK[carName] then
+		return false, "Invalid Uncommon Car"
+	end
+
+	local uid = player.UserId
+	if PurchaseLocks[uid] then return false, "Purchase in progress" end
+	if (os.clock() - (LastPurchaseTime[uid] or 0)) < PURCHASE_COOLDOWN then return false, "Slow down" end
+
+	PurchaseLocks[uid] = true
+
+	local pOk, logicOk, msg = pcall(function()
+		local session, didReset = getSession(player)
+		if didReset then pushUpdate(player, session, "Auto") end
+
+		local config = session.Cache
+		local carsTable = CarStats and CarStats.Cars
+		if not carsTable then return false, "CarStats Error" end
+
+		local carData = carsTable[carName]
+		if not carData or not config.Featured[carName] then return false, "Invalid Car" end
+
+		local bought = session.Purchased[carName] or 0
+		local limit = config.Limits[carName] or 0
+		if bought >= limit then return false, "Out of Stock" end
+
+		local ls = player:FindFirstChild("leaderstats")
+		local wallet = ls and ls:FindFirstChild("Wallet")
+		if not wallet then return false, "Wallet Not Found" end
+		if wallet.Value < carData.Price then return false, "Insufficient Cash (Withdraw from ATM)" end
+
+		local toolsFolder = ServerStorage:FindFirstChild("CarTools")
+		local toolSource = toolsFolder and (toolsFolder:FindFirstChild(carName) or toolsFolder:FindFirstChild(carName .. " Item"))
+		if not toolSource then return false, "System Error: Tool Missing" end
+
+		local realToolName = toolSource.Name 
+
+		local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+		if not TycoonAdminAPI then
+			return false, "System Error: Admin API Missing"
+		end
+
+		local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", player, realToolName)
+		if not invokeOk then
+			warn("⚠️ [UncommonShop] TycoonAdminAPI grant failed for", player.Name)
+			return false, "System Error: Inventory Grant Failed"
+		end
+
+		wallet.Value -= carData.Price
+
+		session.Purchased[carName] = bought + 1
+		pushUpdate(player, session, "Purchase")
+
+		task.spawn(function()
+			safeInvoke(TycoonAdminAPI, 2, "MarkDirty", player)
+		end)
+
+		return true, "Success"
+	end)
+
+	PurchaseLocks[uid] = nil
+
+	if not pOk then
+		warn("Uncommon Shop Buy Error:", logicOk)
+		return false, "Internal System Error"
+	end
+
+	if logicOk == true then LastPurchaseTime[uid] = os.clock() end
+	return logicOk, msg
+end
+
+-- =========================
+-- REROLL
+-- =========================
+function RerollBindable.OnInvoke(player)
+	if not player or not player.Parent then return false end
+	local session = getSession(player)
+	session.LocalSeed = math.random(1, 999999999)
+	session.Purchased = {}
+	session.Cache = generateStockConfiguration(session.LocalSeed)
+	pushUpdate(player, session, "Reroll")
+	return true
+end
+
+-- =========================
+-- ROTATION LOOP
+-- =========================
+task.spawn(function()
+	local lastGlobalID = getGlobalSeedID()
+	while true do
+		task.wait(1)
+		local currentID = getGlobalSeedID()
+		if currentID ~= lastGlobalID then
+			lastGlobalID = currentID
+			print("🔄 [UncommonShop] GLOBAL ROTATION")
+			for _, player in ipairs(Players:GetPlayers()) do
+				local session, didReset = getSession(player)
+				if didReset then pushUpdate(player, session, "Auto") end
+			end
+		end
+	end
+end)
