@@ -1,0 +1,38 @@
+-- Purpose: Detects when a player interacts with Darrel and opens the Uncommon Shop UI.
+-- Runs on: Server
+-- Location: Workspace.NPCS.Darrel (or alongside the ProximityPrompt)
+-- Dependencies: ReplicatedStorage.ShopRemotes.OpenUncommonShop
+-- Public API: None
+-- Networking: Fires OpenUncommonShop to the interacting client.
+-- Security: Ensure Remotes folder is populated by UncommonShopService before firing.
+-- Performance: Direct event connection, no loops.
+
+local npcModel = script.Parent
+local Prompt = npcModel:FindFirstChild("ProximityPrompt") or npcModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+if not Prompt then
+	warn("⚠️ UncommonPromptHandler: No ProximityPrompt found in Darrel!")
+	return
+end
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Wait for the Remotes folder (created by the Service)
+local Remotes = ReplicatedStorage:WaitForChild("ShopRemotes", 30) 
+if not Remotes then 
+	warn("⚠️ UncommonPromptHandler: ShopRemotes not found!") 
+	return 
+end
+
+-- Strictly wait for the UNCOMMON open event
+local OpenEvent = Remotes:WaitForChild("OpenUncommonShop", 30)
+if not OpenEvent then
+	warn("⚠️ UncommonPromptHandler: OpenUncommonShop remote not found!")
+	return
+end
+
+Prompt.Triggered:Connect(function(player)
+	if player and player.Parent then
+		OpenEvent:FireClient(player)
+	end
+end)
