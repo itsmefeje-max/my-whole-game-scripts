@@ -6,7 +6,7 @@
 -- Networking: Listens to ProcessReceipt. Fires 'NotifyGiftReceived' to clients when gifted.
 -- Security: Verifies target doesn't already own the item before granting to prevent wasted Robux via exploits.
 -- Performance: Uses caching and pcalls for DataStore resilience.
--- Notes: Updated to support UNCOMMON and RARE SHOP tier purchases and rerolls.
+-- Notes: Updated to support UNCOMMON, RARE, and EPIC SHOP tier purchases and rerolls.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local DataStoreService = game:GetService("DataStoreService")
@@ -43,7 +43,7 @@ local UNCOMMON_CAR_PRODUCT_IDS = {
 	[3555931766] = "Kingston"
 }
 
--- 🟣 RARE SHOP CONFIG (NEW)
+-- 🟣 RARE SHOP CONFIG
 local RARE_SHOP_REROLL_ID = 3556132134
 
 local RARE_CAR_PRODUCT_IDS = {
@@ -53,12 +53,22 @@ local RARE_CAR_PRODUCT_IDS = {
 	[3556130011] = "Velocity"
 }
 
+-- 🟡 EPIC SHOP CONFIG (NEW)
+local EPIC_SHOP_REROLL_ID = 3556540207
+
+local EPIC_CAR_PRODUCT_IDS = {
+	[3556536171] = "Sadie",
+	[3556537696] = "Sirene",
+	[3556538294] = "Vortex"
+}
+
 local TycoonFolder = Workspace:WaitForChild("Tycoons")
 
 -- Bindable Functions Reference Setup
 local ShopRerollFunc = ServerStorage:WaitForChild("ShopRerollFunction", 30)
 local UncommonShopRerollFunc = ServerStorage:WaitForChild("UncommonShopRerollFunction", 30)
-local RareShopRerollFunc = ServerStorage:WaitForChild("RareShopRerollFunction", 30) -- ✅ NEW
+local RareShopRerollFunc = ServerStorage:WaitForChild("RareShopRerollFunction", 30) 
+local EpicShopRerollFunc = ServerStorage:WaitForChild("EpicShopRerollFunction", 30) -- ✅ NEW
 
 -- 📡 REMOTES SETUP
 local PadUnlockEvent = ReplicatedStorage:FindFirstChild("PadUnlockEvent")
@@ -244,13 +254,21 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			warn("⚠️ UncommonShopRerollFunction missing!")
 		end
 
-		-- ✅ NEW: RARE REROLL LOGIC
 	elseif pid == RARE_SHOP_REROLL_ID then
 		if RareShopRerollFunc then
 			RareShopRerollFunc:Invoke(targetPlayer)
 			purchaseSuccess = true
 		else
 			warn("⚠️ RareShopRerollFunction missing!")
+		end
+
+		-- ✅ NEW: EPIC REROLL LOGIC
+	elseif pid == EPIC_SHOP_REROLL_ID then
+		if EpicShopRerollFunc then
+			EpicShopRerollFunc:Invoke(targetPlayer)
+			purchaseSuccess = true
+		else
+			warn("⚠️ EpicShopRerollFunction missing!")
 		end
 
 		-- 🚗 COMMON CAR PURCHASE
@@ -297,7 +315,7 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			warn("⚠️ Uncommon Car Tool missing from ServerStorage: " .. carName)
 		end
 
-		-- 💎 NEW: RARE CAR PURCHASE LOGIC
+		-- 💎 RARE CAR PURCHASE
 	elseif RARE_CAR_PRODUCT_IDS[pid] then
 		local carName = RARE_CAR_PRODUCT_IDS[pid]
 		local CarTools = ServerStorage:FindFirstChild("CarTools")
@@ -318,6 +336,29 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 			end
 		else
 			warn("⚠️ Rare Car Tool missing from ServerStorage: " .. carName)
+		end
+
+		-- 🏆 NEW: EPIC CAR PURCHASE LOGIC
+	elseif EPIC_CAR_PRODUCT_IDS[pid] then
+		local carName = EPIC_CAR_PRODUCT_IDS[pid]
+		local CarTools = ServerStorage:FindFirstChild("CarTools")
+		local tool = CarTools and (CarTools:FindFirstChild(carName) or CarTools:FindFirstChild(carName.." Item"))
+
+		if tool then
+			local TycoonAdminAPI = ServerStorage:FindFirstChild("TycoonAdminAPI")
+			if TycoonAdminAPI then
+				local invokeOk, giveResult = safeInvoke(TycoonAdminAPI, 3, "GiveTool", targetPlayer, tool.Name, {
+					IssuedByServer = true,
+					IssuedAt = os.time(),
+					ToolId = tool.Name
+				})
+
+				if invokeOk and giveResult == true then
+					purchaseSuccess = true
+				end
+			end
+		else
+			warn("⚠️ Epic Car Tool missing from ServerStorage: " .. carName)
 		end
 
 	elseif skinFound then
