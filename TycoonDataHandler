@@ -6,7 +6,7 @@
 -- Networking: TycoonAdminLog (RemoteEvent), ShopRemotes (via Bindable)
 -- Security: Server-authoritative tool validation, anti-wipe protection, fixed StarterGear duplication exploit.
 -- Performance: Batched saving, lock-based pad restoration to prevent race conditions.
--- Notes: Updated to support UNCOMMON and RARE SHOP Persistence.
+-- Notes: Updated to support UNCOMMON, RARE, and EPIC SHOP Persistence.
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
@@ -21,8 +21,8 @@ local HttpService = game:GetService("HttpService")
 local DATA_KEY = "Testingv5" 
 local PlayerDataStore = DataStoreService:GetDataStore(DATA_KEY)
 
-local AUTOSAVE_INTERVAL = 180        
-local MIN_SAVE_INTERVAL = 60        
+local AUTOSAVE_INTERVAL = 180         
+local MIN_SAVE_INTERVAL = 60         
 local MAX_RETRIES = 3              
 
 local MAX_INVENTORY_SIZE = 500      
@@ -446,11 +446,18 @@ local function save(player, isClosing)
 			currentUncommonShopData = uncommonShopBindable:Invoke("Get", player) or {}
 		end
 
-		-- [[ 🟣 NEW: RARE SHOP SYNC ]]
+		-- [[ 🟣 RARE SHOP SYNC ]]
 		local rareShopBindable = ServerStorage:FindFirstChild("RareShopPersistenceFunction")
 		local currentRareShopData = {}
 		if rareShopBindable then
 			currentRareShopData = rareShopBindable:Invoke("Get", player) or {}
+		end
+
+		-- [[ 🟠 NEW: EPIC SHOP SYNC ]]
+		local epicShopBindable = ServerStorage:FindFirstChild("EpicShopPersistenceFunction")
+		local currentEpicShopData = {}
+		if epicShopBindable then
+			currentEpicShopData = epicShopBindable:Invoke("Get", player) or {}
 		end
 
 		for attempt = 1, MAX_RETRIES do
@@ -506,7 +513,8 @@ local function save(player, isClosing)
 					-- ✅ SAVING SHOP STATES
 					oldData.ShopPurchases = currentShopData
 					oldData.UncommonShopPurchases = currentUncommonShopData
-					oldData.RareShopPurchases = currentRareShopData -- 🟣 RARE SAVE INJECTED
+					oldData.RareShopPurchases = currentRareShopData 
+					oldData.EpicShopPurchases = currentEpicShopData -- 🟠 EPIC SAVE INJECTED
 
 					oldData.OwnedBaseSkins = currentOwnedSkins
 					oldData.EquippedSkin = currentEquippedSkin
@@ -543,9 +551,12 @@ local function save(player, isClosing)
 		local uncommonShopBindable = ServerStorage:FindFirstChild("UncommonShopPersistenceFunction")
 		if uncommonShopBindable then uncommonShopBindable:Invoke("Close", player) end
 
-		-- 🟣 RARE CLEANUP
 		local rareShopBindable = ServerStorage:FindFirstChild("RareShopPersistenceFunction")
 		if rareShopBindable then rareShopBindable:Invoke("Close", player) end
+
+		-- 🟠 EPIC CLEANUP
+		local epicShopBindable = ServerStorage:FindFirstChild("EpicShopPersistenceFunction")
+		if epicShopBindable then epicShopBindable:Invoke("Close", player) end
 	end
 
 	session.IsSaving = false 
@@ -585,7 +596,7 @@ local function InitializePlayer(player)
 	-- ✅ INITIALIZE DEFAULT DATA
 	data = data or { 
 		Inventory = {}, Layout = {}, PendingEarnings = 0, HighestUnlockedPad = 1, 
-		ShopPurchases = {}, UncommonShopPurchases = {}, RareShopPurchases = {}, 
+		ShopPurchases = {}, UncommonShopPurchases = {}, RareShopPurchases = {}, EpicShopPurchases = {}, 
 		OwnedBaseSkins = {"Default"}, EquippedSkin = "Default" 
 	}
 
@@ -593,7 +604,8 @@ local function InitializePlayer(player)
 	data.Layout = data.Layout or {}
 	data.ShopPurchases = data.ShopPurchases or {}
 	data.UncommonShopPurchases = data.UncommonShopPurchases or {} 
-	data.RareShopPurchases = data.RareShopPurchases or {} -- 🟣 RARE DATA DEFAULT
+	data.RareShopPurchases = data.RareShopPurchases or {} 
+	data.EpicShopPurchases = data.EpicShopPurchases or {} -- 🟠 EPIC DATA DEFAULT
 	data.OwnedBaseSkins = data.OwnedBaseSkins or {"Default"}
 	data.EquippedSkin = data.EquippedSkin or "Default"
 
@@ -613,10 +625,16 @@ local function InitializePlayer(player)
 		uncommonShopBindable:Invoke("Load", player, data.UncommonShopPurchases)
 	end
 
-	-- [[ 🟣 NEW: RARE SHOP RESTORE ]]
+	-- [[ 🟣 RARE SHOP RESTORE ]]
 	local rareShopBindable = ServerStorage:FindFirstChild("RareShopPersistenceFunction")
 	if rareShopBindable then
 		rareShopBindable:Invoke("Load", player, data.RareShopPurchases)
+	end
+
+	-- [[ 🟠 NEW: EPIC SHOP RESTORE ]]
+	local epicShopBindable = ServerStorage:FindFirstChild("EpicShopPersistenceFunction")
+	if epicShopBindable then
+		epicShopBindable:Invoke("Load", player, data.EpicShopPurchases)
 	end
 
 	-- ✅ APPLY ATTRIBUTES
