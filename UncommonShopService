@@ -1,10 +1,11 @@
--- Purpose: Handles Uncommon Car Shop logic. Strictly 1 car, 1 stock, every 30 minutes.
+-- Purpose: Handles Uncommon Car Shop logic. Strictly 1 car, 1 stock, every 30 minutes. Includes Pre-Flight Validation.
 -- Runs on: Server
 -- Location: ServerScriptService > UncommonShopService
--- Dependencies: ReplicatedStorage.CarStats, ServerStorage.TycoonAdminAPI
+-- Dependencies: ReplicatedStorage.CarStats, ServerStorage.TycoonAdminAPI, ServerStorage.CarTools
 -- Public API: None (Event/Bindable driven)
 -- Networking: OpenUncommonShop, UncommonShopUpdate, GetUncommonShopState, BuyUncommonCar
--- Security: Server authority on cash, strict 1-stock limits, and debounce locks.
+-- Security: Server authority on cash, strict 1-stock limits, debounce locks, strict NPC proximity checks, and startup validation.
+-- Performance: O(1) lookups for shop state. Caches generated seed tables.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
@@ -20,6 +21,37 @@ local ALWAYS_STOCK = {} -- DISABLED: Nothing is guaranteed
 local RESTOCK_INTERVAL = 1800 -- 30 Minutes (1800 seconds)
 local PURCHASE_COOLDOWN = 1.0 -- Cooldown to prevent spam
 local MAX_STOCK = 1 -- Only 1 available per restock
+local MAX_INTERACTION_DISTANCE = 20 -- Max studs from Darrel to interact/buy
+
+-- =========================
+-- 🚨 PRE-FLIGHT HIERARCHY VALIDATION
+-- =========================
+local function validateDependencies()
+	local missing = {}
+
+	if not ReplicatedStorage:FindFirstChild("CarStats") then table.insert(missing, "ReplicatedStorage.CarStats (ModuleScript)") end
+	if not ServerStorage:FindFirstChild("TycoonAdminAPI") then table.insert(missing, "ServerStorage.TycoonAdminAPI (BindableFunction)") end
+	if not ServerStorage:FindFirstChild("CarTools") then table.insert(missing, "ServerStorage.CarTools (Folder)") end
+
+	local npcs = workspace:FindFirstChild("NPCS")
+	if not npcs then 
+		table.insert(missing, "workspace.NPCS (Folder)") 
+	else
+		if not npcs:FindFirstChild("Darrel") then table.insert(missing, "workspace.NPCS.Darrel (Model)") end
+	end
+
+	if #missing > 0 then
+		warn("⚠️ [UNCOMMON SHOP FATAL ERROR] Missing critical dependencies! The shop will break when players try to buy.")
+		for _, err in ipairs(missing) do
+			warn("   -> " .. err)
+		end
+	else
+		print("✅ [UncommonShopService] All dependencies found. Service started successfully.")
+	end
+end
+
+-- Run validation immediately on startup
+validateDependencies()
 
 -- =========================
 -- MODULES
@@ -47,7 +79,7 @@ local function getRemote(name, className)
 end
 
 local RemoteOpen = getRemote("OpenUncommonShop", "RemoteEvent")         
-local RemoteUpdate = getRemote("UncommonShopUpdate", "RemoteEvent")          
+local RemoteUpdate = getRemote("UncommonShopUpdate", "RemoteEvent")         
 local FuncGetState = getRemote("GetUncommonShopState", "RemoteFunction")     
 local FuncBuyCar = getRemote("BuyUncommonCar", "RemoteFunction")        
 
@@ -273,7 +305,7 @@ PersistenceBindable.OnInvoke = function(action, player, data)
 end
 
 -- =========================
--- CLIENT REQUESTS
+-- CLIENT REQUESTS (SECURITY HANDLERS ADDED)
 -- =========================
 FuncGetState.OnServerInvoke = function(player)
 	local session, didReset = getSession(player)
@@ -281,13 +313,55 @@ FuncGetState.OnServerInvoke = function(player)
 end
 
 RemoteOpen.OnServerEvent:Connect(function(player)
-	local session = getSession(player)
-	pushUpdate(player, session, "Open")
+	local char = player.Character
+	if not char or not char.PrimaryPart then return end
+
+	-- 1. Locate Darrel
+	local npcs = workspace:FindFirstChild("NPCS")
+	local darrel = npcs and npcs:FindFirstChild("Darrel")
+
+	if not darrel then
+		warn("⚠️ [Security] Darrel NPC not found in workspace!")
+		return
+	end
+
+	local darrelRoot = darrel:FindFirstChild("HumanoidRootPart")
+	if not darrelRoot then return end
+
+	-- 2. Validate Distance (Exploit Prevention to OPEN ui)
+	local distance = (char.PrimaryPart.Position - darrelRoot.Position).Magnitude
+
+	if distance <= MAX_INTERACTION_DISTANCE then
+		-- 3. Authorized: Push the shop state and tell the client UI to open
+		local session = getSession(player)
+		pushUpdate(player, session, "Open")
+		RemoteOpen:FireClient(player)
+	else
+		-- 4. Unauthorized: Player is exploiting remotes
+		warn(string.format("🛡️ [Security] %s attempted to open Uncommon Shop from %d studs away.", player.Name, math.floor(distance)))
+	end
 end)
 
 FuncBuyCar.OnServerInvoke = function(player, carName)
 	if typeof(carName) ~= "string" then return false, "Invalid Car" end
 	if not player or not player.Parent then return false, "Player missing" end
+
+	-- 🛡️ SECURITY: PROXIMITY CHECK (PREVENT REMOTE EXPLOIT BUYING)
+	local char = player.Character
+	if not char or not char.PrimaryPart then return false, "Character missing" end
+
+	local npcs = workspace:FindFirstChild("NPCS")
+	local darrel = npcs and npcs:FindFirstChild("Darrel")
+	local darrelRoot = darrel and darrel:FindFirstChild("HumanoidRootPart")
+
+	if not darrelRoot then return false, "NPC missing" end
+
+	local distance = (char.PrimaryPart.Position - darrelRoot.Position).Magnitude
+	if distance > MAX_INTERACTION_DISTANCE then
+		warn(string.format("🛡️ [Security] %s attempted to BUY from %d studs away.", player.Name, math.floor(distance)))
+		return false, "Too far away!"
+	end
+	-- 🛡️ END SECURITY CHECK
 
 	-- SECURITY: Ensure the car requested is actually part of the Uncommon pool
 	if not CAR_WEIGHTS[carName] and not ALWAYS_STOCK[carName] then
