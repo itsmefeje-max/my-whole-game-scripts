@@ -1,0 +1,387 @@
+-- Purpose: Handles Dialogue Logic and UI for Darrel NPC (Uncommon Shop).
+-- Runs on: Client
+-- Location: StarterPlayerScripts > DarrelDialogueLogic
+-- Dependencies: TweenService, Players, Workspace, SoundService, UserInputService, ReplicatedStorage
+-- Public API: None
+-- Networking: Fires 'OpenUncommonShop' RemoteEvent to the server
+-- Security: Validates local character state before locking movement. Disconnects memory leaks.
+-- Performance: Event-driven. Camera overhead removed.
+-- Notes: Safely hides other UI using ScreenGui.Enabled=false (Angelo Logic) to protect Inventory state.
+
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local SoundService = game:GetService("SoundService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 📡 NETWORKING
+local remotes = ReplicatedStorage:WaitForChild("ShopRemotes")
+local openUncommonRemote = remotes:WaitForChild("OpenUncommonShop")
+
+-- 🎨 COLOR CONFIGURATION
+local USER_COLOR = "#55AAFF"
+
+-- 🆔 UNIQUE IDENTIFIERS
+local GUI_ID = "UI_NPC_Darrel" 
+local CONTAINER_ID = "Frame_Darrel_Container" 
+local TEXT_ID = "Text_Darrel_Dialogue"         
+local BUTTONS_FRAME_ID = "Buttons"
+local BTN_BUY_ID = "Btn_Darrel_Buy"  
+local BTN_LEAVE_ID = "Btn_Darrel_Leave"
+
+-- 📍 NPC CONFIGURATION
+local NPC_FOLDER = "NPCS"
+local TARGET_NPC = "Darrel"
+local PROMPT_NAME = "TalkPrompt" 
+
+-- 🎥 SETTINGS
+local TYPEWRITER_SPEED = 0.02
+
+-- ✨ ANIMATION SETTINGS
+local HOVER_SCALE = 1.1 
+local CLICK_SCALE = 0.9 
+local ANIM_SPEED = 0.1
+
+-- 🔊 SOUNDS
+local TYPING_SOUND_ID = "rbxassetid://4676738150"
+local HOVER_SOUND_ID = "rbxassetid://6895079853" 
+local CLICK_SOUND_ID = "rbxassetid://9083627113" 
+
+-- ============================================================================
+-- 🛠️ STATE VARIABLES
+-- ============================================================================
+local isInteracting = false
+local currentDialogueJob = nil 
+local buttonConnections = {} 
+local buttonHoverConnections = {} 
+local hiddenGuis = {}
+local hiddenObjects = {}
+
+local function getControls()
+	local PlayerModule = player.PlayerScripts:WaitForChild("PlayerModule", math.huge)
+	return require(PlayerModule):GetControls()
+end
+
+-- ============================================================================
+-- 🔍 EXACT ANGELO UI HIDING LOGIC
+-- ============================================================================
+local function getUIElements()
+	local myGui = playerGui:FindFirstChild(GUI_ID)
+	if not myGui then return nil end
+
+	local container = myGui:FindFirstChild(CONTAINER_ID)
+	if not container then return myGui, nil end
+
+	local textLabel = container:FindFirstChild(TEXT_ID)
+	local buttonsFrame = container:FindFirstChild(BUTTONS_FRAME_ID)
+
+	local buyBtn = buttonsFrame and buttonsFrame:FindFirstChild(BTN_BUY_ID)
+	local leaveBtn = buttonsFrame and buttonsFrame:FindFirstChild(BTN_LEAVE_ID)
+
+	return myGui, container, textLabel, buttonsFrame, buyBtn, leaveBtn
+end
+
+local function toggleNamedGuiObjects(shouldHide, objectName)
+	if shouldHide then
+		for _, obj in pairs(playerGui:GetDescendants()) do
+			if obj:IsA("GuiObject") and obj.Name == objectName and obj.Visible then
+				obj.Visible = false
+				table.insert(hiddenObjects, obj)
+			end
+		end
+	else
+		for _, obj in pairs(hiddenObjects) do
+			if obj and obj.Parent and obj:IsA("GuiObject") then
+				obj.Visible = true
+			end
+		end
+		hiddenObjects = {}
+	end
+end
+
+local function toggleOtherGuis(shouldHide)
+	if shouldHide then
+		hiddenGuis = {}
+		for _, otherGui in pairs(playerGui:GetChildren()) do
+			if otherGui:IsA("ScreenGui")
+				and otherGui.Name ~= GUI_ID
+				and otherGui.Enabled == true
+				and otherGui.Name ~= "Balance Indicator" then
+
+				otherGui.Enabled = false
+				table.insert(hiddenGuis, otherGui)
+			end
+		end
+	else
+		for _, otherGui in pairs(hiddenGuis) do
+			if otherGui and otherGui.Parent then
+				otherGui.Enabled = true
+			end
+		end
+		hiddenGuis = {}
+	end
+end
+
+local function setFocusMode(active)
+	toggleOtherGuis(active)
+	toggleNamedGuiObjects(active, "FriendBoost")
+end
+
+-- ============================================================================
+-- 🎬 INTERACTION FUNCTIONS
+-- ============================================================================
+local function setButtonsState(isActive)
+	local _, _, _, _, buyBtn, leaveBtn = getUIElements()
+
+	if buyBtn then
+		buyBtn.Visible = isActive 
+		buyBtn.Active = isActive  
+	end
+	if leaveBtn then
+		leaveBtn.Visible = isActive 
+		leaveBtn.Active = isActive  
+	end
+end
+
+local function clearConnections()
+	for _, conn in pairs(buttonConnections) do if conn then conn:Disconnect() end end
+	buttonConnections = {}
+
+	for _, conn in pairs(buttonHoverConnections) do if conn then conn:Disconnect() end end
+	buttonHoverConnections = {}
+end
+
+local function playSound(id, vol)
+	local s = Instance.new("Sound")
+	s.SoundId = id
+	s.Volume = vol or 0.5
+	s.Parent = SoundService
+	s:Play()
+	game.Debris:AddItem(s, 1)
+end
+
+local function typewrite(label, text, onComplete)
+	if not label then return end
+	label.RichText = true
+
+	if currentDialogueJob then 
+		task.cancel(currentDialogueJob) 
+		currentDialogueJob = nil 
+	end
+
+	label.Text = text
+	label.MaxVisibleGraphemes = 0
+
+	local cleanStr = string.gsub(text, "<[^>]+>", "")
+	local len = utf8.len(cleanStr) or #cleanStr
+
+	currentDialogueJob = task.spawn(function()
+		for i = 1, len do
+			if not isInteracting then break end
+			label.MaxVisibleGraphemes = i
+			if i % 3 == 0 then 
+				local s = Instance.new("Sound", SoundService)
+				s.SoundId = TYPING_SOUND_ID
+				s.Volume = 0.1
+				s.PlayOnRemove = true
+				s:Destroy()
+			end
+			task.wait(TYPEWRITER_SPEED)
+		end
+		label.MaxVisibleGraphemes = -1 
+		currentDialogueJob = nil
+
+		if onComplete and isInteracting then
+			task.spawn(onComplete)
+		end
+	end)
+end
+
+local function stopInteraction()
+	if not isInteracting then return end
+	isInteracting = false
+
+	if currentDialogueJob then task.cancel(currentDialogueJob) end
+	clearConnections() 
+
+	-- Restores the UI using exact Angelo logic
+	setFocusMode(false)
+
+	local controls = getControls()
+	if controls then controls:Enable() end
+
+	if player.Character then
+		local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+		local humanoid = player.Character:FindFirstChild("Humanoid")
+		if hrp then hrp.Anchored = false end
+		if humanoid then humanoid.WalkSpeed = 16 end
+	end
+
+	local myGui, container = getUIElements()
+	if myGui then myGui.Enabled = false end
+	if container then container.Visible = false end
+end
+
+local function animateButton(btn)
+	if not btn:GetAttribute("OriginalSizeX") then
+		btn:SetAttribute("OriginalSizeX", btn.Size.X.Scale)
+		btn:SetAttribute("OriginalSizeXO", btn.Size.X.Offset)
+		btn:SetAttribute("OriginalSizeY", btn.Size.Y.Scale)
+		btn:SetAttribute("OriginalSizeYO", btn.Size.Y.Offset)
+	end
+
+	local origX = btn:GetAttribute("OriginalSizeX")
+	local origXO = btn:GetAttribute("OriginalSizeXO")
+	local origY = btn:GetAttribute("OriginalSizeY")
+	local origYO = btn:GetAttribute("OriginalSizeYO")
+
+	local normalSize = UDim2.new(origX, origXO, origY, origYO)
+	local hoverSize = UDim2.new(origX * HOVER_SCALE, origXO * HOVER_SCALE, origY * HOVER_SCALE, origYO * HOVER_SCALE)
+	local clickSize = UDim2.new(origX * CLICK_SCALE, origXO * CLICK_SCALE, origY * CLICK_SCALE, origYO * CLICK_SCALE)
+
+	if not UserInputService.TouchEnabled then
+		table.insert(buttonHoverConnections, btn.MouseEnter:Connect(function()
+			playSound(HOVER_SOUND_ID, 0.5)
+			TweenService:Create(btn, TweenInfo.new(ANIM_SPEED), {Size = hoverSize}):Play()
+		end))
+		table.insert(buttonHoverConnections, btn.MouseLeave:Connect(function()
+			TweenService:Create(btn, TweenInfo.new(ANIM_SPEED), {Size = normalSize}):Play()
+		end))
+	end
+
+	table.insert(buttonHoverConnections, btn.MouseButton1Down:Connect(function()
+		TweenService:Create(btn, TweenInfo.new(0.05), {Size = clickSize}):Play()
+	end))
+
+	table.insert(buttonHoverConnections, btn.MouseButton1Up:Connect(function()
+		local target = (not UserInputService.TouchEnabled) and hoverSize or normalSize
+		TweenService:Create(btn, TweenInfo.new(ANIM_SPEED, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = target}):Play()
+	end))
+end
+
+local function startInteraction(npcModel)
+	print("💬 [DarrelLogic] Starting interaction...")
+	if isInteracting then return end
+	isInteracting = true
+	clearConnections() 
+
+	-- Lock Movement, Anchor & Hide UI using Angelo's logic
+	local controls = getControls()
+	if controls then controls:Disable() end
+	setFocusMode(true)
+
+	if player.Character then
+		local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+		local humanoid = player.Character:FindFirstChild("Humanoid")
+		if humanoid then 
+			humanoid.WalkSpeed = 0 
+
+			local deathConn
+			deathConn = humanoid.Died:Connect(function()
+				if deathConn then deathConn:Disconnect() end
+				stopInteraction()
+			end)
+			table.insert(buttonConnections, deathConn)
+		end
+		if hrp then hrp.Velocity = Vector3.zero; hrp.Anchored = true end
+	end
+
+	-- UI Setup
+	local myGui = playerGui:WaitForChild(GUI_ID, 5)
+	if not myGui then 
+		warn("⚠️ UI not found! Checked for: " .. GUI_ID)
+		stopInteraction() 
+		return 
+	end
+
+	local _, container, dialogueLabel, buttonsFrame, buyBtn, leaveBtn = getUIElements()
+
+	if not container or not dialogueLabel or not buttonsFrame then
+		warn("⚠️ UI Hierarchy mismatch inside Frame_Darrel_Container!")
+		stopInteraction()
+		return
+	end
+
+	myGui.Enabled = true
+	container.Visible = true
+	setButtonsState(false)
+
+	local coloredName = "<font color='" .. USER_COLOR .. "'>@" .. player.Name .. "</font>"
+	local greeting = "Hello there " .. coloredName .. ", welcome to my shop. Wanna buy?"
+
+	typewrite(dialogueLabel, greeting, function()
+		setButtonsState(true)
+	end)
+
+	local function setupBtn(btn, func)
+		if btn and btn:IsA("GuiButton") then 
+			animateButton(btn) 
+			local conn = btn.MouseButton1Click:Connect(function()
+				playSound(CLICK_SOUND_ID, 0.5) 
+				func()
+			end)
+			table.insert(buttonConnections, conn)
+		end
+	end
+
+	-- 🔘 BUY CARS (UPDATED WITH TRANSITION)
+	setupBtn(buyBtn, function()
+		setButtonsState(false) 
+		local responseText = "Okay here you go " .. coloredName .. "."
+
+		typewrite(dialogueLabel, responseText, function()
+			task.wait(0.6) 
+			stopInteraction()
+			openUncommonRemote:FireServer() 
+		end)
+	end)
+
+	-- 🔘 LEAVE
+	setupBtn(leaveBtn, function()
+		setButtonsState(false)
+		typewrite(dialogueLabel, "Alright, see you around.")
+		task.wait(1.2)
+		stopInteraction()
+	end)
+end
+
+-- ============================================================================
+-- 🚀 DYNAMIC NPC SETUP
+-- ============================================================================
+local function attachPrompt(npc)
+	task.spawn(function()
+		local hrp = npc:WaitForChild("HumanoidRootPart", math.huge)
+		local prompt = hrp:WaitForChild(PROMPT_NAME, math.huge)
+
+		prompt.Triggered:Connect(function()
+			print("🔘 [DarrelLogic] ProximityPrompt Triggered!")
+			startInteraction(npc)
+		end)
+		print("✅ [DarrelLogic] Successfully connected to Darrel's ProximityPrompt!")
+	end)
+end
+
+local function setupNPC()
+	local folder = Workspace:WaitForChild(NPC_FOLDER, math.huge)
+
+	-- Connect if Darrel is already there
+	local existingNPC = folder:FindFirstChild(TARGET_NPC)
+	if existingNPC then
+		attachPrompt(existingNPC)
+	end
+
+	-- Connect if Darrel spawns later
+	folder.ChildAdded:Connect(function(child)
+		if child.Name == TARGET_NPC then
+			print("🌒 [DarrelLogic] Darrel spawned dynamically. Connecting...")
+			attachPrompt(child)
+		end
+	end)
+end
+
+print("⏳ [DarrelLogic] Script started. Waiting for Darrel...")
+setupNPC()
